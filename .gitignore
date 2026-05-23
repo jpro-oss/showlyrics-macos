@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+bin/
+backend/__pycache__/
+backend/dist/
+sender/
+__pycache__/
+.env
+*.log

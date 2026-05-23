@@ -1,0 +1,2415 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <link rel="shortcut icon" href="static/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="static/favicon.ico" type="image/x-icon">
+    <title>Controller - Cinematic Lyrics</title>
+    <link rel="stylesheet" href="static/styles.css?v={{ VERSION }}">
+    <link rel="stylesheet" href="static/bg.css?v={{ VERSION }}">
+    <link rel="stylesheet" href="static/ppt_remote.css?v={{ VERSION }}">
+</head>
+
+<body oncontextmenu="return false;">
+    <div class="col-playlist">
+        <div class="tab-header">
+            <button class="tab-btn active" onclick="switchTab('library')">SONG</button>
+            <button class="tab-btn" onclick="switchTab('schedule')">SCHEDULE</button>
+        </div>
+        <div id="tab-library" class="list-container active">
+            <input type="text" class="search-box" id="search-library" placeholder="Search Library..."
+                onkeyup="onSearchInput()">
+            <div id="library-list" class="scroll-area"></div>
+            <div id="song-count-info"
+                style="font-size: 0.75em; color: #888; text-align: center; padding: 6px 0; border-top: 1px solid #333; background: #1a1a1a;">
+                Total: 0 Songs
+            </div>
+            <div class="panel-header">
+                <label for="import-file" class="btn-import">📂 Import TXT</label>
+                <input type="file" id="import-file" multiple accept=".txt" style="display: none;"
+                    onchange="uploadFiles(this)">
+            </div>
+        </div>
+        <div id="tab-schedule" class="list-container te-hidden" style="display: none;">
+            <div class="schedule-manager">
+                <div class="sched-label">RUNNING ORDER</div>
+                <div class="sched-row">
+                    <button class="btn-mini btn-new" onclick="newSchedule()">📝 NEW SCHEDULE (CLEAR)</button>
+                </div>
+
+                <div class="sched-divider"></div>
+
+                <div class="sched-label">SAVED SCHEDULES</div>
+                <div class="sched-row">
+                    <select id="saved-sched-select" class="sched-select">
+                        <option value="">-- Select Saved --</option>
+                    </select>
+                </div>
+
+                <div class="sched-row">
+                    <button class="btn-mini btn-load" onclick="loadSavedSchedule()">📂 LOAD</button>
+                    <button class="btn-mini btn-save" onclick="saveCurrentSchedule()">💾 SAVE</button>
+                    <button class="btn-mini btn-del" onclick="deleteSavedSchedule()" title="Delete">🗑️</button>
+                </div>
+
+                <div class="sched-row">
+                    <button class="btn-mini btn-export" onclick="exportSchedule()" title="Export to .ZIP">📦 EXPORT
+                        .ZIP</button>
+                    <label for="import-bundle" class="btn-mini btn-import" title="Import .ZIP Bundle">📥 IMPORT
+                        .ZIP</label>
+                    <input type="file" id="import-bundle" accept=".zip" style="display: none;"
+                        onchange="importBundle(this)">
+                </div>
+
+                <div id="schedule-list" class="scroll-area"></div>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="col-main">
+        <div class="main-toolbar">
+            <div class="tool-btn add" onclick="openAddSongModal()">
+                <i>✚</i>
+                <span>ADD SONG</span>
+            </div>
+            <div class="tool-btn save" onclick="saveCurrentGrid()">
+                <i>💾</i>
+                <span>SAVE EDIT</span>
+            </div>
+            <div class="tool-btn alert" onclick="openAlertModal()" id="nav-btn-alert">
+                <i>🚨</i>
+                <span>ALERTS</span>
+            </div>
+            <div class="tool-btn lt" onclick="openLTConfig()">
+                <i>📺</i>
+                <span>LOWER 3RD</span>
+            </div>
+            <div class="tool-btn fb" onclick="openFBConfig()">
+                <i>🎤</i>
+                <span>STAGE</span>
+            </div>
+            <div class="tool-btn scripture" onclick="openScriptureSettings()">
+                <i>📖</i>
+                <span>SCRIPTURE</span>
+            </div>
+            <div class="tool-btn settings" onclick="openSettingsModal()">
+                <i>⚙️</i>
+                <span>SETTING</span>
+            </div>
+
+        </div>
+
+        <div class="current-song-bar"
+            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; background: #1a1a1a; padding: 10px 15px; border-radius: 8px; border: 1px solid #333;">
+            <div style="color: #aaa;">CURRENT SONG: <span id="now-loaded-text" style="font-weight: bold; color: #fff;">-
+                    NO SONG LOADED -</span></div>
+            <button class="btn-mini"
+                style="background: #ffc107; color: #000; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer;"
+                onclick="openFullEditModal()">✏️ EDIT SONG</button>
+        </div>
+
+        <div id="full-edit-modal" class="modal-overlay">
+            <div class="modal-box song-editor-box">
+                <div class="modal-header">
+                    <div class="song-modal-title-group">
+                        <span class="song-modal-icon" style="color:#f59e0b;">✏️</span>
+                        <div>
+                            <div class="modal-title" style="color:#f59e0b;">EDIT SONG</div>
+                            <div class="song-modal-sub">Update existing song in library</div>
+                        </div>
+                    </div>
+                    <button class="close-btn" onclick="safeCloseModal('full-edit-modal')">✖</button>
+                </div>
+
+                <div class="song-modal-body"
+                    style="flex: 1; overflow-y: auto; padding-right: 8px; margin-bottom: 16px;">
+                    <div class="song-modal-field">
+                        <label class="song-modal-label">SONG TITLE</label>
+                        <input type="text" id="edit-song-title" class="song-modal-input"
+                            placeholder="Enter song title...">
+                    </div>
+
+                    <div class="song-modal-field">
+                        <div class="song-editor-toolbar">
+                            <span class="song-editor-toolbar-label">SLIDE EDITOR</span>
+                            <div class="song-editor-toolbar-actions">
+                                <button onclick="undoEditorState('edit')" class="se-btn se-btn-ghost"
+                                    title="Undo (Ctrl+Z)">↩ UNDO</button>
+                                <div class="se-divider"></div>
+                                <select class="se-case-select"
+                                    onchange="transformText('edit', this.value); this.value=''"
+                                    style="font-size: 0.8em; font-weight: bold; padding: 2px 6px;">
+                                    <option value="" disabled selected>Aa</option>
+                                    <option value="upper">AA</option>
+                                    <option value="lower">aa</option>
+                                    <option value="title">Aa</option>
+                                </select>
+                                <div class="se-divider"></div>
+                                <button onclick="smartBulkPaste('edit')" class="se-btn se-btn-accent"
+                                    title="Smart Paste from Clipboard">📋 PASTE</button>
+                            </div>
+                        </div>
+                        <div id="edit-editor-rows" class="editor-container"></div>
+                        <button class="se-add-slide-btn" onclick="addEditorRow('edit')">➕ Add Slide</button>
+                    </div>
+                </div>
+
+                <div class="song-modal-footer">
+                    <button class="btn-song-action btn-song-cancel"
+                        onclick="safeCloseModal('full-edit-modal')">CANCEL</button>
+                    <button class="btn-song-action btn-song-save" style="background:#f59e0b; color:#000;"
+                        onclick="saveFullEdit()">💾 UPDATE & SAVE</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-wrapper">
+            <div id="ppt-grid-overlay" class="ppt-grid-overlay">
+                <span id="ppt-overlay-text">Opening Presentation...</span>
+            </div>
+            <div id="grid-container" class="grid-container"></div>
+        </div>
+
+        <div id="bg-library-wrapper" class="bg-library-wrapper">
+
+            <div id="bg-toggle-bar" class="bg-toggle-bar">
+                <div class="bg-cat-group">
+                    <button class="media-cat-btn active" onclick="switchMediaCategory(event, 'video')">🎞️
+                        VIDEO</button>
+                    <button class="media-cat-btn" onclick="switchMediaCategory(event, 'audio')">🎵 AUDIO</button>
+                    <button class="media-cat-btn" onclick="switchMediaCategory(event, 'photo')">📷 PHOTO</button>
+                    <button class="media-cat-btn" onclick="switchMediaCategory(event, 'presentation')">📊
+                        PPTX/PDF</button>
+                    <button class="media-cat-btn" id="media-cat-btn-scripture"
+                        onclick="switchMediaCategory(event, 'scripture')">📖 SCRIPTURE</button>
+                    <button class="media-cat-btn" id="media-cat-btn-camera"
+                        onclick="switchMediaCategory(event, 'camera')">📹 CAMERA</button>
+                </div>
+
+                <div class="bg-toggle-action" onclick="toggleBgLibrary()">
+                    <span id="bg-toggle-icon" class="bg-toggle-text">▲ EXPAND</span>
+                </div>
+            </div>
+
+            <div id="bg-library-content" class="bg-library-content" style="display: none;">
+
+                <!-- PANEL MEDIA: video/audio/photo/presentation -->
+                <div id="bg-media-panel" class="bg-media-panel">
+
+                    <div class="bg-folder-sidebar">
+                        <!-- SIDEBAR TABS (Only shown for PPT) -->
+                        <div id="bg-sidebar-tabs" class="bg-sidebar-tabs" style="display: none;">
+                            <button class="bg-sb-tab active" onclick="setSidebarMode('local')">LOCAL FILE</button>
+                            <button class="bg-sb-tab" onclick="setSidebarMode('sender')">MEDIA SENDER</button>
+                        </div>
+
+                        <!-- SECTION: LOCAL FILES -->
+                        <div id="bg-local-section" class="bg-sidebar-section">
+                            <div class="bg-sidebar-actions">
+                                <div class="bg-action-row">
+                                    <button class="btn-action-1 btn-folder-new" onclick="createVirtualFolder()"
+                                        title="New Folder">NEW FOLDER</button>
+                                    <button class="btn-action-1 btn-folder-add" onclick="openNativeFolderPicker()"
+                                        title="Add Folder">ADD FOLDER</button>
+                                    <button class="btn-action-1 btn-import-media" onclick="openNativeFilePicker()"
+                                        title="Import Files">ADD FILE</button>
+                                </div>
+                            </div>
+                            <div id="bg-folder-list" class="bg-folder-list"></div>
+                        </div>
+
+                        <!-- SECTION: MEDIA SENDER -->
+                        <div id="bg-sender-section" class="bg-sidebar-section" style="display: none;">
+                            <div class="bg-sidebar-actions">
+                                <div class="bg-action-row">
+                                    <button class="btn-action-1 btn-folder-add" onclick="refreshMediaSenders()"
+                                        title="Refresh List">🔄 REFRESH SENDER</button>
+                                </div>
+                            </div>
+                            <div id="bg-sender-list" class="bg-folder-list">
+                                <div style="padding:15px; color:#666; font-size:0.75em; text-align:center;">Click refresh to scan network...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-main-view">
+                        <div class="bg-view-header">
+                            <span id="bg-active-folder-name" class="bg-active-name">📂 All Videos</span>
+                            <div class="bg-view-hint">Right-Click = Preview | Drag & Drop = Apply</div>
+                        </div>
+
+                        <div id="bg-grid-container" class="bg-grid-view"></div>
+                    </div>
+
+                </div>
+
+                <div id="scr-lib-panel" class="scr-lib-panel" style="display: none;">
+
+                    <!-- KIRI: search & terjemahan -->
+                    <div class="scr-sidebar">
+
+                        <div class="scr-search-group">
+                            <div class="scr-section-title">🔍 Search Scripture</div>
+                            <input type="text" id="bible-book" class="scr-input" placeholder="Book Name..."
+                                list="bible-books-list" onkeydown="if(event.key==='Enter') searchScripture()">
+                            <datalist id="bible-books-list"></datalist>
+                            <div class="scr-input-row">
+                                <input type="number" id="bible-chapter" class="scr-input" placeholder="Chapter" min="1"
+                                    oninput="if(this.value !== '' && this.value < 1) this.value = 1;"
+                                    onkeydown="if(event.key==='Enter') searchScripture()">
+                                <input type="number" id="bible-verse" class="scr-input" placeholder="Verse" min="1"
+                                    oninput="if(this.value !== '' && this.value < 1) this.value = 1;"
+                                    onkeydown="if(event.key==='Enter') searchScripture()">
+                                <button class="btn-scr-search-new" onclick="searchScripture()">SHOW</button>
+                            </div>
+                        </div>
+
+                        <div class="scr-db-group">
+                            <div class="scr-section-title">📚 Database & Translations</div>
+                            <div id="bible-translation-list" class="scr-translation-list"></div>
+                            <button class="btn-scr-import" onclick="importBible()">➕ Import Bible XML</button>
+                            <input type="file" id="bible-upload-input" accept=".xml" class="te-hidden"
+                                onchange="handleBibleUpload(event)">
+                        </div>
+
+                    </div>
+
+                    <!-- KANAN: grid container ayat -->
+                    <div class="scr-main-view">
+                        <div class="bg-view-header">
+                            <span class="bg-active-name text-accent">📋 Verse List</span>
+                            <div class="bg-view-hint">Click verse to show on screen</div>
+                        </div>
+                        <div id="scripture-grid-container" class="scripture-grid-container scr-grid"></div>
+                    </div>
+
+                </div>
+
+                <!-- PANEL CAMERA -->
+                <div id="cam-lib-panel" class="cam-lib-panel" style="display: none;">
+                    <div class="cam-sidebar">
+                        <div class="scr-section-title">📹 DETECTED CAMERAS</div>
+                        <div id="cam-device-list" class="cam-device-list"></div>
+                        <button class="btn-cam-refresh" onclick="refreshCameraDevices()">🔄 REFRESH LIST</button>
+                    </div>
+
+                    <div class="cam-preview-area">
+                        <div class="bg-view-header">
+                            <span class="bg-active-name text-accent">👁️ CAMERA PREVIEW</span>
+                        </div>
+                        <div class="cam-preview-wrapper">
+                            <video id="cam-local-preview" autoplay playsinline muted></video>
+                            <div id="cam-no-preview" class="cam-no-preview">Select camera to preview</div>
+                        </div>
+                    </div>
+
+                    <div class="cam-control-area">
+                        <div class="bg-view-header">
+                            <span class="bg-active-name text-accent">⚙️ ASSIGNMENT</span>
+                        </div>
+
+                        <div class="cam-assign-card">
+                            <div class="cam-card-title">
+                                <span>🖥️ MAIN DISPLAY</span>
+                                <span id="cam-main-active-name"
+                                    style="margin-left:auto; color:var(--accent); font-size:0.8em; text-transform:none; font-weight:normal; opacity:0.7;"></span>
+                            </div>
+                            <div class="cam-card-body">
+                                <div class="cam-field">
+                                    <label>Fit Mode</label>
+                                    <select id="cam-main-fit" onchange="updateCameraSettings('main')">
+                                        <option value="fit">FIT</option>
+                                        <option value="fill">FILL</option>
+                                        <option value="stretch">STRETCH</option>
+                                    </select>
+                                </div>
+
+                                <!-- POSITION EDITOR COLLAPSIBLE -->
+                                <div class="cam-editor-toggle" onclick="toggleCamEditor('main')">
+                                    <span>📐 POSITION EDITOR</span>
+                                    <span id="cam-main-editor-arrow">▼</span>
+                                </div>
+                                <div id="cam-main-editor-content" class="cam-editor-content">
+                                    <!-- X POSITION -->
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>X POSITION</label>
+                                                <button class="cam-reset-btn" onclick="resetCameraSetting('main', 'x')"
+                                                    title="Reset to 0%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-x" class="cam-val-label">0%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'x', -2)">-</button>
+                                            <input type="range" id="cam-main-x" min="-100" max="100" step="1" value="0"
+                                                oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'x', 2)">+</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Y POSITION -->
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>Y POSITION</label>
+                                                <button class="cam-reset-btn" onclick="resetCameraSetting('main', 'y')"
+                                                    title="Reset to 0%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-y" class="cam-val-label">0%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'y', -2)">-</button>
+                                            <input type="range" id="cam-main-y" min="-100" max="100" step="1" value="0"
+                                                oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'y', 2)">+</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- ZOOM -->
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>ZOOM</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'zoom')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-zoom" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'zoom', -5)">-</button>
+                                            <input type="range" id="cam-main-zoom" min="10" max="500" step="1"
+                                                value="100" oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'zoom', 5)">+</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- OPACITY -->
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>TRANSPARENCY</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'opacity')"
+                                                    title="Reset to 0% transparency">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-opacity" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'opacity', -5)">-</button>
+                                            <input type="range" id="cam-main-opacity" min="0" max="100" step="1"
+                                                value="100" oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'opacity', 5)">+</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- CAMERA EFFECT -->
+                                <div class="cam-editor-toggle" onclick="toggleCamEffect('main')">
+                                    <span>✨ CAMERA EFFECT</span>
+                                    <span id="cam-main-effect-arrow">▼</span>
+                                </div>
+                                <div id="cam-main-effect-content" class="cam-editor-content">
+                                    <div
+                                        style="font-size:0.6em; color:var(--accent); font-weight:bold; margin-bottom:5px;">
+                                        COLOR ADJUSTMENT</div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>SATURATION</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'saturation')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-saturation" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'saturation', -5)">-</button>
+                                            <input type="range" id="cam-main-saturation" min="0" max="200" step="1"
+                                                value="100" oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'saturation', 5)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>HUE ROTATE</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'hue')"
+                                                    title="Reset to 0deg">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-hue" class="cam-val-label">0°</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'hue', -5)">-</button>
+                                            <input type="range" id="cam-main-hue" min="0" max="360" step="1" value="0"
+                                                oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'hue', 5)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>BRIGHTNESS</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'brightness')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-brightness" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'brightness', -5)">-</button>
+                                            <input type="range" id="cam-main-brightness" min="0" max="200" step="1"
+                                                value="100" oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'brightness', 5)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>CONTRAST</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'contrast')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-contrast" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'contrast', -5)">-</button>
+                                            <input type="range" id="cam-main-contrast" min="0" max="200" step="1"
+                                                value="100" oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'contrast', 5)">+</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- MASKING LAYER -->
+                                <div class="cam-editor-toggle" onclick="toggleCamMask('main')">
+                                    <span>🎭 MASKING LAYER</span>
+                                    <span id="cam-main-mask-arrow">▼</span>
+                                </div>
+                                <div id="cam-main-mask-content" class="cam-editor-content">
+                                    <div class="cam-field">
+                                        <label>MASK IMAGE FILE</label>
+                                        <div style="display:flex; gap:5px;">
+                                            <input type="text" id="cam-main-mask-image" readonly
+                                                placeholder="No file selected..."
+                                                style="flex:1; background:rgba(0,0,0,0.3); border:1px solid #444; color:white; font-size:0.7em; padding:5px;"
+                                                onclick="browseMaskFile('main')">
+                                            <button class="cam-reset-btn"
+                                                style="background:#222; border:1px solid #444; width:30px;"
+                                                onclick="browseMaskFile('main')">📁</button>
+                                            <button class="cam-reset-btn"
+                                                onclick="resetCameraSetting('main', 'mask_image')">🗑️</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <label>MASK FIT</label>
+                                        <select id="cam-main-mask-fit" onchange="updateCameraSettings('main')">
+                                            <option value="fill">FILL</option>
+                                            <option value="fit">FIT</option>
+                                            <option value="stretch">STRETCH</option>
+                                        </select>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>MASK X</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'mask_x')"
+                                                    title="Reset to 0%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-mask_x" class="cam-val-label">0%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'mask_x', -2)">-</button>
+                                            <input type="range" id="cam-main-mask-x" min="-100" max="100" step="1"
+                                                value="0" oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'mask_x', 2)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>MASK Y</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'mask_y')"
+                                                    title="Reset to 0%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-mask_y" class="cam-val-label">0%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'mask_y', -2)">-</button>
+                                            <input type="range" id="cam-main-mask-y" min="-100" max="100" step="1"
+                                                value="0" oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'mask_y', 2)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>MASK ZOOM</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('main', 'mask_zoom')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-main-mask_zoom" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'mask_zoom', -5)">-</button>
+                                            <input type="range" id="cam-main-mask-zoom" min="10" max="500" step="1"
+                                                value="100" oninput="updateCameraSettings('main')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('main', 'mask_zoom', 5)">+</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button id="btn-cam-main-toggle" class="btn-cam-toggle"
+                                    onclick="toggleCameraOutput('main')">🔴 SHOW LIVE</button>
+                            </div>
+                        </div>
+
+                        <div class="cam-assign-card">
+                            <div class="cam-card-title">
+                                <span>📺 AUDIENCE (LT)</span>
+                                <span id="cam-audience-active-name"
+                                    style="margin-left:auto; color:#f59e0b; font-size:0.8em; text-transform:none; font-weight:normal; opacity:0.7;"></span>
+                            </div>
+                            <div class="cam-card-body">
+                                <div class="cam-field">
+                                    <label>Fit Mode</label>
+                                    <select id="cam-audience-fit" onchange="updateCameraSettings('audience')">
+                                        <option value="fit">FIT</option>
+                                        <option value="fill">FILL</option>
+                                        <option value="stretch">STRETCH</option>
+                                    </select>
+                                </div>
+
+                                <!-- POSITION EDITOR COLLAPSIBLE -->
+                                <div class="cam-editor-toggle" onclick="toggleCamEditor('audience')">
+                                    <span>📐 POSITION EDITOR</span>
+                                    <span id="cam-audience-editor-arrow">▼</span>
+                                </div>
+                                <div id="cam-audience-editor-content" class="cam-editor-content">
+                                    <!-- X POSITION -->
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>X POSITION</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'x')"
+                                                    title="Reset to 0%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-x" class="cam-val-label">0%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'x', -2)">-</button>
+                                            <input type="range" id="cam-audience-x" min="-100" max="100" step="1"
+                                                value="0" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'x', 2)">+</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Y POSITION -->
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>Y POSITION</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'y')"
+                                                    title="Reset to 0%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-y" class="cam-val-label">0%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'y', -2)">-</button>
+                                            <input type="range" id="cam-audience-y" min="-100" max="100" step="1"
+                                                value="0" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'y', 2)">+</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- ZOOM -->
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>ZOOM</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'zoom')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-zoom" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'zoom', -5)">-</button>
+                                            <input type="range" id="cam-audience-zoom" min="10" max="500" step="1"
+                                                value="100" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'zoom', 5)">+</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- OPACITY -->
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>TRANSPARENCY</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'opacity')"
+                                                    title="Reset to 0% transparency">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-opacity" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'opacity', -5)">-</button>
+                                            <input type="range" id="cam-audience-opacity" min="0" max="100" step="1"
+                                                value="100" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'opacity', 5)">+</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- CAMERA EFFECT -->
+                                <div class="cam-editor-toggle" onclick="toggleCamEffect('audience')">
+                                    <span>✨ CAMERA EFFECT</span>
+                                    <span id="cam-audience-effect-arrow">▼</span>
+                                </div>
+                                <div id="cam-audience-effect-content" class="cam-editor-content">
+                                    <div
+                                        style="font-size:0.6em; color:var(--accent); font-weight:bold; margin-bottom:5px;">
+                                        COLOR ADJUSTMENT</div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>SATURATION</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'saturation')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-saturation" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'saturation', -5)">-</button>
+                                            <input type="range" id="cam-audience-saturation" min="0" max="200" step="1"
+                                                value="100" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'saturation', 5)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>HUE ROTATE</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'hue')"
+                                                    title="Reset to 0deg">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-hue" class="cam-val-label">0°</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'hue', -5)">-</button>
+                                            <input type="range" id="cam-audience-hue" min="0" max="360" step="1"
+                                                value="0" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'hue', 5)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>BRIGHTNESS</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'brightness')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-brightness" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'brightness', -5)">-</button>
+                                            <input type="range" id="cam-audience-brightness" min="0" max="200" step="1"
+                                                value="100" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'brightness', 5)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>CONTRAST</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'contrast')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-contrast" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'contrast', -5)">-</button>
+                                            <input type="range" id="cam-audience-contrast" min="0" max="200" step="1"
+                                                value="100" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'contrast', 5)">+</button>
+                                        </div>
+                                    </div>
+
+                                </div>
+
+                                <!-- MASKING LAYER -->
+                                <div class="cam-editor-toggle" onclick="toggleCamMask('audience')">
+                                    <span>🎭 MASKING LAYER</span>
+                                    <span id="cam-audience-mask-arrow">▼</span>
+                                </div>
+                                <div id="cam-audience-mask-content" class="cam-editor-content">
+                                    <div class="cam-field">
+                                        <label>MASK IMAGE FILE</label>
+                                        <div style="display:flex; gap:5px;">
+                                            <input type="text" id="cam-audience-mask-image" readonly
+                                                placeholder="No file selected..."
+                                                style="flex:1; background:rgba(0,0,0,0.3); border:1px solid #444; color:white; font-size:0.7em; padding:5px;"
+                                                onclick="browseMaskFile('audience')">
+                                            <button class="cam-reset-btn"
+                                                style="background:#222; border:1px solid #444; width:30px;"
+                                                onclick="browseMaskFile('audience')">📁</button>
+                                            <button class="cam-reset-btn"
+                                                onclick="resetCameraSetting('audience', 'mask_image')">🗑️</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <label>MASK FIT</label>
+                                        <select id="cam-audience-mask-fit" onchange="updateCameraSettings('audience')">
+                                            <option value="fill">FILL</option>
+                                            <option value="fit">FIT</option>
+                                            <option value="stretch">STRETCH</option>
+                                        </select>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>MASK X</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'mask_x')"
+                                                    title="Reset to 0%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-mask_x" class="cam-val-label">0%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'mask_x', -2)">-</button>
+                                            <input type="range" id="cam-audience-mask-x" min="-100" max="100" step="1"
+                                                value="0" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'mask_x', 2)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>MASK Y</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'mask_y')"
+                                                    title="Reset to 0%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-mask_y" class="cam-val-label">0%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'mask_y', -2)">-</button>
+                                            <input type="range" id="cam-audience-mask-y" min="-100" max="100" step="1"
+                                                value="0" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'mask_y', 2)">+</button>
+                                        </div>
+                                    </div>
+                                    <div class="cam-field">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <div style="display:flex; align-items:center; gap:5px;">
+                                                <label>MASK ZOOM</label>
+                                                <button class="cam-reset-btn"
+                                                    onclick="resetCameraSetting('audience', 'mask_zoom')"
+                                                    title="Reset to 100%">↺</button>
+                                            </div>
+                                            <span id="val-cam-audience-mask_zoom" class="cam-val-label">100%</span>
+                                        </div>
+                                        <div class="cam-slider-group">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'mask_zoom', -5)">-</button>
+                                            <input type="range" id="cam-audience-mask-zoom" min="10" max="500" step="1"
+                                                value="100" oninput="updateCameraSettings('audience')">
+                                            <button class="cam-step-btn"
+                                                onclick="stepCameraSetting('audience', 'mask_zoom', 5)">+</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button id="btn-cam-audience-toggle" class="btn-cam-toggle"
+                                    onclick="toggleCameraOutput('audience')">🔴 SHOW LIVE</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <div class="col-settings">
+        <div class="sticky-top-panel">
+
+            <div id="electron-wrapper" class="electron-wrapper te-hidden">
+                <label class="electron-label">🔌 OUTPUT DISPLAY</label>
+                <div id="electron-bar">
+                    <div class="out-btn" id="btn-out-main" onclick="toggleElectronBtn('main')"><i>🖥️</i> MAIN</div>
+                    <div class="out-btn" id="btn-out-lt" onclick="toggleElectronBtn('lt')"><i>📺</i> AUDIENCE</div>
+                    <div class="out-btn" id="btn-out-fb" onclick="toggleElectronBtn('fb')"><i>🎤</i> STAGE</div>
+                    <button class="btn-config" onclick="toggleConfigPanel()" title="Output Settings">⚙️</button>
+                </div>
+                <div id="electron-config">
+                    <div class="electron-config-title">PHYSICAL SCREEN MAPPING</div>
+                    <div class="config-row"><span>🖥️ Main</span><select id="disp-main" class="config-select"></select>
+                    </div>
+                    <div class="config-row"><span>📺 Audience</span><select id="disp-lt" class="config-select"></select>
+                    </div>
+                    <div class="config-row"><span>🎤 Stage</span><select id="disp-fb" class="config-select"></select>
+                    </div>
+                    <!-- 🎯 TOMBOL TES DISPLAY -->
+                    <button onclick="testDisplays()"
+                        class="btn-display-check">
+                        👁️ DISPLAY CHECK
+                    </button>
+                </div>
+            </div>
+
+            <div class="preview-container">
+
+                <div id="preview-wrapper" class="preview-wrapper">
+                    <iframe src="/display" id="preview-frame" class="preview-frame" scrolling="no"></iframe>
+                </div>
+            </div>
+
+            <div class="clear-btn-container">
+                <button id="btn-clr-lyrics" class="btn-clr-media" onclick="clearLayer('lyrics')"
+                    title="Clear Lyrics (Ctrl+C)">
+                    <svg class="btn-clr-svg" viewBox="0 0 24 24">
+                        <path
+                            d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z" />
+                    </svg>
+                    <span>LYRICS</span>
+                </button>
+                <button id="btn-clr-video" class="btn-clr-media" onclick="clearLayer('video')"
+                    title="Clear Video (Ctrl+V)">
+                    <svg class="btn-clr-svg" viewBox="0 0 24 24">
+                        <path
+                            d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-2z" />
+                    </svg>
+                    <span>VIDEO</span>
+                </button>
+                <button id="btn-clr-audio" class="btn-clr-media" onclick="clearLayer('audio')"
+                    title="Clear Audio (Ctrl+A)">
+                    <svg class="btn-clr-svg" viewBox="0 0 24 24">
+                        <path
+                            d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                    </svg>
+                    <span>AUDIO</span>
+                </button>
+                <button id="btn-clr-photo" class="btn-clr-media" onclick="clearLayer('photo')"
+                    title="Clear Photo (Ctrl+I)">
+                    <svg class="btn-clr-svg" viewBox="0 0 24 24">
+                        <path
+                            d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+                    </svg>
+                    <span>IMAGE</span>
+                </button>
+                <button id="btn-clr-presentation" class="btn-clr-media" onclick="clearLayer('presentation')"
+                    title="Clear PPTX (Ctrl+P)">
+                    <svg class="btn-clr-svg" viewBox="0 0 24 24">
+                        <path d="M3 3h18v2H3V3zm3 4h12v10H6V7zm2 2v6h8V9H8z" />
+                    </svg>
+                    <span>PPTX</span>
+                </button>
+            </div>
+
+        </div>
+        <div class="control-group"
+            style="background: #1e1e1e; padding: 10px; border-radius: 5px; border: 1px solid #ffc107;">
+            <div
+                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid #333; padding-bottom: 8px;">
+                <div style="font-size: 0.85em; font-weight: bold; color: #ffc107; letter-spacing: 1px;">🌐 DEFAULT
+                    PRESET</div>
+                <label class="switch-minimalist" title="Force all songs to use these settings">
+                    <input type="checkbox" id="force-global" onchange="toggleGlobalMode()">
+                    <span class="slider-min round"></span>
+                </label>
+            </div>
+
+            <div id="visual-preset-container" class="preset-grid">
+            </div>
+
+            <div class="preset-action-panel">
+                <input type="hidden" id="global-preset-select">
+
+                <div class="preset-action-header no-border-bottom">
+                    <span class="preset-action-label">SELECTED:</span>
+                    <span id="selected-preset-label" class="preset-action-value preset-value-flex">- No Preset -</span>
+                    <button class="btn-star-compact" onclick="setDefaultDisplayPreset()"
+                        title="Set as Startup Default">⭐</button>
+                </div>
+            </div>
+            <div id="disp-default-status"
+                style="font-size: 0.65em; color: #888; margin-bottom: 5px; text-align: right; font-style: italic;">
+                Default: None</div>
+
+            <div
+                style="font-size: 0.85em; font-weight: bold; color: #00e5ff; letter-spacing: 1px; margin-bottom: 10px;">
+                🎵 SONG STYLE</div>
+
+            <div style="display: flex; gap: 0; border-radius: 4px; overflow: hidden; border: 1px solid #444;">
+                <button id="btn-mode-custom"
+                    style="flex: 1; padding: 8px; background: #00e5ff; color: #000; border: none; font-weight: bold; font-size: 0.8em; cursor: pointer; transition: 0.2s;"
+                    onclick="setSongStyleMode('custom')">🛠️ CUSTOM</button>
+                <button id="btn-mode-preset"
+                    style="flex: 1; padding: 8px; background: #222; color: #aaa; border: none; font-weight: bold; font-size: 0.8em; cursor: pointer; transition: 0.2s;"
+                    onclick="setSongStyleMode('preset')">📦 PRESET</button>
+            </div>
+
+            <input type="hidden" id="current-disp-mode" value="custom">
+
+            <div id="song-preset-controls"
+                style="display: none; background: #111; padding: 10px; border-radius: 4px; border: 1px solid #2a2a2a;">
+                <div style="font-size: 0.75em; color: #888; margin-bottom: 5px;">Link Song to Preset:</div>
+                <select id="song-preset-select"
+                    style="width: 100%; background: #222; border: 1px solid #444; color: #fff; padding: 6px; border-radius: 4px; font-size: 0.85em; outline: none;"
+                    onchange="applySongStyle()"></select>
+            </div>
+        </div>
+
+
+        <div id="text-editor-block" class="control-group"
+            style="background: #111; border: 1px solid #00e5ff; padding: 15px; border-radius: 8px; text-align: center; margin-top: 15px;">
+            <label
+                style="color: #00e5ff; font-weight: bold; margin-bottom: 10px; display: block; letter-spacing: 1px;">✍️
+                TEXT EDITOR</label>
+            <button class="btn-action"
+                style="background: #00e5ff; color: #000; font-weight: bold; font-size: 1em; padding: 10px;"
+                onclick="openTextEditModal()">🛠️ OPEN EDITOR</button>
+            <div style="font-size: 0.65em; color: #888; margin-top: 8px;">Font, Animation, Motion, Color & Effects</div>
+        </div>
+
+        <div class="control-group"
+            style="background: #111; border: 1px solid #ffc107; padding: 10px; border-radius: 6px; margin-bottom: 20px;">
+            <label style="color: #ffc107; font-weight: bold; margin-bottom: 10px; display: block;">🌍 BILINGUAL
+                FONT</label>
+            <div style="display: flex; gap: 15px; align-items: center;">
+                <div style="flex: 1;">
+                    <label style="color: #aaa; font-size: 0.7em; margin-bottom: 5px;">Sub-Text Size: <span
+                            id="val-sub-size" style="color:#fff;">0.6em</span></label>
+                    <input type="range" id="sub-size-input" min="0.3" max="1.0" step="0.05" value="0.6"
+                        oninput="document.getElementById('val-sub-size').innerText=this.value+'em'; updateSettings()">
+                </div>
+                <div style="flex: 0 0 60px;">
+                    <label style="color: #aaa; font-size: 0.7em; margin-bottom: 5px;">Color</label>
+                    <input type="color" id="sub-color-input" value="#ffc107"
+                        style="height: 30px; width: 100%; padding: 0; cursor: pointer;" onchange="updateSettings()">
+                </div>
+            </div>
+            <small style="color: #888; font-size: 0.65em; display: block; margin-top: 8px;">*Use brackets <b>()</b> to
+                separate languages. (Example: Father You Are Good)</small>
+        </div>
+
+        <div class="legend"><strong>SHORTCUTS:</strong><br><span class="key">Right Click</span> = Quick Edit<br><span
+                class="key">Shift + V/C/B</span> = Assign<br><span class="key">V/C</span> = Jump Live<br><span
+                class="key">Arrows</span> = Next/Prev</div>
+    </div>
+
+    <div id="alert-modal" class="modal-overlay">
+        <div class="modal-box modal-wide" style="border: 1px solid #444;">
+            <div class="modal-header">
+                <span class="modal-title" style="color: #fff; font-size: 1.2em;">🚨 EMERGENCY CONTROL</span>
+                <button class="close-btn" onclick="safeCloseModal('alert-modal')">✖</button>
+            </div>
+
+            <div class="alert-split-grid">
+
+                <div class="alert-panel audience">
+                    <div class="alert-header">📢 AUDIENCE RUNNING TEXT</div>
+
+                    <div class="preset-action-panel" style="margin-bottom: 12px; background: #181818;">
+                        <div class="preset-action-header" style="border-bottom: none; padding-bottom: 0;">
+                            <span class="preset-action-label" style="font-weight: bold;">💾 SAVED PRESETS</span>
+                        </div>
+                        <div style="display: flex; gap: 6px; margin-top: 5px;">
+                            <select id="alert-preset-select" class="compact-input"
+                                style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
+                                onchange="loadSelectedAlertPreset()"></select>
+                            <button class="btn-preset-star" onclick="loadSelectedAlertPreset()" title="Load Preset"
+                                style="background: #28a745; border-color: #28a745; padding: 0 12px;">📂</button>
+                            <button class="btn-preset-del" onclick="deleteAlertPreset()" title="Delete Preset"
+                                style="padding: 0 12px;">🗑️</button>
+                        </div>
+                        <div class="preset-action-btn-group" style="margin-top: 4px;">
+                            <button class="btn-preset-save" onclick="overwriteAlertPreset()"
+                                title="Update Preset Ini (Overwrite)">💾 SAVE</button>
+                            <button class="btn-preset-saveas" onclick="saveAsAlertPreset()" title="Buat Preset Baru">➕
+                                SAVE AS</button>
+                        </div>
+                    </div>
+
+                    <textarea id="alert-input" placeholder="Ketik pengumuman untuk jemaat..." rows="3"
+                        class="compact-input"
+                        style="background: #111; font-size: 1em; resize: none; border: 1px solid #444; margin-bottom: 10px;"></textarea>
+                    <div class="control-row">
+                        <label class="check-pill"><input type="checkbox" id="chk-main" checked> Main</label>
+                        <label class="check-pill"><input type="checkbox" id="chk-lt" checked> Lower 3rd</label>
+                        <select id="alert-pos" class="compact-input" style="flex: 1; font-size: 0.8em; padding: 6px;"
+                            onchange="updateLiveAlert()">
+                            <option value="top">POS: ATAS</option>
+                            <option value="bottom">POS: BAWAH</option>
+                        </select>
+                        <input type="color" id="alert-color" value="#8b0000" title="Background Color"
+                            style="height: 30px; width: 40px; cursor: pointer; border: 1px solid #444; border-radius: 4px; padding: 0;"
+                            onchange="updateLiveAlert()">
+                    </div>
+
+                    <div class="control-row"
+                        style="margin-top: 5px; background: #1a1a1a; padding: 8px; border-radius: 6px; border: 1px solid #333;">
+                        <span style="font-size:0.7em; color:#888; font-weight:bold; letter-spacing:1px;">⏱️ SPEED</span>
+                        <input type="range" id="alert-speed" value="15" min="5" max="40" step="1"
+                            style="flex:1; cursor:pointer; accent-color: #ffc107;"
+                            oninput="document.getElementById('val-alert-speed').innerText=this.value+'s'; updateLiveAlert()">
+                        <span id="val-alert-speed"
+                            style="font-size:0.8em; color:#ffc107; font-weight:bold; min-width:30px; text-align:right;">15s</span>
+                    </div>
+
+                    <button id="btn-toggle-alert" class="btn-action"
+                        style="background: #28a745; margin-top: auto; font-size: 1.1em; letter-spacing: 1px; transition: 0.3s;"
+                        onclick="toggleAlert()">📢 SHOW ALERT</button>
+                </div>
+
+                <div class="alert-panel stage">
+                    <div class="alert-header">🎤 STAGE TOOLS (SINGER/WL)</div>
+
+                    <div style="background: #111; padding: 10px; border-radius: 6px; border: 1px solid #333;">
+                        <span class="compact-label" style="color: #888; margin-bottom: 8px;">⏱️ STAGE COUNTDOWN
+                            TIMER</span>
+                        <div class="control-row">
+                            <input type="number" id="timer-min" value="5" placeholder="Min" class="compact-input"
+                                style="width: 70px; text-align: center; font-size: 1.2em; font-weight: bold;">
+                            <span style="color: #aaa; margin-right: 5px;">Menit</span>
+
+                            <button id="btn-toggle-timer" class="btn-action"
+                                style="background: #28a745; flex: 1; padding: 8px; display: flex; justify-content: center; gap: 8px; align-items: center;"
+                                onclick="toggleStageTimer()">
+                                <span id="timer-btn-text">▶ START</span>
+                                <span id="controller-timer-display"
+                                    style="background: rgba(0,0,0,0.5); padding: 2px 8px; border-radius: 4px; font-family: monospace; display: none; font-size: 0.9em; letter-spacing: 1px;">00:00</span>
+                            </button>
+
+                        </div>
+                    </div>
+
+                    <span class="compact-label" style="color: #888; margin-top: 5px;">💬 STAGE MESSAGE</span>
+                    <textarea id="stage-input" placeholder="Pesan rahasia ke panggung..." rows="2" class="compact-input"
+                        style="background: #111; font-size: 1em; resize: none;"></textarea>
+
+                    <div class="control-row" style="margin-top: auto;">
+                        <label class="check-pill" style="border-color: #ffc107; color: #ffc107;">
+                            <input type="checkbox" id="chk-flash"> ⚡ Kedip
+                        </label>
+                        <button id="btn-toggle-msg" class="btn-action"
+                            style="background: #28a745; flex: 1; font-size: 1.1em; letter-spacing: 1px; transition: 0.3s;"
+                            onclick="toggleMessage()">💬 SHOW MESSAGE</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <div id="lt-modal" class="modal-overlay">
+        <div class="modal-box" style="width: 480px; border: 1px solid #444; padding: 0;">
+
+            <div class="modal-header"
+                style="padding: 15px 20px; margin: 0; background: #1a1a1a; border-bottom: 1px solid #333; border-radius: 8px 8px 0 0;">
+                <span class="modal-title"
+                    style="color: #ffc107; font-size: 1.1em; display: flex; align-items: center; gap: 8px;">📺 LOWER
+                    THIRD CONFIG</span>
+                <button class="close-btn" onclick="safeCloseModal('lt-modal')">✖</button>
+            </div>
+
+            <div style="padding: 20px;">
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; background: rgba(0, 229, 255, 0.1); border: 1px solid #00e5ff; padding: 8px 12px; border-radius: 6px; margin-bottom: 20px;">
+                    <span style="font-size: 0.8em; color: #00e5ff; font-weight: bold; letter-spacing: 1px;">🟢 EQUIPPED
+                        PRESET:</span>
+                    <span id="lt-active-badge" style="font-size: 0.9em; color: #fff; font-weight: bold;">- Custom /
+                        Unsaved -</span>
+                </div>
+
+                <div class="preset-action-panel" style="margin-bottom: 20px; background: #181818;">
+                    <div class="preset-action-header" style="border-bottom: none; padding-bottom: 0;">
+                        <span class="preset-action-label" style="font-weight: bold; font-size: 0.8em;">💾 SAVED
+                            PRESETS</span>
+                        <small id="lt-default-status"
+                            style="color: #888; font-size: 0.85em; font-style: italic;">Default: None</small>
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 5px;">
+                        <select id="lt-preset-select" class="compact-input"
+                            style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
+                            onchange="loadSelectedLTPreset()"></select>
+                        <button class="btn-preset-star" onclick="loadSelectedLTPreset()" title="Load Preset"
+                            style="background: #28a745; border-color: #28a745; padding: 0 12px;">📂</button>
+                        <button class="btn-preset-del" onclick="deleteLTPreset()" title="Delete Preset"
+                            style="padding: 0 12px;">🗑️</button>
+                    </div>
+                    <div class="preset-action-btn-group" style="margin-top: 4px;">
+                        <button class="btn-preset-save" onclick="overwriteLTPreset()"
+                            title="Update Preset Ini (Overwrite)">💾 SAVE</button>
+                        <button class="btn-preset-saveas" onclick="saveAsLTPreset()" title="Buat Preset Baru">➕ SAVE
+                            AS</button>
+                        <button class="btn-preset-star" onclick="setLTDefault()" title="Set as Startup Default">⭐
+                            DFLT</button>
+                    </div>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 18px;">
+
+                    <div style="display: flex; gap: 10px;">
+                        <div style="flex: 2;">
+                            <label
+                                style="color: #aaa; font-size: 0.75em; margin-bottom: 6px; display: block; font-weight: bold;">🅰️
+                                FONT FAMILY (Local)</label>
+                            <input type="text" id="lt-font-select" list="lt-font-datalist" placeholder="Search Font..."
+                                class="compact-input" style="font-size: 0.95em;"
+                                onchange="markLtCustom(); sendLTConfig()">
+                            <datalist id="lt-font-datalist"></datalist>
+                        </div>
+                        <div style="flex: 1;">
+                            <label
+                                style="color: #aaa; font-size: 0.75em; margin-bottom: 6px; display: block; font-weight: bold;">📏
+                                SIZE</label>
+                            <input type="number" id="lt-size" value="60" class="compact-input"
+                                style="font-size: 0.95em; text-align: center;"
+                                onchange="markLtCustom(); sendLTConfig()">
+                        </div>
+                        <div style="flex: 0 0 50px;">
+                            <label
+                                style="color: #aaa; font-size: 0.75em; margin-bottom: 6px; display: block; text-align: center; font-weight: bold;">🎨</label>
+                            <input type="color" id="lt-color" value="#ffffff" title="Text Color"
+                                style="width: 100%; height: 33px; padding: 0; border: 1px solid #444; border-radius: 4px; cursor: pointer;"
+                                onchange="markLtCustom(); sendLTConfig()">
+                        </div>
+                    </div>
+
+                    <hr style="border: none; border-top: 1px dashed #333; margin: 0;">
+
+                    <div>
+                        <label
+                            style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">📍
+                            POSITION & ALIGNMENT</label>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <div
+                                style="display: flex; background: #111; border: 1px solid #444; border-radius: 6px; overflow: hidden; flex: 1;">
+                                <button id="btn-lt-top" class="preset-btn"
+                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0;"
+                                    onclick="setLTPresetUI('top')">TOP</button>
+                                <button id="btn-lt-center" class="preset-btn"
+                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0;"
+                                    onclick="setLTPresetUI('center')">CENTER</button>
+                                <button id="btn-lt-bottom" class="preset-btn"
+                                    style="border: none; border-radius: 0; margin: 0; background: #007bff; color: white; padding: 8px 0;"
+                                    onclick="setLTPresetUI('bottom')">BOTTOM</button>
+                            </div>
+
+                            <div
+                                style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 6px; overflow: hidden;">
+                                <button class="lt-btn-adjust"
+                                    style="border: none; background: #333; width: 32px; height: 35px; border-radius: 0;"
+                                    onclick="nudgeLT(10)">▲</button>
+                                <input type="number" id="lt-margin"
+                                    style="width: 50px; height: 35px; padding: 0; text-align: center; background: transparent; border: none; color: white; font-weight: bold;"
+                                    value="50" onchange="markLtCustom(); sendLTConfig()">
+                                <button class="lt-btn-adjust"
+                                    style="border: none; background: #333; width: 32px; height: 35px; border-left: 1px solid #444; border-radius: 0;"
+                                    onclick="nudgeLT(-10)">▼</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr style="border: none; border-top: 1px dashed #333; margin: 0;">
+
+                    <div>
+                        <label
+                            style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">🌑
+                            TEXT SHADOW (X / Y / BLUR / COLOR)</label>
+                        <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+                            <div
+                                style="flex: 1; display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 8px;">
+                                <span
+                                    style="color: #666; font-size: 0.8em; margin-right: 5px; font-weight: bold;">X:</span>
+                                <input type="number" id="lt-shadow-x" value="3" class="compact-input"
+                                    style="border: none; padding: 6px 0; background: transparent; font-size: 1em;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                            <div
+                                style="flex: 1; display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 8px;">
+                                <span
+                                    style="color: #666; font-size: 0.8em; margin-right: 5px; font-weight: bold;">Y:</span>
+                                <input type="number" id="lt-shadow-y" value="3" class="compact-input"
+                                    style="border: none; padding: 6px 0; background: transparent; font-size: 1em;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                            <div
+                                style="flex: 1; display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 8px;">
+                                <span
+                                    style="color: #666; font-size: 0.8em; margin-right: 5px; font-weight: bold;">Blur:</span>
+                                <input type="number" id="lt-shadow-blur" value="0" min="0" max="50"
+                                    class="compact-input"
+                                    style="border: none; padding: 6px 0; background: transparent; font-size: 1em;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                            <div style="flex: 1;">
+                                <input type="color" id="lt-shadow-color" value="#000000"
+                                    style="width: 100%; height: 34px; padding: 0; border: 1px solid #444; border-radius: 4px; cursor: pointer;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                        </div>
+
+                        <label
+                            style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">⭕
+                            TEXT STROKE (OUTLINE)</label>
+                        <div style="display: flex; gap: 8px;">
+                            <div
+                                style="flex: 1; display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 10px;">
+                                <span
+                                    style="color: #666; font-size: 0.85em; margin-right: 8px; font-weight: bold;">SIZE:</span>
+                                <input type="number" id="lt-stroke-size" value="0" min="0" max="20"
+                                    class="compact-input"
+                                    style="border: none; padding: 6px 0; background: transparent; font-size: 1em;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                            <div style="flex: 2;">
+                                <input type="color" id="lt-stroke-color" value="#000000"
+                                    style="width: 100%; height: 34px; padding: 0; border: 1px solid #444; border-radius: 4px; cursor: pointer;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                        </div>
+                    </div>
+
+                    <input type="hidden" id="lt-pos-mode" value="bottom">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="fb-modal" class="modal-overlay">
+        <div class="modal-box" style="width: 400px;">
+            <div class="modal-header">
+                <span class="modal-title">STAGE DISPLAY CONFIG</span>
+                <button class="close-btn" onclick="safeCloseModal('fb-modal')">✖</button>
+            </div>
+            <div class="preset-action-panel" style="margin-bottom: 15px; background: #181818;">
+                <div class="preset-action-header" style="border-bottom: none; padding-bottom: 0;">
+                    <span class="preset-action-label" style="font-weight: bold; font-size: 0.8em; color: #ffc107;">🎤
+                        SAVED PRESETS</span>
+                    <small id="fb-default-status" style="color: #888; font-size: 0.85em; font-style: italic;">Default:
+                        None</small>
+                </div>
+                <div style="display: flex; gap: 6px; margin-top: 5px;">
+                    <select id="fb-preset-select" class="compact-input"
+                        style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
+                        onchange="loadSelectedFBPreset()"></select>
+                    <button class="btn-preset-star" onclick="loadSelectedFBPreset()" title="Load Preset"
+                        style="background: #28a745; border-color: #28a745; padding: 0 12px;">📂</button>
+                    <button class="btn-preset-del" onclick="deleteFBPreset()" title="Delete Preset"
+                        style="padding: 0 12px;">🗑️</button>
+                </div>
+                <div class="preset-action-btn-group" style="margin-top: 4px;">
+                    <button class="btn-preset-save" onclick="overwriteFBPreset()"
+                        title="Update Preset Ini (Overwrite)">💾 SAVE</button>
+                    <button class="btn-preset-saveas" onclick="saveAsFBPreset()" title="Buat Preset Baru">➕ SAVE
+                        AS</button>
+                    <button class="btn-preset-star" onclick="setDefaultFBPreset()" title="Set as Startup Default">⭐
+                        DFLT</button>
+                </div>
+            </div>
+            <label>Layout Mode</label>
+            <div class="lt-control-row">
+                <button class="preset-btn" onclick="setFBLayout('split')">SPLIT (Standard)</button>
+                <button class="preset-btn" onclick="setFBLayout('full')">FULL (Max Text)</button>
+            </div>
+            <input type="hidden" id="fb-layout" value="split">
+            <hr style="border-color: #333; margin: 15px 0;">
+            <div class="lt-control-row">
+                <div style="flex:1"><label>Max Text Size (Auto-Fit)</label><input type="number" id="fb-curr-size"
+                        value="250" onchange="sendFBConfig()"></div>
+                <div style="flex:1"><label>Color</label><input type="color" id="fb-curr-color" value="#ffffff"
+                        style="height:30px; width:100%" onchange="sendFBConfig()"></div>
+            </div>
+            <div class="lt-control-row">
+                <div style="flex:1"><label>Max Next Size (px)</label><input type="number" id="fb-next-size" value="100"
+                        onchange="sendFBConfig()"></div>
+                <div style="flex:1"><label>Color</label><input type="color" id="fb-next-color" value="#888888"
+                        style="height:30px; width:100%" onchange="sendFBConfig()"></div>
+            </div>
+            <label>Background Color</label>
+            <input type="color" id="fb-bg-color" value="#000000" style="width:100%; height:30px;"
+                onchange="sendFBConfig()">
+        </div>
+    </div>
+
+    <div id="add-song-modal" class="modal-overlay">
+        <div class="modal-box song-editor-box">
+            <div class="modal-header">
+                <div class="song-modal-title-group">
+                    <span class="song-modal-icon" style="color:#10b981;">🎵</span>
+                    <div>
+                        <div class="modal-title" style="color:#10b981;">ADD NEW SONG</div>
+                        <div class="song-modal-sub">Create and add to your song library</div>
+                    </div>
+                </div>
+                <button class="close-btn" onclick="safeCloseModal('add-song-modal')">✖</button>
+            </div>
+
+            <div class="song-modal-body" style="flex: 1; overflow-y: auto; padding-right: 8px; margin-bottom: 16px;">
+                <div class="song-modal-field">
+                    <label class="song-modal-label">SONG TITLE</label>
+                    <input type="text" id="new-song-title" class="song-modal-input" placeholder="Enter song title...">
+                </div>
+
+                <div class="song-modal-field">
+                    <div class="song-editor-toolbar">
+                        <span class="song-editor-toolbar-label">SLIDE EDITOR <small
+                                style="font-size:0.75em;font-weight:normal;color:#666;text-transform:none;">Ctrl+Enter =
+                                Split</small></span>
+                        <div class="song-editor-toolbar-actions">
+                            <button onclick="undoEditorState('add')" class="se-btn se-btn-ghost" title="Undo (Ctrl+Z)">↩
+                                UNDO</button>
+                            <div class="se-divider"></div>
+                            <select class="se-case-select" onchange="transformText('add', this.value); this.value=''"
+                                style="font-size: 0.8em; font-weight: bold; padding: 2px 6px;">
+                                <option value="" disabled selected>Aa</option>
+                                <option value="upper">AA</option>
+                                <option value="lower">aa</option>
+                                <option value="title">Aa</option>
+                            </select>
+                            <div class="se-divider"></div>
+                            <button onclick="smartBulkPaste('add')" class="se-btn se-btn-accent"
+                                title="Smart Paste from Clipboard">📋 PASTE</button>
+                        </div>
+                    </div>
+                    <div id="add-editor-rows" class="editor-container"></div>
+                    <button class="se-add-slide-btn" onclick="addEditorRow('add')">➕ Add Slide</button>
+                </div>
+            </div>
+
+            <div class="song-modal-footer">
+                <button class="btn-song-action btn-song-cancel"
+                    onclick="safeCloseModal('add-song-modal')">CANCEL</button>
+                <button class="btn-song-action btn-song-save" onclick="saveAndLoadNewSong()">💾 SAVE TO LIBRARY &amp;
+                    LOAD</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="dialog-overlay" class="modal-overlay" style="z-index: 9999; display: none;">
+        <div class="modal-box" style="width: 400px; border: 2px solid #00e5ff; background: #1a1a1a;">
+            <div class="modal-header">
+                <span class="modal-title" id="dialog-title" style="color: #00e5ff;">INFO</span>
+            </div>
+            <div style="margin: 15px 0;">
+                <p id="dialog-msg" style="margin-top:0; color:#ccc; font-size:0.95em; line-height: 1.4;"></p>
+                <input type="text" id="dialog-input" class="compact-input"
+                    style="display:none; width:100%; margin-top:10px; font-size: 1.1em; padding: 8px;">
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="btn-action" style="background: #444; width: auto; padding: 8px 20px;"
+                    id="dialog-btn-cancel">CANCEL</button>
+                <button class="btn-action"
+                    style="background: #00e5ff; color: #000; width: auto; padding: 8px 20px; font-weight: bold;"
+                    id="dialog-btn-ok">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="import-progress-modal" class="modal-overlay" style="z-index: 9999; display: none;">
+        <div class="modal-box"
+            style="width: 400px; text-align: center; border: 2px solid #00e5ff; background: #1a1a1a;">
+            <h3 style="color: #00e5ff; margin-top: 0; letter-spacing: 1px;">📥 IMPORTING SONGS...</h3>
+            <p id="import-status-text" style="color: #ccc; font-size: 0.9em; margin-bottom: 15px;">Mempersiapkan data...
+            </p>
+
+            <div
+                style="width: 100%; background: #333; border-radius: 8px; overflow: hidden; border: 1px solid #555; height: 20px;">
+                <div id="import-progress-bar"
+                    style="width: 0%; height: 100%; background: linear-gradient(90deg, #007bff, #00e5ff); transition: width 0.3s ease;">
+                </div>
+            </div>
+
+            <p id="import-count-text" style="color: #fff; font-weight: bold; margin-top: 10px; font-size: 1.2em;">0 / 0
+            </p>
+        </div>
+    </div>
+
+    <div id="text-edit-modal" class="modal-overlay">
+        <div class="te-alert-dialog">
+
+            <div class="te-alert-header">
+                <span class="te-alert-title" id="te-modal-title">🛠️ TEXT EDITOR & STYLE PRESET</span>
+                <button class="te-alert-close" onclick="closeTextEditModal(true)">✖</button>
+            </div>
+
+            <div class="te-alert-body te-grid-split">
+
+                <div class="te-panel-left">
+                    <div class="te-preview-container">
+                        <label class="te-label te-cyan">PREVIEW</label>
+                        <div class="te-preview-box" id="modal-preview-wrapper">
+                            <iframe src="/display" id="modal-preview-frame" class="te-preview-frame"
+                                scrolling="no"></iframe>
+                        </div>
+                    </div>
+
+                    <div class="te-alert-nav-sec">
+                        <label class="te-label te-cyan">NAVIGATION</label>
+                        <div class="te-alert-nav">
+                            <button class="te-btn-nav" onclick="editorPrevSlide()"><span>⬅️</span> Prev Slide</button>
+                            <button class="te-btn-nav" onclick="editorNextSlide()">Next Slide <span>➡️</span></button>
+                        </div>
+                    </div>
+
+                    <div class="te-preset-actions-container">
+
+                        <div id="te-actions-custom" class="te-action-block">
+                            <label class="te-label" style="color:#aaa;">Preset Actions</label>
+                            <button class="te-btn-full te-btn-cyan" onclick="saveAsDisplayPreset()">💾 Save as Preset
+                                Theme</button>
+                        </div>
+
+                        <div id="te-actions-preset" class="te-action-block te-hidden">
+                            <label class="te-label te-cyan">EDITING PRESET:</label>
+
+                            <div class="te-preset-compact-row">
+                                <select id="te-modal-preset-select" class="te-select"
+                                    onchange="loadModalPreset()"></select>
+                                <button class="te-btn-save-comp" onclick="overwriteModalPreset()"
+                                    title="Update This Preset (Overwrite)">💾 SAVE</button>
+                                <button class="te-btn-new-comp" onclick="saveAsModalPreset()"
+                                    title="Save as New Preset">➕ NEW</button>
+                                <button class="te-btn-del-comp" onclick="deleteModalPreset()"
+                                    title="Delete Preset">🗑️</button>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <div class="te-panel-right">
+
+                    <div class="te-alert-section">
+                        <div class="te-section-title">Typography & Style Preset</div>
+                        <div class="te-grid-utility-2">
+                            <div class="te-control">
+                                <label class="te-label">FONT NAME <small
+                                        style="color:#888; font-weight:normal; text-transform:none;">(e.g: Arial,
+                                        Impact)</small></label>
+                                <input type="text" id="font-select" list="font-datalist" placeholder="Search Font..."
+                                    class="te-input" onchange="updateTextPreview()">
+                                <datalist id="font-datalist"></datalist>
+                            </div>
+                            <div class="te-control">
+                                <label class="te-label" style="color:#00e5ff;">TEXT STYLE PRESET</label>
+                                <select id="theme-input" class="te-select" onchange="applyThemePreset()">
+                                    <optgroup label="Modern & Minimalist">
+                                        <option value="box-black">▪️ Minimal Box (Pro)</option>
+                                        <option value="frosted">🧊 Frosted Glass</option>
+                                        <option value="clean">💧 Clean Modern</option>
+                                        <option value="pure">🏳️ Pure White</option>
+                                        <option value="thin">🧵 Ultra Thin (Elegant)</option>
+                                        <option value="bold">🐘 Extra Bold (Impact)</option>
+                                        <option value="soft">☁️ Soft Shadow (UI)</option>
+                                    </optgroup>
+                                    <optgroup label="Worship Atmosphere">
+                                        <option value="plain" selected>Basic / Plain Text</option>
+                                        <option value="default">✨ Default Glow</option>
+                                        <option value="heaven">☁️ Heavenly Blue</option>
+                                        <option value="gold">👑 Royal Gold (Fixed)</option>
+                                        <option value="mist">🌫️ Deep Mist</option>
+                                        <option value="ocean">🌊 Ocean Depth</option>
+                                        <option value="sunset">🌅 Golden Hour (Fixed)</option>
+                                        <option value="majesty">💜 Majesty Purple</option>
+                                        <option value="nature">🌿 Forest Green (Fixed)</option>
+                                        <option value="holy">🕊️ Holy Light</option>
+                                        <option value="grace">🌸 Graceful Pink</option>
+                                        <option value="dove">🕊️ Dove White</option>
+                                        <option value="sacred">🩸 Sacred Blood</option>
+                                        <option value="sunrise">🌅 Morning Sunrise</option>
+                                        <option value="midnight">🌌 Midnight Blue</option>
+                                        <option value="emerald">🌲 Deep Emerald</option>
+                                        <option value="crystal">🧊 Pure Crystal</option>
+                                        <option value="sepia">📜 Sepia Warm</option>
+
+                                        <option value="celestial">🌠 Celestial Corona</option>
+
+                                        <option value="incense">🪔 Incense Amber</option>
+
+                                        <option value="covenant">✝️ Covenant (Fixed)</option>
+
+                                        <option value="eternity">💫 Eternity Silver</option>
+
+                                        <option value="anointed">💜 Anointed Purple</option>
+                                    </optgroup>
+                                    <optgroup label="Praise & High Energy">
+                                        <option value="neon">⚡ Neon Blue</option>
+                                        <option value="fire">🌋 Intense Fire</option>
+                                        <option value="electric">⚠️ Electric Yellow</option>
+                                        <option value="cyberpunk">🤖 Cyberpunk Glitch</option>
+                                        <option value="hologram">🦄 Hologram (Fixed)</option>
+                                        <option value="retro">🎸 Retro 80s (Fixed)</option>
+                                        <option value="joy">🎉 Joyful Pop</option>
+                                        <option value="firework">🎆 Firework (Fixed)</option>
+                                        <option value="royal">👑 Royal Praise</option>
+                                        <option value="spirit">🌬️ Spirit Wind (Fixed)</option>
+                                        <option value="victory">🏆 Victory Flash</option>
+                                        <option value="rainbow">🌈 Rainbow Glow (Fixed)</option>
+                                        <option value="toxic">☣️ Toxic Green</option>
+                                        <option value="lava">🌋 Lava Core</option>
+                                        <option value="synthwave">🌆 Synthwave Retro</option>
+                                        <option value="disco">🪩 Disco Party</option>
+
+                                        <option value="thunder-praise">⚡ Thunder Praise</option>
+
+                                        <option value="wildfire">🔥 Wildfire (Fixed)</option>
+
+                                        <option value="neon-cross">✝️ Neon Cross</option>
+
+                                        <option value="celebration">🎊 Celebration (Fixed)</option>
+
+                                        <option value="anthem">🎺 Power Anthem</option>
+                                    </optgroup>
+                                    <optgroup label="Luxury & Texture">
+                                        <option value="metal">⚔️ Chrome Silver</option>
+                                        <option value="glass">💎 Crystal Glass</option>
+                                        <option value="3d">📦 3D Block</option>
+                                        <option value="ice">❄️ Frozen Ice</option>
+                                        <option value="outline">⭕ Outline Only</option>
+                                        <option value="marble">🏛️ White Marble</option>
+                                        <option value="velvet">🍷 Red Velvet</option>
+                                        <option value="diamond">💠 Diamond Sparkle</option>
+                                        <option value="leather">🛋️ Dark Leather</option>
+                                        <option value="goldleaf">🍂 Gold Leaf (Fixed)</option>
+                                    </optgroup>
+                                    <optgroup label="Creative & Artistic">
+                                        <option value="comic">💬 Comic Pop</option>
+                                        <option value="arcade">🕹️ 8-Bit Arcade</option>
+                                        <option value="matrix">💻 Matrix Code</option>
+                                        <option value="horror">🩸 Horror / Edgy</option>
+                                        <option value="paper">📄 Paper Cutout</option>
+                                        <option value="vintage">📜 Vintage Warm</option>
+                                        <option value="dusk">🍆 Dusk Gradient</option>
+                                        <option value="graffiti">🎨 Street Graffiti</option>
+                                        <option value="watercolor">🖌️ Watercolor Wash</option>
+                                        <option value="chalk">🖍️ Chalk Dust</option>
+                                        <option value="popart">💥 Pop Art</option>
+                                        <option value="blueprint">📐 Blueprint (Fixed)</option>
+
+                                        <option value="duotone">🎞️ Duotone Split (Fixed)</option>
+
+                                        <option value="manga">🎌 Manga Ink</option>
+
+                                        <option value="brutalist">🏛️ Brutalist Raw</option>
+
+                                        <option value="glassmorphism">🫧 Glassmorphism</option>
+
+                                        <option value="pixel-art">👾 Pixel Art</option>
+
+                                        <option value="aurora-art">🌌 Aurora Art (Fixed)</option>
+
+                                        <option value="drip-paint">🎨 Drip Paint</option>
+
+                                        <option value="cassette">📼 Cassette Lo-Fi</option>
+
+                                        <option value="grunge">🤘 Grunge Gold</option>
+
+                                        <option value="solarpunk">🌿 Solarpunk (Fixed)</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="te-alert-section">
+                        <div class="te-section-title">Animations & Motions</div>
+                        <div class="te-grid-utility-2">
+                            <div class="te-control">
+                                <label class="te-label">FADE SPEED <span class="te-val"
+                                        id="val-fade">0.5s</span></label>
+                                <input type="range" id="fade-input" class="te-slider" min="0.1" max="5.0" step="0.1"
+                                    value="0.5"
+                                    oninput="document.getElementById('val-fade').innerText = this.value + 's'; updateTextPreview()">
+                            </div>
+                            <div class="te-control">
+                                <label class="te-label">TRANSITION ANIMATION</label>
+                                <select id="trans-input" class="te-select" onchange="updateTextPreview()">
+                                    <optgroup label="Standard">
+                                        <option value="fade">Fade (Standard)</option>
+                                        <option value="blur" selected>Cinematic Blur (Smooth)</option>
+                                        <option value="mask">Mask Rise (Clean)</option>
+                                    </optgroup>
+                                    <optgroup label="New & Modern">
+                                        <option value="cinema">Cinema Zoom (Slow)</option>
+                                        <option value="swipe">Swipe Right (Clean)</option>
+                                        <option value="stamp">Stamp Impact (Heavy)</option>
+                                        <option value="elevator">Elevator Rise (Elegant)</option>
+                                        <option value="swivel">Swivel 3D</option>
+                                        <option value="fold">Fold Down</option>
+                                        <option value="turb">Turbulence (Glitch)</option>
+                                        <option value="drop">Drop & Bounce</option>
+                                        <option value="rotate">Rotate In</option>
+                                        <option value="beat">Heartbeat</option>
+                                    </optgroup>
+                                    <optgroup label="Cinematic Worship">
+                                        <option value="bloom">Bloom Fade (Word Zoom)</option>
+                                        <option value="smoke">Smoke Ascend</option>
+                                        <option value="light">Holy Light Reveal</option>
+                                        <option value="softfocus">Cinematic Soft Focus</option>
+                                        <option value="float">Gentle Float</option>
+                                        <option value="stretch">Cinema Stretch (Movie)</option>
+                                        <option value="flip3d">3D Flip Down</option>
+                                        <option value="track">Tracking In</option>
+                                        <option value="stagger">Letter Stagger</option>
+                                        <option value="spin">Letter Spin</option>
+                                        <option value="dust">Dust / Smoke Clear</option>
+                                        <option value="lens">Lens Flare Focus</option>
+                                        <option value="wipe">Cinematic Wipe</option>
+                                        <option value="abyss">Abyss Rise 3D</option>
+                                        <option value="aurora">Aurora Glow</option>
+                                        <option value="wave">Liquid Wave (Peaceful)</option>
+                                        <option value="gauss">Gaussian Merge (Ethereal)</option>
+                                        <option value="echo">Echo Merge (Deep)</option>
+                                        <option value="holy-breathe">Holy Breathe (Divine Light)</option>
+                                        <option value="sanctify">Sanctify (White-Hot Cool)</option>
+                                        <option value="ascend">Ascend (Golden Rise)</option>
+                                        <option value="mist-form">Mist Form (Coalesce)</option>
+                                        <option value="rapture">Rapture (Heaven Descent)</option>
+                                    </optgroup>
+                                    <optgroup label="Energetic Praise">
+                                        <option value="punch">Punch Zoom</option>
+                                        <option value="elastic">Elastic Bounce</option>
+                                        <option value="flashpop">Flash Pop</option>
+                                        <option value="whip">Whip In Skew</option>
+                                        <option value="gdrop">Glitch Drop</option>
+                                        <option value="pop">Elastic Pop (Bouncy)</option>
+                                        <option value="neon">Neon Flicker (Beat)</option>
+                                        <option value="glitch">Soft Glitch (Youth)</option>
+                                        <option value="burst">Glow Burst (Impact)</option>
+                                        <option value="rgb">RGB Glitch Snap</option>
+                                        <option value="shake">Camera Impact Shake</option>
+                                        <option value="smash">Kinetic Smash</option>
+                                        <option value="slash">Ninja Slash</option>
+                                        <option value="terminal">Terminal Typewriter</option>
+                                        <option value="shockwave">Shockwave Snap</option>
+
+                                        <option value="overdrive">Overdrive Slam</option>
+
+                                        <option value="nuke">Nuke Implode</option>
+
+                                        <option value="voltage">Voltage Strike</option>
+
+                                        <option value="riot">Riot Spin</option>
+
+                                    </optgroup>
+
+                                    <optgroup label="Word Transition">
+                                        <option value="smoke-deep">Smoke Deep</option>
+                                        <option value="liquid">Liquid Flip</option>
+                                        <option value="zoom-deep">Zoom Deep</option>
+                                        <option value="glitch-deep">Glitch Deep</option>
+                                        <option value="fisheye">Fisheye Lens</option>
+                                        <option value="radial-blur">Radial Burst</option>
+                                        <option value="chromatic">Chromatic Split</option>
+                                        <option value="motion-blur">Motion Blur</option>
+                                        <option value="veil-lift">Veil Lift</option>
+                                        <option value="particle">Particle Rise</option>
+                                    </optgroup>
+
+                                </select>
+                            </div>
+
+                            <div class="te-control te-span-all">
+                                <label class="te-label" style="color: #ff0066;">MOTION LOOP EFFECT</label>
+                                <select id="motion-input" class="te-select" style="border-color: #ff0066;"
+                                    onchange="updateTextPreview()">
+                                    <option value="none" selected>⛔ No Loop (Static)</option>
+                                    <optgroup label="WORSHIP LINE (5 Effects)">
+                                        <option value="worship-line-deep-shadow">Living Deep Shadow</option>
+                                        <option value="worship-line-elegant-diagonal-scan">Diagonal Light Sweep</option>
+                                        <option value="worship-line-soft-smoke">Soft Smoke Veil</option>
+                                        <option value="worship-line-sacred-breath">Sacred Breath Pulse</option>
+                                        <option value="worship-line-glow-drift">Holy Glow Drift</option>
+                                    </optgroup>
+                                    <optgroup label="WORSHIP WORD (5 Effects)">
+                                        <option value="worship-word-depth-shadow">Depth Shadow Words</option>
+                                        <option value="worship-word-silk-scan">Silk Light Words</option>
+                                        <option value="worship-word-soft-smoke">Smoke Whisper Words</option>
+                                        <option value="worship-word-floating-devotion">Floating Devotion Words</option>
+                                        <option value="worship-word-gentle-rise">Gentle Rise Words</option>
+                                    </optgroup>
+                                    <optgroup label="PRAISE LINE (13 Effects)">
+                                        <option value="praise-line-clear-shadow-rgb">RGB Shadow Split</option>
+                                        <option value="praise-line-metal-sheen">Full Screen Shadow Sweep</option>
+                                        <option value="praise-line-rgb-signal">RGB Signal Break</option>
+                                        <option value="praise-line-shadow-running">Running Shadow Trail</option>
+                                        <option value="praise-line-big-shadow-micro-rotate">Big Shadow Micro Rotate
+                                        </option>
+                                        <option value="praise-line-outline-drift">Outline Drift</option>
+                                        <option value="praise-line-micro-rotate">Micro Rotate</option>
+                                        <option value="praise-line-zoom-tilt">Zoom Tilt Punch</option>
+                                        <option value="praise-line-handheld-float">Handheld Camera Float</option>
+                                        <option value="praise-line-soft-glitch">Stage Glitch Burst</option>
+                                        <option value="praise-line-premium-vhs">Analog VHS Drift</option>
+                                        <option value="praise-line-shadow-panorama">Panorama Shadow Drift</option>
+                                        <option value="praise-line-cinematic-breath">Full Screen Zoom Shadow</option>
+                                    </optgroup>
+                                    <optgroup label="PRAISE WORD (12 Effects)">
+                                        <option value="praise-word-jiggle-lite">Jiggle Bounce Words</option>
+                                        <option value="praise-word-viggle-flow">Viggle Flow Words</option>
+                                        <option value="praise-word-micro-pop">Micro Pop Words</option>
+                                        <option value="praise-word-glitch-scan">Glitch Scan Words</option>
+                                        <option value="praise-word-vhs-jitter">VHS Jitter Words</option>
+                                        <option value="praise-word-tilt-dance">Tilt Dance Words</option>
+                                        <option value="praise-word-outline-rise">Outline Rise Words</option>
+                                        <option value="praise-word-shadow-chase">Shadow Chase Words</option>
+                                        <option value="praise-word-zoom-flick">Zoom Flick Words</option>
+                                        <option value="praise-word-handheld-scatter">Handheld Scatter Words</option>
+                                        <option value="praise-word-metal-jitter">Metal Jitter Words</option>
+                                        <option value="praise-word-clear-shadow-rush">Clear Shadow Rush Words</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+
+                            <div class="te-control">
+                                <label class="te-label">MOTION SPEED</label>
+                                <select id="speed-input" class="te-select" onchange="updateTextPreview()">
+                                    <option value="15s">Fast</option>
+                                    <option value="30s" selected>Normal</option>
+                                    <option value="60s">Slow</option>
+                                </select>
+                            </div>
+                            <div class="te-control">
+                                <label class="te-label">TEXT MOTION DRIFT</label>
+                                <select id="zoom-input" class="te-select" onchange="updateTextPreview()">
+                                    <option value="stay" selected>Stay</option>
+                                    <option value="in">Zoom IN</option>
+                                    <option value="out">Zoom OUT</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="te-alert-section">
+                        <div class="te-section-title">Layout & Format</div>
+                        <div class="te-grid-utility-2">
+                            <div class="te-control">
+                                <label class="te-label">FONT SIZE <span class="te-val"
+                                        id="val-font-size">5vw</span></label>
+                                <input type="range" id="font-size-input" class="te-slider" min="2" max="15" step="0.5"
+                                    value="5" oninput="updateTextPreview()">
+                            </div>
+                            <div class="te-control">
+                                <label class="te-label">X-PADDING <span class="te-val" id="val-pad">10%</span></label>
+                                <input type="range" id="pad-input" class="te-slider" min="0" max="45" value="10"
+                                    oninput="updateTextPreview()">
+                            </div>
+                            <div class="te-control">
+                                <label class="te-label">TEXT STYLE</label>
+                                <div class="te-btn-group">
+                                    <button id="btn-bold" class="te-btn" onclick="toggleFormat('bold')">B</button>
+                                    <button id="btn-italic" class="te-btn" style="font-style:italic;"
+                                        onclick="toggleFormat('italic')">I</button>
+                                    <button id="btn-underline" class="te-btn" style="text-decoration:underline;"
+                                        onclick="toggleFormat('underline')">U</button>
+                                </div>
+                            </div>
+                            <div class="te-control">
+                                <label class="te-label">ALIGN & CASE</label>
+                                <div class="te-btn-group">
+                                    <select id="align-input" class="te-select"
+                                        style="border-radius: 4px 0 0 4px; border-right:none;"
+                                        onchange="updateTextPreview()">
+                                        <option value="left">Left</option>
+                                        <option value="center" selected>Center</option>
+                                        <option value="right">Right</option>
+                                    </select>
+                                    <select id="transform-input" class="te-select" style="border-radius: 0 4px 4px 0;"
+                                        onchange="updateTextPreview()">
+                                        <option value="none">Aa</option>
+                                        <option value="uppercase">AA</option>
+                                        <option value="lowercase">aa</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="te-control te-span-all">
+                                <label class="te-label">VERTICAL POSITION <span class="te-val"
+                                        id="te-valign-val">Center</span></label>
+                                <div class="te-row-utility">
+                                    <select id="te-valign" class="te-select" style="flex: 2;"
+                                        onchange="updateTextPreview(); document.getElementById('te-valign-val').innerText = this.options[this.selectedIndex].text.split(' ')[0];">
+                                        <option value="top">Top</option>
+                                        <option value="center" selected>Center</option>
+                                        <option value="bottom">Bottom</option>
+                                    </select>
+                                    <input type="number" id="te-vmargin" class="te-input" value="5" min="0" max="50"
+                                        style="flex: 1;" title="Margin (vh)" oninput="updateTextPreview()">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="te-alert-section">
+                        <div class="te-section-title">
+                            <span>Fill Color</span>
+                            <select id="color-type-input" class="te-select" style="width: auto; padding: 2px 6px;"
+                                onchange="toggleColorUI(); updateTextPreview()">
+                                <option value="solid">Solid</option>
+                                <option value="gradient">Gradient</option>
+                            </select>
+                        </div>
+                        <div class="te-row-utility">
+                            <input type="color" id="color-input" class="te-color" value="#ffffff"
+                                oninput="updateTextPreview()">
+                            <input type="color" id="color2-input" class="te-color" value="#00e5ff"
+                                style="display: none;" oninput="updateTextPreview()">
+                            <input type="range" id="color-angle-input" class="te-slider" min="0" max="360" value="90"
+                                style="display: none; width: 100px; margin:0;" oninput="updateTextPreview()">
+                        </div>
+                    </div>
+
+                    <div class="te-alert-section">
+                        <div class="te-section-title">
+                            <span>Neon Glow <span class="te-val" id="val-glow"
+                                    style="margin-left: 5px;">50</span></span>
+                            <select id="glow-type-input" class="te-select" style="width: auto; padding: 2px 6px;"
+                                onchange="toggleGlowUI(); updateTextPreview()"
+                                title="Follow Text Theme: Uses colors from selected text theme. Custom Solid: Choose your own glow color. Gradient: Create custom gradient glow.">
+                                <option value="text">Follow Text Theme</option>
+                                <option value="solid">Custom Solid</option>
+                                <option value="gradient">Gradient</option>
+                            </select>
+                        </div>
+                        <div style="font-size: 11px; color: #888; margin-bottom: 8px; line-height: 1.3;">
+                            💡 <strong>Follow Text Theme:</strong> Glow intensity controlled by slider, colors follow
+                            your selected text theme
+                        </div>
+                        <input type="range" id="glow-input" class="te-slider" min="0" max="100" value="50"
+                            oninput="updateTextPreview()">
+                        <div id="glow-colors-wrap" class="te-row-utility" style="display: none; margin-top: 10px;">
+                            <input type="color" id="glow-c1-input" class="te-color" value="#ffffff"
+                                oninput="updateTextPreview()">
+                            <input type="color" id="glow-c2-input" class="te-color" value="#ff00ff"
+                                style="display: none;" oninput="updateTextPreview()">
+                            <input type="range" id="glow-angle-input" class="te-slider" min="0" max="360" value="90"
+                                style="display: none; width: 100px; margin:0;" oninput="updateTextPreview()">
+                        </div>
+                    </div>
+
+                    <div class="te-grid-utility-2">
+                        <div class="te-alert-section" style="margin-bottom: 0;">
+                            <div class="te-section-title">Outline <span class="te-val" id="val-stroke">0px</span></div>
+                            <div class="te-row-utility">
+                                <input type="range" id="stroke-size-input" class="te-slider" min="0" max="3" step="0.05"
+                                    value="0" style="margin:0;" oninput="updateTextPreview()">
+                                <input type="color" id="stroke-color-input" class="te-color" value="#000000"
+                                    style="width: 40px; flex: none;" oninput="updateTextPreview()">
+                            </div>
+                        </div>
+                        <div class="te-alert-section" style="margin-bottom: 0;">
+                            <div class="te-section-title">Drop Shadow <span class="te-val" id="val-shadow">0</span>
+                            </div>
+                            <div class="te-row-utility">
+                                <input type="range" id="shadow-int-input" class="te-slider" min="0" max="100" value="0"
+                                    style="margin:0;" oninput="updateTextPreview()">
+                                <input type="color" id="shadow-color-input" class="te-color" value="#000000"
+                                    style="width: 40px; flex: none;" oninput="updateTextPreview()">
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <div class="te-alert-footer">
+                <button class="te-btn-apply" onclick="applyAndCloseEditor()">Apply & Close</button>
+                <button class="te-btn-cancel-alert" onclick="closeTextEditModal(true)">Cancel</button>
+            </div>
+
+        </div>
+    </div>
+
+    <div id="save-progress-modal" class="modal-overlay" style="z-index: 10000; display: none;"
+        onclick="forceCloseToast(event)">
+        <div class="modal-box"
+            style="width: 320px; text-align: center; border: 2px solid #00e5ff; background: #1a1a1a; box-shadow: 0 15px 40px rgba(0,0,0,0.8);">
+            <div id="save-icon" style="font-size: 3.5em; margin-bottom: 15px; display: inline-block;">⏳</div>
+            <h3 id="save-title" style="color: #00e5ff; margin-top: 0; letter-spacing: 2px; font-size: 1.2em;">PROCESSING
+            </h3>
+            <p id="save-message" style="color: #ccc; font-size: 0.95em; margin-bottom: 5px;">Please wait...
+            </p>
+        </div>
+    </div>
+
+    <div id="bg-preview-modal" class="modal-overlay" style="z-index: 10001;">
+        <div class="modal-box" style="width: auto; padding: 0; background: #000; border: 1px solid #444;">
+            <div class="modal-header" style="padding: 10px;">
+                <span class="modal-title" id="bg-preview-title" style="font-size: 0.8em; color: #aaa;">Preview</span>
+                <button class="close-btn" onclick="closeBgPreview()">✖</button>
+            </div>
+            <div id="bg-video-container" style="display: flex; justify-content: center;"></div>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-box modal-settings-box">
+            <div class="modal-header">
+                <span class="modal-title" style="color: #fff;">⚙️ GLOBAL SETTINGS</span>
+                <button class="close-btn" onclick="safeCloseModal('settings-modal')">✖</button>
+            </div>
+
+            <div class="control-group" style="margin-top: 15px;">
+                <label style="color: #aaa; font-weight: bold;">Video Crossfade Transition <span id="val-bg-trans"
+                        style="color: #00e5ff; margin-left: 5px;">0.5s</span></label>
+                <input type="range" id="bg-trans-input" min="0.1" max="5.0" step="0.1" value="0.5"
+                    style="width: 100%; cursor: pointer;" oninput="updateBgConfigUI()">
+                <small style="color: #888; font-size: 0.7em;">Transition duration when changing background or
+                    blackout.</small>
+            </div>
+
+            <div class="control-group">
+                <label style="color: #aaa; font-weight: bold; margin-bottom: 5px; display: block;">Video Fit
+                    Mode</label>
+                <select id="bg-fit-input" class="compact-input" style="width: 100%; font-size: 0.9em; padding: 8px;"
+                    onchange="sendBgConfig()">
+                    <option value="cover">FILL (Auto crop, fill screen)</option>
+                    <option value="contain">FIT (Show full, with black borders)</option>
+                    <option value="fill">STRETCH (Force full, stretch ratio)</option>
+                </select>
+            </div>
+
+            <div class="control-group" style="margin-top: 10px;">
+                <label style="color: #aaa; font-weight: bold; margin-bottom: 5px; display: block;">Photo Fit
+                    Mode</label>
+                <select id="photo-fit-input" class="compact-input" style="width: 100%; font-size: 0.9em; padding: 8px;"
+                    onchange="sendBgConfig()">
+                    <option value="contain" selected>FIT (Show full, no cropping)</option>
+                    <option value="cover">FILL (Fill screen, auto-crop)</option>
+                    <option value="fill">STRETCH (Force full, stretch ratio)</option>
+                </select>
+            </div>
+
+            <div class="control-group" style="margin-top: 15px;">
+                <label style="color: #aaa; font-weight: bold; margin-bottom: 8px; display: block;">🎯 DYNAMIC LAYER
+                    CONTROL (Z-Index)</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div>
+                        <div
+                            style="font-size: 10px; color: #777; margin-bottom: 5px; text-align: center; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+                            Main Display</div>
+                        <div id="layer-manager-main" class="layer-manager"></div>
+                    </div>
+                    <div>
+                        <div
+                            style="font-size: 10px; color: #777; margin-bottom: 5px; text-align: center; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+                            Lower Third</div>
+                        <div id="layer-manager-lt" class="layer-manager"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="settings-output-label">🔗 OUTPUT LINKS</label>
+                <div id="output-links-container" class="settings-output-links">
+                    <a id="output-link-display" href="#" target="_blank"
+                        class="settings-output-link link-display">DISPLAY</a>
+                    <a id="output-link-lowerthird" href="#" target="_blank"
+                        class="settings-output-link link-lowerthird">LOWERTHIRD</a>
+                    <a id="output-link-foldback" href="#" target="_blank"
+                        class="settings-output-link link-foldback">FOLDBACK</a>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <div class="license-card" id="license-card-container">
+                    <label class="license-label">🔑 LICENSE ACTIVATION</label>
+                    <p class="license-desc">
+                        Enter License Key to activate full features or move license to this device.
+                    </p>
+
+                    <input type="text" id="license-key-input" class="compact-input license-input"
+                        placeholder="SHOWLYRICS026" maxlength="50" pattern="[A-Z0-9\-]+"
+                        oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9\-]/g, '')">
+
+                    <button class="btn-action btn-activate" onclick="activateShowLyrics()">ACTIVATE DEVICE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <div id="multi-player-container" class="multi-player-container"></div>
+
+    <div id="ppt-preview-modal" class="ppt-preview-modal">
+        <button class="ppt-preview-close" onclick="closePPTPreview()">✖</button>
+        <div id="ppt-preview-title" class="ppt-preview-header">PPT Preview</div>
+        <div class="ppt-preview-content">
+            <button class="ppt-preview-btn" onclick="prevPPTPreview()">◀</button>
+            <img id="ppt-preview-img" class="ppt-preview-img" src="">
+            <button class="ppt-preview-btn" onclick="nextPPTPreview()">▶</button>
+        </div>
+        <div class="ppt-preview-counter" id="ppt-preview-counter">Slide 1 / X</div>
+    </div>
+
+    <div id="preset-context-menu" class="custom-context-menu te-hidden">
+        <div class="context-menu-item" onclick="openGlobalPresetEditor()">✏️ Edit Preset</div>
+        <div class="context-menu-item text-danger" onclick="deleteGlobalPresetContext()">🗑️ Delete Preset</div>
+    </div>
+
+    <input type="file" id="bible-upload-input" accept=".xml" class="te-hidden" onchange="handleBibleUpload(event)">
+
+    <div id="scripture-settings-modal" class="modal-overlay te-hidden">
+        <div class="modal-box scr-settings-modal">
+
+            <div class="scr-settings-header">
+                <h2 class="scr-modal-title">📖 DISPLAY & LOWER THIRD SETTINGS</h2>
+                <button class="scr-btn-close" onclick="closeScriptureSettings()">✖</button>
+            </div>
+
+            <div class="scr-triple-layout">
+
+                <div class="scr-col-preview">
+                    <div class="scr-panel-header"><span class="scr-panel-title">📺 MINI MONITORS</span></div>
+
+                    <div class="scr-mini-monitor">
+                        <span class="scr-monitor-label" style="color:#00e5ff;">DISPLAY (MAIN)</span>
+                        <iframe src="/scripture" class="scr-mini-iframe" id="scr-mini-display"></iframe>
+                    </div>
+
+                    <div class="scr-mini-monitor" style="border-color:#f59e0b;">
+                        <span class="scr-monitor-label" style="color:#f59e0b;">LOWERTHIRD</span>
+                        <iframe src="/scripture-lt" class="scr-mini-iframe" id="scr-mini-lt"></iframe>
+                    </div>
+
+                    <div class="scr-setting-card" style="margin-top:auto;">
+                        <label>📖 Bible Language (Global):</label>
+                        <select id="scr-global-lang" class="scr-input scr-input-full"
+                            onchange="handleScrLanguageChange()">
+                            <option value="id">Bahasa Indonesia</option>
+                            <option value="en">English</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="scr-col-editor">
+                    <div class="scr-panel-header">
+                        <span class="scr-panel-title">SETTING: MAIN DISPLAY</span>
+                        <label class="toggle-icon-wrap" id="disp-enable-toggle">
+                            <input type="checkbox" id="scr-disp-enable" checked onchange="handleEnableToggle('disp')">
+                            <span id="disp-enable-text">ENABLED</span>
+                        </label>
+                    </div>
+
+                    <div class="scr-preset-area">
+                        <span style="font-size:0.7em; color:#999; margin-bottom:3px;">Select Main Display Preset:</span>
+                        <select id="scr-disp-preset-select" class="scr-input scr-input-full"
+                            onchange="loadScrPreset('disp')">
+                            <option value="">-- Custom / Unsaved --</option>
+                        </select>
+                        <span id="disp-default-label"
+                            style="font-size:0.7em; color:#f59e0b; margin-top:3px; font-weight:bold;">Initial Default:
+                            -</span>
+
+                        <div style="display: flex; gap: 5px; margin-top:5px; flex-wrap:wrap;">
+                            <button class="btn-action btn-sm btn-dark" style="flex:1;"
+                                onclick="saveScrPreset('disp')">💾 Save</button>
+                            <button class="btn-action btn-sm btn-dark" style="flex:1;"
+                                onclick="saveAsScrPreset('disp')">📝 Save As</button>
+                            <button class="btn-action btn-sm btn-dark" style="flex:1; color:#f59e0b;"
+                                onclick="setDefaultScrPreset('disp')">⭐ Default</button>
+                            <button class="btn-action btn-sm btn-dark" style="flex:1; color:#ef4444;"
+                                onclick="deleteScrPreset('disp')">🗑️ Delete</button>
+                        </div>
+                    </div>
+
+                    <div id="scr-disp-settings-wrapper" style="display: flex; flex-direction: column; gap: 10px;">
+                        <div class="scr-setting-card">
+                            <div class="scr-card-title">🖥️ Background</div>
+                            <div class="scr-row"><label>Display Mode:</label><select id="scr-disp-mode"
+                                    class="scr-input">
+                                    <option value="overlay">Partial (Lower Third)</option>
+                                    <option value="fullscreen">Fullscreen</option>
+                                </select></div>
+                            <div class="scr-row"><label>Background Type:</label><select id="scr-disp-bg-type"
+                                    class="scr-input">
+                                    <option value="transparent">Transparent</option>
+                                    <option value="color">Solid Color</option>
+                                </select></div>
+                            <div class="scr-row"><label>Screen Color & Opacity:</label>
+                                <div class="scr-flex-gap-5"><input type="color" id="scr-disp-bg-color"
+                                        class="scr-color-picker"><input type="range" id="scr-disp-bg-opacity" min="0"
+                                        max="1" step="0.1"></div>
+                            </div>
+                            <div class="scr-row"><label>Box Position & Max Height (%):</label>
+                                <div class="scr-flex-gap-5"><select id="scr-disp-overlay-pos" class="scr-input">
+                                        <option value="bottom">Snap to Bottom</option>
+                                        <option value="top">Snap to Top</option>
+                                    </select><input type="number" id="scr-disp-overlay-height" class="scr-input"></div>
+                            </div>
+                        </div>
+
+                        <div class="scr-setting-card">
+                            <div class="scr-card-title">📌 Typography: Title & Verse Body</div>
+                            <div class="scr-row"><label>Title Color & Alignment:</label>
+                                <div class="scr-flex-gap-5"><input type="color" id="scr-disp-title-color"
+                                        class="scr-color-picker"><select id="scr-disp-title-align" class="scr-input">
+                                        <option value="left">Left Align</option>
+                                        <option value="center">Center Align</option>
+                                        <option value="right">Right Align</option>
+                                    </select></div>
+                            </div>
+                            <div class="scr-row"><label>Title Font & Size (px):</label>
+                                <div class="scr-flex-gap-5"><input type="text" id="scr-disp-title-font"
+                                        class="scr-input"><input type="number" id="scr-disp-title-size"
+                                        class="scr-input scr-input-sm"></div>
+                            </div>
+                            <div class="padding-explicit-grid">
+                                <div class="pad-label-group"><span class="pad-explicit-label">Title Pad Top</span><input
+                                        type="number" id="scr-disp-title-pad-t" class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Title Pad
+                                        Bottom</span><input type="number" id="scr-disp-title-pad-b"
+                                        class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Title Pad
+                                        Left</span><input type="number" id="scr-disp-title-pad-l"
+                                        class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Title Pad
+                                        Right</span><input type="number" id="scr-disp-title-pad-r"
+                                        class="scr-input scr-input-sm"></div>
+                            </div>
+
+                            <hr style="border-color:rgba(255,255,255,0.06); margin:10px 0;">
+
+                            <div class="scr-row"><label>Verse Color & Auto-Fit:</label>
+                                <div class="scr-flex-gap-5"><input type="color" id="scr-disp-body-color"
+                                        class="scr-color-picker"><label class="scr-chk-wrap"><input type="checkbox"
+                                            id="scr-disp-body-auto"> AUTO</label></div>
+                            </div>
+                            <div class="scr-row"><label>Verse Font & Size (px):</label>
+                                <div class="scr-flex-gap-5"><input type="text" id="scr-disp-body-font"
+                                        class="scr-input"><input type="number" id="scr-disp-body-size"
+                                        class="scr-input scr-input-sm"></div>
+                            </div>
+                            <div class="padding-explicit-grid">
+                                <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad Top</span><input
+                                        type="number" id="scr-disp-body-pad-t" class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad
+                                        Bottom</span><input type="number" id="scr-disp-body-pad-b"
+                                        class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad
+                                        Left</span><input type="number" id="scr-disp-body-pad-l"
+                                        class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad
+                                        Right</span><input type="number" id="scr-disp-body-pad-r"
+                                        class="scr-input scr-input-sm"></div>
+                            </div>
+                            <input type="hidden" id="scr-disp-bg-blur" value="0"><input type="hidden"
+                                id="scr-disp-overlay-radius" value="15"><input type="hidden" id="scr-disp-body-align"
+                                value="left">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="scr-col-editor">
+                    <div class="scr-panel-header">
+                        <span class="scr-panel-title">SETTING: LOWER THIRD (LT)</span>
+                        <div style="display:flex; gap: 8px;">
+                            <label class="toggle-icon-wrap" id="lt-follow-toggle">
+                                <input type="checkbox" id="scr-lt-follow" onchange="handleScrFollowDisplay()">
+                                <span id="lt-follow-text">🔗 FOLLOW DISPLAY</span>
+                            </label>
+                            <label class="toggle-icon-wrap" id="lt-enable-toggle">
+                                <input type="checkbox" id="scr-lt-enable" checked onchange="handleEnableToggle('lt')">
+                                <span id="lt-enable-text">ENABLED</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="scr-preset-area" id="lt-preset-full-area">
+                        <span style="font-size:0.7em; color:#999; margin-bottom:3px;">Select Lower Third Preset:</span>
+                        <select id="scr-lt-preset-select" class="scr-input scr-input-full"
+                            onchange="loadScrPreset('lt')">
+                            <option value="">-- Custom / Unsaved --</option>
+                        </select>
+                        <span id="lt-default-label"
+                            style="font-size:0.7em; color:#f59e0b; margin-top:3px; font-weight:bold;">Initial Default:
+                            -</span>
+
+                        <div style="display: flex; gap: 5px; margin-top:5px; flex-wrap:wrap;">
+                            <button class="btn-action btn-sm btn-dark" style="flex:1;" onclick="saveScrPreset('lt')">💾
+                                Save</button>
+                            <button class="btn-action btn-sm btn-dark" style="flex:1;"
+                                onclick="saveAsScrPreset('lt')">📝 Save As</button>
+                            <button class="btn-action btn-sm btn-dark" style="flex:1; color:#f59e0b;"
+                                onclick="setDefaultScrPreset('lt')">⭐ Default</button>
+                            <button class="btn-action btn-sm btn-dark" style="flex:1; color:#ef4444;"
+                                onclick="deleteScrPreset('lt')">🗑️ Delete</button>
+                        </div>
+                    </div>
+
+                    <div id="scr-lt-settings-wrapper" style="display: flex; flex-direction: column; gap: 10px;">
+                        <div class="scr-setting-card">
+                            <div class="scr-card-title">🖥️ Background</div>
+                            <div class="scr-row"><label>Display Mode:</label><select id="scr-lt-mode" class="scr-input">
+                                    <option value="overlay">Partial (Lower Third)</option>
+                                    <option value="fullscreen">Fullscreen</option>
+                                </select></div>
+                            <div class="scr-row"><label>Background Type:</label><select id="scr-lt-bg-type"
+                                    class="scr-input">
+                                    <option value="transparent">Transparent</option>
+                                    <option value="color">Solid Color</option>
+                                </select></div>
+                            <div class="scr-row"><label>Screen Color & Opacity:</label>
+                                <div class="scr-flex-gap-5"><input type="color" id="scr-lt-bg-color"
+                                        class="scr-color-picker"><input type="range" id="scr-lt-bg-opacity" min="0"
+                                        max="1" step="0.1"></div>
+                            </div>
+                            <div class="scr-row"><label>Box Position & Max Height (%):</label>
+                                <div class="scr-flex-gap-5"><select id="scr-lt-overlay-pos" class="scr-input">
+                                        <option value="bottom">Snap to Bottom</option>
+                                        <option value="top">Snap to Top</option>
+                                    </select><input type="number" id="scr-lt-overlay-height" class="scr-input"></div>
+                            </div>
+                        </div>
+
+                        <div class="scr-setting-card">
+                            <div class="scr-card-title">📌 Typography: Title & Verse Body</div>
+                            <div class="scr-row"><label>Title Color & Alignment:</label>
+                                <div class="scr-flex-gap-5"><input type="color" id="scr-lt-title-color"
+                                        class="scr-color-picker"><select id="scr-lt-title-align" class="scr-input">
+                                        <option value="left">Left Align</option>
+                                        <option value="center">Center Align</option>
+                                        <option value="right">Right Align</option>
+                                    </select></div>
+                            </div>
+                            <div class="scr-row"><label>Title Font & Size (px):</label>
+                                <div class="scr-flex-gap-5"><input type="text" id="scr-lt-title-font"
+                                        class="scr-input"><input type="number" id="scr-lt-title-size"
+                                        class="scr-input scr-input-sm"></div>
+                            </div>
+                            <div class="padding-explicit-grid">
+                                <div class="pad-label-group"><span class="pad-explicit-label">Title Pad Top</span><input
+                                        type="number" id="scr-lt-title-pad-t" class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Title Pad
+                                        Bottom</span><input type="number" id="scr-lt-title-pad-b"
+                                        class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Title Pad
+                                        Left</span><input type="number" id="scr-lt-title-pad-l"
+                                        class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Title Pad
+                                        Right</span><input type="number" id="scr-lt-title-pad-r"
+                                        class="scr-input scr-input-sm"></div>
+                            </div>
+
+                            <hr style="border-color:rgba(255,255,255,0.06); margin:10px 0;">
+
+                            <div class="scr-row"><label>Verse Color & Auto-Fit:</label>
+                                <div class="scr-flex-gap-5"><input type="color" id="scr-lt-body-color"
+                                        class="scr-color-picker"><label class="scr-chk-wrap"><input type="checkbox"
+                                            id="scr-lt-body-auto"> AUTO</label></div>
+                            </div>
+                            <div class="scr-row"><label>Verse Font & Size (px):</label>
+                                <div class="scr-flex-gap-5"><input type="text" id="scr-lt-body-font"
+                                        class="scr-input"><input type="number" id="scr-lt-body-size"
+                                        class="scr-input scr-input-sm"></div>
+                            </div>
+                            <div class="padding-explicit-grid">
+                                <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad Top</span><input
+                                        type="number" id="scr-lt-body-pad-t" class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad
+                                        Bottom</span><input type="number" id="scr-lt-body-pad-b"
+                                        class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad
+                                        Left</span><input type="number" id="scr-lt-body-pad-l"
+                                        class="scr-input scr-input-sm"></div>
+                                <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad
+                                        Right</span><input type="number" id="scr-lt-body-pad-r"
+                                        class="scr-input scr-input-sm"></div>
+                            </div>
+                            <input type="hidden" id="scr-lt-bg-blur" value="0"><input type="hidden"
+                                id="scr-lt-overlay-radius" value="15"><input type="hidden" id="scr-lt-body-align"
+                                value="left">
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="scr-master-footer">
+                <div class="scr-footer-left"></div>
+
+                <div class="scr-footer-right" style="display: flex; gap: 10px;">
+                    <button class="btn-action btn-dark" style="color:#ef4444; width:auto; padding: 6px 20px;"
+                        onclick="cancelScrEdit()">Cancel</button>
+                    <button class="btn-action scr-btn-apply" style="width:auto; padding: 6px 20px; font-weight: bold;"
+                        onclick="saveAllScrPresets()">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function testDisplays() {
+            if (window.electronAPI && typeof window.electronAPI.testDisplays === 'function') {
+                window.electronAPI.testDisplays();
+            } else {
+                if (typeof showToast === 'function') {
+                    showToast("Display Check hanya tersedia di aplikasi Electron!", "info", 3000);
+                } else {
+                    alert("Display Check hanya tersedia di aplikasi Electron!");
+                }
+            }
+        }
+    </script>
+    <script src="static/bg.js?v={{ VERSION }}"></script>
+    <script src="static/script.js?v={{ VERSION }}"></script>
+</body>
+
+</html>

@@ -1,0 +1,61 @@
+{
+  "name": "showlyrics",
+  "version": "2.5.0",
+  "main": "src/main.js",
+  "description": "Lyrics Presentation System",
+  "author": "JProduction",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.showlyrics.engine",
+    "productName": "ShowLyricsApp",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "src/app.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "installerIcon": "src/app.ico",
+      "uninstallerIcon": "src/app.ico",
+      "uninstallDisplayName": "ShowLyricsApp ${version}"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9"
+  },
+  "dependencies": {
+    "electron-wrapper": "^1.7.2"
+  }
+}

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Audio Engine</title>
+</head>
+<body>
+    <audio id="audio-player" preload="auto"></audio>
+    <script>
+        let ws = new WebSocket("ws://" + window.location.host + "/ws");
+        const player = document.getElementById("audio-player");
+        
+        // 🚀 OPTIMASI: Error handling yang robust
+        let audioErrorCount = 0;
+        const MAX_AUDIO_ERRORS = 3;
+        let isAudioLoading = false;
+        let audioTimeout = null;
+
+        player.addEventListener('error', (err) => {
+            audioErrorCount++;
+            console.warn(`Audio error (${audioErrorCount}):`, err);
+            
+            if (audioErrorCount >= MAX_AUDIO_ERRORS) {
+                console.error("Terlalu banyak error audio, attempting recovery...");
+                audioErrorCount = 0;
+                player.src = "";
+                player.load();
+            }
+        });
+
+        player.addEventListener('loadeddata', () => {
+            audioErrorCount = 0; // Reset counter kalau berhasil load
+            isAudioLoading = false;
+            if (audioTimeout) {
+                clearTimeout(audioTimeout);
+                audioTimeout = null;
+            }
+        });
+
+        player.addEventListener('stalled', () => {
+            console.warn("Audio stalled, attempting recovery...");
+            player.load();
+        });
+
+        player.addEventListener('waiting', () => {
+            console.warn("Audio waiting for data...");
+        });
+
+        player.addEventListener('playing', () => {
+            console.log("Audio playing successfully");
+        });
+
+        ws.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            
+            // 1. Terima Perintah Putar Lagu
+            if (data.action === "update_audio" || data.type === "update_audio") {
+                if (data.payload.url) {
+                    // 🚀 OPTIMASI: Stop current playback first
+                    player.pause();
+                    player.currentTime = 0;
+                    
+                    // 🚀 OPTIMASI: Set source baru
+                    player.src = data.payload.url;
+                    player.muted = false; // AUDIO DIPINDAH KE CONTROL.HTML
+                    
+                    // 🚀 OPTIMASI: Timeout jika audio tidak load dalam 5 detik
+                    audioTimeout = setTimeout(() => {
+                        if (player.readyState < 3) {
+                            console.warn("Audio loading timeout, retrying...");
+                            player.load();
+                        }
+                    }, 5000);
+                    
+                    // 🚀 OPTIMASI: Play dengan error handling
+                    player.play().catch(err => {
+                        console.warn("Audio auto-play terblokir browser:", err);
+                        // Jangan retry otomatis, biarkan user interaction
+                    });
+                } else {
+                    player.pause();
+                    player.removeAttribute('src');
+                    player.load();
+                }
+            }
+            
+            // 2. Terima Perintah dari Floating Media Player
+            // 🎯 FIX 3: PISAHKAN MEDIA PLAYER (Cuma nangkap perintah target "audio")
+            if ((data.action === "bg_control" || data.type === "bg_control") && data.payload.target === "audio") {
+                const cmd = data.payload.command;
+                
+                if (cmd === "play") {
+                    player.play().catch(err => console.warn("Play error:", err));
+                }
+                else if (cmd === "pause") {
+                    player.pause();
+                }
+                else if (cmd === "replay") {
+                    player.currentTime = 0;
+                    player.play().catch(err => console.warn("Replay error:", err));
+                }
+                else if (cmd === "volume") {
+                    player.muted = false; // AUDIO DIPINDAH KE CONTROL.HTML
+                    player.volume = parseFloat(data.payload.value);
+                }
+                else if (cmd === "loop") {
+                    player.loop = data.payload.value;
+                }
+                // 🚀 TERIMA WAKTU SINKRONISASI DARI MASTER CONTROL.HTML
+                else if (cmd === "sync_time") {
+                    // 🚀 OPTIMASI: Sync time dengan threshold yang lebih kecil (0.3s)
+                    if (Math.abs(player.currentTime - parseFloat(data.payload.value)) > 0.3) {
+                        player.currentTime = parseFloat(data.payload.value);
+                    }
+                }
+            }
+        };
+
+        // 🚀 OPTIMASI: Auto-reconnect WebSocket
+        ws.onclose = () => {
+            console.warn("WebSocket closed, reconnecting...");
+            setTimeout(() => {
+                ws = new WebSocket("ws://" + window.location.host + "/ws");
+            }, 2000);
+        };
+
+        ws.onerror = (err) => {
+            console.error("WebSocket error:", err);
+        };
+    </script>
+</body>
+</html>

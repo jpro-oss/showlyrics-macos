@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Presentation Engine</title>
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background: transparent;
+            overflow: hidden;
+        }
+
+        #ppt-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+        }
+
+        .ppt-viewer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            opacity: 0;
+            transition: opacity 0.4s ease-in-out;
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+        }
+
+        .ppt-viewer.active {
+            opacity: 1;
+        }
+
+        /* Hide broken/missing images completely */
+        .ppt-viewer[data-broken="true"],
+        img:not([src]), 
+        img[src=""], 
+        img[src="null"] {
+            display: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ppt-container">
+        <img id="ppt-viewer-1" class="ppt-viewer" data-broken="false">
+        <img id="ppt-viewer-2" class="ppt-viewer" data-broken="false">
+    </div>
+    <script>
+        let ws;
+        let activeLayer = 1;
+        let currentUrl = "";
+        let lastValidUrl = ""; // Keep last valid image
+        const img1 = document.getElementById("ppt-viewer-1");
+        const img2 = document.getElementById("ppt-viewer-2");
+
+        // Initialize error handlers on images
+        function initImageErrorHandlers(imgEl) {
+            imgEl.onerror = function() {
+                console.warn("[PPT] Image failed to load, keeping last valid image visible");
+                // Mark as broken but keep last valid image visible
+                imgEl.dataset.broken = "true";
+                if (!imgEl.classList.contains("active")) {
+                    imgEl.style.display = "none";
+                }
+            };
+            
+            imgEl.onload = function() {
+                // Successfully loaded - mark as valid and show
+                imgEl.dataset.broken = "false";
+                lastValidUrl = imgEl.src;
+            };
+        }
+        
+        initImageErrorHandlers(img1);
+        initImageErrorHandlers(img2);
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+            ws = new WebSocket(protocol + "//" + window.location.host + "/ws");
+            
+            ws.onmessage = function (e) {
+                const data = JSON.parse(e.data);
+                if (data.action === "update_presentation" || data.type === "update_presentation") {
+                    const newUrl = data.payload.url || "";
+                    
+                    if (newUrl === currentUrl) {
+                        return; // Menghindari reload/flicker jika URL-nya sama
+                    }
+                    currentUrl = newUrl;
+
+                    if (newUrl) {
+                        const nextLayer = activeLayer === 1 ? img2 : img1;
+                        const currentLayer = activeLayer === 1 ? img1 : img2;
+
+                        nextLayer.onload = () => {
+                            nextLayer.classList.add("active");
+                            currentLayer.classList.remove("active");
+                            activeLayer = activeLayer === 1 ? 2 : 1;
+                        };
+
+                        nextLayer.onerror = () => {
+                            console.error("Gagal memuat gambar presentasi:", nextLayer.src);
+                            nextLayer.dataset.broken = "true";
+                            // Keep currentLayer visible
+                            nextLayer.classList.remove("active");
+                            currentLayer.classList.add("active");
+                        };
+                        
+                        // Direct image loading without fetch - cache busting with timestamp
+                        nextLayer.dataset.broken = "false";
+                        nextLayer.src = newUrl + "?t=" + new Date().getTime();
+                    } else {
+                        img1.classList.remove("active");
+                        img2.classList.remove("active");
+                        setTimeout(() => {
+                            img1.src = "";
+                            img2.src = "";
+                        }, 400);
+                    }
+                }
+            };
+            ws.onclose = () => {
+                console.warn("[PPT] WebSocket closed, keeping last valid image");
+                setTimeout(connectWebSocket, 2000);
+            };
+        }
+        connectWebSocket();
+    </script>
+</body>
+
+</html>

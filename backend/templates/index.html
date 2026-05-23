@@ -1,0 +1,1871 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShowLyrics - Workspace Launcher</title>
+    <link rel="icon" href="static/favicon.ico" type="image/x-icon">
+
+    <style>
+        :root {
+            --bg-main: #09090b;
+            --bg-panel: rgba(24, 24, 27, 0.6);
+            --bg-hover: rgba(39, 39, 42, 0.8);
+            --border: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(255, 255, 255, 0.2);
+            --text-main: #f4f4f5;
+            --text-muted: #a1a1aa;
+            --accent-blue: #3b82f6;
+            --accent-amber: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            scroll-behavior: smooth;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Utility anti-scroll untuk Modal (Zero Inline CSS) */
+        body.no-scroll {
+            overflow: hidden;
+        }
+
+        /* =========================================
+           GLOBAL TRANSLATION ENGINE (CSS ONLY)
+           ========================================= */
+        .lang-en {
+            display: none !important;
+        }
+
+        body.is-english .lang-id {
+            display: none !important;
+        }
+
+        /* Memastikan display kembali sesuai jenis elemennya */
+        body.is-english div.lang-en,
+        body.is-english p.lang-en,
+        body.is-english h2.lang-en,
+        body.is-english h3.lang-en,
+        body.is-english ul.lang-en,
+        body.is-english ol.lang-en {
+            display: block !important;
+        }
+
+        body.is-english span.lang-en,
+        body.is-english b.lang-en,
+        body.is-english i.lang-en {
+            display: inline !important;
+        }
+
+        body.is-english .doc-content.lang-en {
+            display: flex !important;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        /* CUSTOM SCROLLBAR */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-main);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #3f3f46;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #52525b;
+        }
+
+        /* =========================================
+           AMBIENT BACKGROUND ANIMATION
+           ========================================= */
+        .ambient-glow {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        .glow-orb {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 60%);
+            border-radius: 50%;
+            top: -100px;
+            left: -100px;
+            animation: floatGlow 15s infinite alternate ease-in-out;
+        }
+
+        .glow-orb.orb-2 {
+            background: radial-gradient(circle, rgba(245, 158, 11, 0.05) 0%, transparent 60%);
+            top: auto;
+            bottom: -200px;
+            left: auto;
+            right: -100px;
+            animation: floatGlow 20s infinite alternate-reverse ease-in-out;
+        }
+
+        @keyframes floatGlow {
+            0% {
+                transform: translate(0, 0) scale(1);
+            }
+
+            100% {
+                transform: translate(100px, 50px) scale(1.2);
+            }
+        }
+
+        /* =========================================
+           HERO / LAUNCHER PANEL
+           ========================================= */
+        .launcher-wrapper {
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .launcher-container {
+            width: 100%;
+            max-width: 900px;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            gap: 40px;
+            animation: fadeInDown 1s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .brand-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .brand-logo {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+        }
+
+        .brand-text {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .brand-name {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin: 0;
+            color: #fff;
+        }
+
+        .brand-ver {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            letter-spacing: 0.05em;
+        }
+
+        .header-badges {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #10b981;
+            background: rgba(16, 185, 129, 0.1);
+            padding: 6px 14px;
+            border-radius: 20px;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            text-decoration: none;
+            cursor: default;
+        }
+
+        .status-badge .pulse {
+            width: 6px;
+            height: 6px;
+            background: #10b981;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #10b981;
+            animation: blink 2s infinite;
+        }
+
+        .btn-header-action {
+            border-color: rgba(59, 130, 246, 0.3);
+            color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .btn-header-action:hover {
+            background: rgba(59, 130, 246, 0.2);
+        }
+
+        .btn-header-manual {
+            border-color: rgba(245, 158, 11, 0.3);
+            color: #f59e0b;
+            background: rgba(245, 158, 11, 0.1);
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .btn-header-manual:hover {
+            background: rgba(245, 158, 11, 0.2);
+        }
+
+        .badge-icon {
+            font-size: 14px;
+        }
+
+        /* MAIN BUTTONS */
+        .launch-grid {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .launch-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 30px 40px;
+            text-decoration: none;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 25px;
+            width: 100%;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        .launch-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, var(--accent), transparent 70%);
+            opacity: 0;
+            transition: 0.5s;
+            z-index: 0;
+            mix-blend-mode: screen;
+        }
+
+        .launch-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            opacity: 0;
+            transition: 0.5s;
+        }
+
+        .launch-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            border-color: var(--border-hover);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .launch-card:hover::before {
+            opacity: 0.08;
+        }
+
+        .launch-card:hover::after {
+            opacity: 1;
+        }
+
+        .launch-card.mode-reguler {
+            --accent: var(--accent-blue);
+        }
+
+        .card-icon {
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            transition: 0.4s;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
+        }
+
+        .launch-card:hover .card-icon {
+            background: var(--accent);
+            border-color: var(--accent);
+            transform: scale(1.1) rotate(-5deg);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .launch-arrow {
+            font-size: 30px;
+            font-weight: bold;
+            color: var(--text-muted);
+            opacity: 0;
+            transform: translateX(-15px);
+            transition: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            margin-left: auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        .launch-card:hover .launch-arrow {
+            opacity: 1;
+            transform: translateX(0);
+            color: var(--text-main);
+        }
+
+        .card-text {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            position: relative;
+            z-index: 1;
+            text-align: left;
+        }
+
+        .card-title {
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin: 0;
+            letter-spacing: -0.02em;
+        }
+
+        .card-desc {
+            font-size: 1rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+            margin: 0;
+            max-width: 500px;
+        }
+
+        .scroll-hint {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            font-weight: 600;
+            text-decoration: none;
+            opacity: 0.5;
+            transition: 0.3s;
+        }
+
+        .scroll-hint:hover {
+            opacity: 1;
+            color: #fff;
+        }
+
+        .bounce-arrow {
+            font-size: 16px;
+            animation: bounce 2s infinite;
+        }
+
+        /* =========================================
+           MANUAL DOCS (4 COLUMNS - 30 FEATURES)
+           ========================================= */
+        .docs-wrapper {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 100px 40px 120px;
+            border-top: 1px solid var(--border);
+            position: relative;
+        }
+
+        .docs-header {
+            margin-bottom: 60px;
+            text-align: center;
+        }
+
+        .docs-header h2 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin: 0 0 12px 0;
+            color: #fff;
+        }
+
+        .docs-header p {
+            color: var(--text-muted);
+            font-size: 1rem;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .docs-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+        }
+
+        .doc-item {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            transition: all 0.3s ease;
+            opacity: 0;
+            transform: translateY(30px);
+            backdrop-filter: blur(10px);
+        }
+
+        .doc-item.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .doc-item:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-hover);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .doc-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .doc-icon-wrap {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .doc-num {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #52525b;
+            font-family: monospace;
+        }
+
+        .doc-content {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .doc-content h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            margin: 0;
+            color: var(--text-main);
+            letter-spacing: -0.01em;
+        }
+
+        .doc-content p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        kbd {
+            font-family: monospace;
+            font-size: 0.75rem;
+            background: #27272a;
+            color: #e4e4e7;
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid #3f3f46;
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        @keyframes bounce {
+
+            0%,
+            20%,
+            50%,
+            80%,
+            100% {
+                transform: translateY(0);
+            }
+
+            40% {
+                transform: translateY(-8px);
+            }
+
+            60% {
+                transform: translateY(-4px);
+            }
+        }
+
+        @media (max-width: 1200px) {
+            .docs-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 900px) {
+            .docs-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+
+            .docs-grid,
+            .launch-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .launcher-wrapper {
+                height: auto;
+                padding: 60px 0;
+            }
+
+            .scroll-hint {
+                display: none;
+            }
+        }
+
+        /* =========================================
+           USER MANUAL MODAL
+           ========================================= */
+        .manual-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(5px);
+            z-index: 99999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .manual-modal-overlay.active {
+            display: flex;
+            opacity: 1;
+        }
+
+        .manual-modal-content {
+            background: var(--bg-main);
+            border: 1px solid var(--border-hover);
+            border-radius: 12px;
+            width: 95%;
+            max-width: 1100px;
+            height: 88vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9);
+            overflow: hidden;
+        }
+
+        .manual-header {
+            padding: 15px 25px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-panel);
+        }
+
+        .manual-header-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .manual-header h2 {
+            margin: 0;
+            font-size: 1.3em;
+            color: var(--accent-amber);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .lang-tabs {
+            display: flex;
+            gap: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .lang-tab {
+            padding: 6px 15px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85em;
+            transition: 0.2s;
+        }
+
+        .lang-tab:hover {
+            color: #fff;
+        }
+
+        .lang-tab.active {
+            background: var(--accent-blue);
+            color: #fff;
+        }
+
+        .manual-close-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5em;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .manual-close-btn:hover {
+            color: #ef4444;
+        }
+
+        .manual-body {
+            padding: 30px 40px;
+            overflow-y: auto;
+            flex: 1;
+            color: var(--text-main);
+            line-height: 1.7;
+        }
+
+        .manual-body h3 {
+            color: var(--accent-blue);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 10px;
+            margin-top: 40px;
+            font-size: 1.3em;
+        }
+
+        .manual-body h3:first-child {
+            margin-top: 0;
+        }
+
+        .manual-body h4 {
+            color: #fff;
+            margin: 20px 0 5px 0;
+            font-size: 1.05em;
+        }
+
+        .manual-body p {
+            margin: 0 0 15px 0;
+            font-size: 0.95em;
+            color: var(--text-muted);
+        }
+
+        .manual-body ul,
+        .manual-body ol {
+            padding-left: 20px;
+            margin: 0 0 20px 0;
+        }
+
+        .manual-body li {
+            margin-bottom: 10px;
+            font-size: 0.95em;
+            color: var(--text-muted);
+        }
+
+        .manual-body b {
+            color: #fff;
+        }
+
+        .manual-body kbd {
+            background: #27272a;
+            border: 1px solid #3f3f46;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 0.85em;
+            color: var(--accent-amber);
+        }
+
+        .manual-highlight {
+            background: rgba(59, 130, 246, 0.1);
+            border-left: 3px solid var(--accent-blue);
+            padding: 10px 15px;
+            border-radius: 0 8px 8px 0;
+            margin-bottom: 20px;
+        }
+
+        .manual-code {
+            background: #111;
+            color: #10b981;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+    </style>
+    <style>
+        .update-toast {
+            background: #1e1e1e;
+            color: white;
+            padding: 16px;
+            border-radius: 8px;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            width: 300px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            animation: slideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(120%);
+            }
+
+            to {
+                transform: translateX(0);
+            }
+        }
+
+        /* FORCE UPDATE CENTERED MODAL */
+        .update-toast.is-force {
+            top: 50%;
+            left: 50%;
+            bottom: auto;
+            right: auto;
+            transform: translate(-50%, -50%);
+            width: 420px;
+            max-width: 90vw;
+            padding: 40px;
+            text-align: center;
+            background: rgba(9, 9, 11, 0.95);
+            border: 1px solid rgba(220, 53, 69, 0.4);
+            border-top: 5px solid #dc3545;
+            box-shadow: 0 0 100px rgba(0, 0, 0, 0.9), 0 0 40px rgba(220, 53, 69, 0.1);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            animation: zoomInCentered 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .update-toast.is-force h4 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            letter-spacing: -0.02em;
+        }
+
+        .update-toast.is-force p {
+            font-size: 1rem !important;
+            line-height: 1.6;
+            margin-bottom: 25px !important;
+            color: #d4d4d8;
+        }
+
+        .update-toast.is-force .update-btn {
+            padding: 12px 24px !important;
+            font-size: 14px !important;
+            width: 100%;
+            text-align: center;
+            display: block;
+        }
+
+        @keyframes zoomInCentered {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(0.9);
+            }
+
+            to {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="ambient-glow">
+        <div class="glow-orb"></div>
+        <div class="glow-orb orb-2"></div>
+    </div>
+
+    <div class="launcher-wrapper">
+        <div class="launcher-container">
+
+            <div class="app-header">
+                <div class="brand-info">
+                    <img src="/static/logo.png" class="brand-logo" alt="Logo">
+                    <div class="brand-text">
+                        <h1 class="brand-name">ShowLyrics</h1>
+                        <span class="brand-ver">Engine Build V.1.30.8</span>
+                    </div>
+                </div>
+
+                <div class="header-badges">
+                    <div class="lang-tabs">
+                        <button class="lang-tab active" onclick="switchLang('id')" id="tab-id">ID</button>
+                        <button class="lang-tab" onclick="switchLang('en')" id="tab-en">EN</button>
+                    </div>
+
+                    <a onclick="openManual()" class="status-badge btn-header-manual">
+                        <span class="badge-icon">📖</span>
+                        <span class="lang-id">Panduan Pengguna</span>
+                        <span class="lang-en">User Manual</span>
+                    </a>
+
+                    <a href="/diagnostic" target="_blank" class="status-badge btn-header-action">
+                        <span class="badge-icon">📈</span> Diagnostics
+                    </a>
+
+                    <div class="status-badge">
+                        <div class="pulse"></div> System Ready
+                    </div>
+                </div>
+            </div>
+
+            <div class="launch-grid">
+                <div style="position: relative; width: 100%;">
+                    <div class="glow-effect"></div>
+                    <a href="/control" class="launch-card mode-reguler">
+                        <div class="card-icon">🖥️</div>
+                        <div class="card-text">
+                            <h2 class="card-title lang-id">SHOWLYRICS CONTROLLER</h2>
+                            <h2 class="card-title lang-en">SHOWLYRICS CONTROLLER</h2>
+                            <p class="card-desc lang-id">Akses antarmuka VJ utama. Kontrol langsung untuk layar jemaat,
+                                foldback, dan OBS/vMix secara mandiri.</p>
+                            <p class="card-desc lang-en">Access the main VJ interface. Independent control for audience
+                                projection, foldback, and OBS/vMix.</p>
+                        </div>
+                        <div class="launch-arrow">➔</div>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <a href="#manual" class="scroll-hint">
+            <span class="lang-id">Lihat 29 Fitur Utama</span>
+            <span class="lang-en">View 29 Core Features</span>
+            <div class="bounce-arrow">▼</div>
+        </a>
+    </div>
+
+    <div id="manual" class="docs-wrapper">
+        <div class="docs-header">
+            <h2 class="lang-id">Dokumentasi Fitur</h2>
+            <h2 class="lang-en">Feature Documentation</h2>
+            <p class="lang-id">29 Fitur utama mesin ShowLyrics untuk produksi live yang profesional.</p>
+            <p class="lang-en">29 core features of the ShowLyrics engine for professional live production.</p>
+        </div>
+
+        <div class="docs-grid">
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🌐</div>
+                    <div class="doc-num">01</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>URL Routing Output</h3>
+                    <p>Setiap layar output (Main, Lower Third, Foldback) diproses sebagai URL independen yang bisa
+                        dibuka di device mana pun via IP lokal.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>URL Routing Output</h3>
+                    <p>Each display (Main, Lower Third, Foldback) is rendered as an independent URL, accessible on any
+                        device via local IP.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🎦</div>
+                    <div class="doc-num">02</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>OBS Alpha Transparency</h3>
+                    <p>Output Lower Third dirancang khusus untuk dibaca sebagai Browser Source transparan di OBS / vMix
+                        tanpa Chroma Key.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>OBS Alpha Transparency</h3>
+                    <p>The Lower Third output is optimized as a transparent Browser Source for OBS / vMix, eliminating
+                        the need for Chroma Key.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🇬🇧</div>
+                    <div class="doc-num">03</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Bilingual Split (//)</h3>
+                    <p>Sisipkan simbol <kbd>//</kbd> di tengah teks lirik untuk memisahkan bahasa utama dan bahasa
+                        terjemahan (subtitle) secara instan.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Bilingual Split (//)</h3>
+                    <p>Insert the <kbd>//</kbd> symbol in any lyric to instantly separate the main language from its
+                        subtitle translation.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">⚙️</div>
+                    <div class="doc-num">04</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Global Sub Settings</h3>
+                    <p>Warna, ukuran, dan font khusus untuk teks terjemahan dapat dikonfigurasi terpisah melalui panel
+                        Global Settings.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Global Sub Settings</h3>
+                    <p>Color, size, and fonts exclusively for subtitle translations can be configured independently via
+                        the Global Settings panel.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">✨</div>
+                    <div class="doc-num">05</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>GPU Text Animations</h3>
+                    <p>Tiga pilihan transisi lirik (Fade, Stagger, Wave) yang dirender mulus per-huruf oleh kartu grafis
+                        Anda tanpa membebani RAM.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>GPU Text Animations</h3>
+                    <p>Three lyric transitions (Fade, Stagger, Wave) rendered smoothly per-character by your GPU, saving
+                        system RAM.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">📏</div>
+                    <div class="doc-num">06</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Realtime Padding Layout</h3>
+                    <p>Geser slider Padding Y dan X untuk mengatur posisi lirik secara real-time tanpa harus me-restart
+                        tayangan yang berjalan.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Realtime Padding Layout</h3>
+                    <p>Adjust Padding X and Y sliders to reposition lyrics in real-time without restarting the active
+                        display.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🔤</div>
+                    <div class="doc-num">07</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Native Windows Fonts</h3>
+                    <p>Cukup ketik nama font yang terinstal di komputer Anda (misal: 'Impact' atau 'Cinzel'), sistem
+                        akan merendernya secara offline.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Native Windows Fonts</h3>
+                    <p>Simply type any font installed on your PC (e.g., 'Impact' or 'Cinzel'), and the engine will
+                        render it completely offline.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">↩️</div>
+                    <div class="doc-num">08</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Safe Word Wrap</h3>
+                    <p>Algoritma pintar yang mencegah terpotongnya suku kata di tengah jalan jika ukuran font dibesarkan
+                        melebihi lebar layar.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Safe Word Wrap</h3>
+                    <p>A smart algorithm that prevents words from splitting mid-syllable if the font size exceeds the
+                        screen width.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">☀️</div>
+                    <div class="doc-num">09</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Custom Glow & Shadow</h3>
+                    <p>Efek pendar (Glow) dan bayangan (Shadow) teks bisa digabungkan untuk memastikan lirik tetap
+                        terbaca di video background terang.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Custom Glow & Shadow</h3>
+                    <p>Combine text glow and drop-shadows to ensure lyrics remain legible even against bright video
+                        backgrounds.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🎚️</div>
+                    <div class="doc-num">10</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Constant Velocity Alert</h3>
+                    <p>Running text (Alert) berjalan pada kecepatan linear (piksel-per-detik) yang konstan, tidak
+                        bergantung pada panjang kalimat.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Constant Velocity Alert</h3>
+                    <p>Running text alerts move at a constant linear velocity (pixels-per-second), regardless of the
+                        sentence length.</p>
+                </div>
+            </div>
+
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">📄</div>
+                    <div class="doc-num">11</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>File TXT Importer</h3>
+                    <p>Upload file teks (.txt) melalui tombol Import. Server otomatis membaca setiap bait teks dan
+                        memasukannya ke database.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>File TXT Importer</h3>
+                    <p>Upload text files (.txt) via the Import button. The server automatically reads the paragraphs and
+                        inserts them into the DB.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">✂️</div>
+                    <div class="doc-num">12</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Auto Slide Splitting</h3>
+                    <p>Mesin secara cerdas membaca jeda 'Enter ganda' (baris kosong) pada file teks sebagai instruksi
+                        pemisahan slide lirik baru.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Auto Slide Splitting</h3>
+                    <p>The engine intelligently reads double 'Enter' breaks (empty lines) in your text files as commands
+                        to split into a new slide.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">📦</div>
+                    <div class="doc-num">13</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>ZIP Rundown Bundler</h3>
+                    <p>Export seluruh setlist acara beserta database liriknya menjadi satu file ZIP tunggal untuk
+                        dipindahkan ke komputer lain.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>ZIP Rundown Bundler</h3>
+                    <p>Export your entire event setlist and lyric database into a single ZIP file for seamless transfer
+                        to another PC.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🧠</div>
+                    <div class="doc-num">14</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Smart Bundle Import</h3>
+                    <p>Saat mengekstrak file ZIP jadwal, sistem mencegah masuknya lagu duplikat dengan menimpa data lagu
+                        berdasarkan kecocokan judul.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Smart Bundle Import</h3>
+                    <p>When extracting a ZIP schedule, the engine prevents duplicates by replacing song data based on
+                        exact title matches.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🗂️</div>
+                    <div class="doc-num">15</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Virtual Chunking DB</h3>
+                    <p>Sistem merender kartu lagu secara Lazy-Load, membuat aplikasi tidak akan pernah lag meski
+                        menyimpan 3000+ lagu lokal.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Virtual Chunking DB</h3>
+                    <p>The system uses Lazy-Loading to render song cards, ensuring zero UI lag even with a local
+                        database of 3000+ songs.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🧬</div>
+                    <div class="doc-num">16</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Per-Song DNA (Custom Edit)</h3>
+                    <p>Pengaturan warna, glow, dan layout disimpan spesifik di dalam struktur JSON tiap lagu tanpa
+                        mengubah desain lagu lainnya.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Per-Song DNA (Custom Edit)</h3>
+                    <p>Color, glow, and layout settings are saved specifically within each song's JSON structure without
+                        affecting others.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🌍</div>
+                    <div class="doc-num">17</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>3-Mode Preset Engine</h3>
+                    <p>Tersedia 3 nyawa memori pengeditan: Edit untuk lagu spesifik, Edit Preset untuk kelompok lagu,
+                        atau Edit Global via Klik Kanan.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>3-Mode Preset Engine</h3>
+                    <p>Three layers of editing memory: Edit for specific songs, Edit Preset for groups, or Global Edit
+                        via right-click context menu.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🛡️</div>
+                    <div class="doc-num">18</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Draft Snapshot Protection</h3>
+                    <p>Jika Anda menekan 'Cancel' di Editor UI, sistem me-rollback memori UI seketika untuk mencegah
+                        kebocoran layar tayang.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Draft Snapshot Protection</h3>
+                    <p>If you hit 'Cancel' in the UI Editor, the system instantly rolls back the memory snapshot to
+                        prevent live display leakage.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">⚠️</div>
+                    <div class="doc-num">19</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Smart Save Alert</h3>
+                    <p>Tombol 'Save' pada kontrol lagu akan berkedip kuning otomatis apabila mendeteksi adanya
+                        pengetikan yang belum disimpan ke JSON.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Smart Save Alert</h3>
+                    <p>The 'Save' button pulses yellow automatically when it detects unsaved text modifications in the
+                        JSON database.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🗑️</div>
+                    <div class="doc-num">20</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Delete Protection</h3>
+                    <p>Menghapus lagu dari Schedule tidak akan menghapusnya dari Library. Penghapusan Library diproteksi
+                        oleh dialog konfirmasi ganda.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Delete Protection</h3>
+                    <p>Removing a song from the Schedule does not delete it from the Library. Library deletion is
+                        guarded by double confirmation.</p>
+                </div>
+            </div>
+
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">⚡</div>
+                    <div class="doc-num">21</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Live Jump Shortcuts</h3>
+                    <p>Tekan <kbd>V</kbd>, <kbd>C</kbd>, atau <kbd>B</kbd> tanpa mouse untuk melompat instan ke bagian
+                        Verse, Chorus, atau Bridge saat live.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Live Jump Shortcuts</h3>
+                    <p>Press <kbd>V</kbd>, <kbd>C</kbd>, or <kbd>B</kbd> keypress to jump instantly to Verse, Chorus, or
+                        Bridge tags during live.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🏷️</div>
+                    <div class="doc-num">22</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Fast Slide Tagging</h3>
+                    <p>Gunakan kombinasi <kbd>SHIFT+V</kbd> atau <kbd>SHIFT+C</kbd> untuk menandai dan mewarnai blok
+                        slide lirik dengan sangat cepat.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Fast Slide Tagging</h3>
+                    <p>Use combination <kbd>SHIFT+V</kbd> or <kbd>SHIFT+C</kbd> to quickly tag and color-code lyric
+                        slide blocks.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">✏️</div>
+                    <div class="doc-num">23</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Realtime Quick Edit</h3>
+                    <p>Klik Kanan pada slide aktif di Controller untuk mengedit teks secara instan. Perubahan langsung
+                        ter-render di proyektor tanpa delay.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Realtime Quick Edit</h3>
+                    <p>Right-click the active slide in the Controller to edit text instantly. Changes are rendered on
+                        the projector with zero delay.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">📴</div>
+                    <div class="doc-num">24</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Clear & Eject State</h3>
+                    <p>Tombol 'Clear' (atau slide kosong) akan mengirimkan perintah state 'hide' ke WebSocket tanpa
+                        merusak urutan slide saat ini.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Clear & Eject State</h3>
+                    <p>The 'Clear' button (or empty slide) sends a 'hide' state command to the WebSocket without losing
+                        your current slide position.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">💬</div>
+                    <div class="doc-num">25</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Foldback Messaging</h3>
+                    <p>Kirim pesan rahasia (Stage Msg) yang hanya muncul di layar Foldback. Centang mode 'Blink' untuk
+                        peringatan darurat ke musisi.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Foldback Messaging</h3>
+                    <p>Send hidden messages (Stage Msg) visible only on Foldback. Check 'Blink' mode for flashing
+                        emergency alerts to musicians.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">⏱️</div>
+                    <div class="doc-num">26</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Stage Countdown Timer</h3>
+                    <p>Suntikkan Timer hitung mundur digital ke layar panggung untuk membatasi durasi Khotbah atau
+                        presentasi dengan presisi detik.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Stage Countdown Timer</h3>
+                    <p>Inject a digital countdown timer into the stage display to manage Sermon or presentation
+                        durations with second-level precision.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🔒</div>
+                    <div class="doc-num">27</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>HWID Security</h3>
+                    <p>Sistem enkripsi lisensi yang mengunci software ke Hardware ID spesifik PC Anda secara cloud untuk
+                        mencegah kloning ilegal.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>HWID Security</h3>
+                    <p>Cloud-based license encryption that locks the software to your specific PC Hardware ID to prevent
+                        illegal cloning.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🩺</div>
+                    <div class="doc-num">28</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Live JSON Diagnostics</h3>
+                    <p>Halaman Diagnostik internal untuk memvalidasi kesehatan (corrupt-check) pada 7 file database
+                        JSON dan performa RAM.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Live JSON Diagnostics</h3>
+                    <p>Internal Diagnostics page to validate the health (corrupt-check) of 7 core JSON databases and RAM
+                        load.</p>
+                </div>
+            </div>
+            <div class="doc-item">
+                <div class="doc-top">
+                    <div class="doc-icon-wrap">🔐</div>
+                    <div class="doc-num">29</div>
+                </div>
+                <div class="doc-content lang-id">
+                    <h3>Chrome Permissions</h3>
+                    <p>Wajib mengizinkan akses Local Fonts dan Clipboard pada Site Settings Chrome agar engine berjalan
+                        100%.</p>
+                </div>
+                <div class="doc-content lang-en">
+                    <h3>Chrome Permissions</h3>
+                    <p>Mandatory: Allow Local Fonts and Clipboard access in Chrome Site Settings for 100% engine
+                        compatibility.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="ui-manual-modal" class="manual-modal-overlay">
+        <div class="manual-modal-content">
+            <div class="manual-header">
+                <div class="manual-header-left">
+                    <h2 class="lang-id">📖 Panduan Penggunaan Detail</h2>
+                    <h2 class="lang-en">📖 Detailed User Manual</h2>
+                </div>
+                <button class="manual-close-btn" onclick="closeManual()">✖</button>
+            </div>
+
+            <div class="manual-body">
+                <div class="lang-id">
+                    <div class="manual-highlight">
+                        <b>Informasi Penting:</b> Aplikasi ShowLyrics menggunakan teknologi Web-Hybrid. Anda dapat
+                        membuka layar proyektor dari komputer (atau HP) mana saja yang terhubung di jaringan WiFi yang
+                        sama!
+                    </div>
+
+                    <h3>⚠️ PERSIAPAN WAJIB (CHROME SITE SETTINGS)</h3>
+                    <p>Agar font lokal Windows (Native Fonts) dan fitur <i>copy-paste</i> berjalan sempurna, Anda
+                        <b>WAJIB</b> memberikan izin (Permissions) pada browser Chrome Anda:
+                    </p>
+                    <ol>
+                        <li>Buka tab baru di Chrome, lalu <i>copy-paste</i> URL pengaturan khusus ini:<br><br>
+                            <kbd>chrome://settings/content/siteDetails?site=http%3A%2F%2F127.0.0.1%3A18888</kbd><br><br>
+                        </li>
+                        <li>Pada halaman yang terbuka, cari pengaturan <b>Fonts</b> (Fonta), lalu ubah dari
+                            <i>Block/Ask</i> menjadi <b>Allow</b> (Izinkan).
+                        </li>
+                        <li>Cari juga pengaturan <b>Clipboard</b> (Papan Klip), lalu ubah menjadi <b>Allow</b>
+                            (Izinkan).</li>
+                        <li>Tutup halaman pengaturan tersebut, dan tekan <kbd>F5</kbd> untuk me-<i>refresh</i> tab
+                            ShowLyrics Anda.</li>
+                    </ol>
+
+                    <h3>Bab 1: Persiapan & Import Lagu</h3>
+                    <ol>
+                        <li><b>Upload File TXT:</b> Gunakan tombol Import di sebelah kotak pencarian Library, lalu pilih
+                            file <code>.txt</code> berisi lirik Anda.</li>
+                        <li><b>Format Teks & Enter Ganda:</b> Server membaca baris kosong (jeda enter 2 kali) di dalam
+                            file teks sebagai instruksi "Pisahkan ini menjadi slide baru". Pastikan ada jarak antar bait
+                            di file TXT Anda.</li>
+                        <li><b>Lirik Bilingual (Dua Bahasa):</b> Ketik simbol <kbd>//</kbd> di tengah lirik. Contoh:
+                            <i>Kudus//Holy</i>. Aplikasi akan memisahkan baris kedua menjadi terjemahan.
+                        </li>
+                        <li><b>Menyimpan Lagu Baru:</b> Setelah selesai mengedit teks di kolom Editor, tombol Save akan
+                            berkedip kuning. Klik tombol tersebut untuk menyimpannya ke database komputer.</li>
+                        <li><b>Menghapus Lagu di Library:</b> Klik ikon tong sampah berwarna merah di tab Library.</li>
+                        <li><b>Proteksi Hapus:</b> Aplikasi akan memunculkan dialog konfirmasi agar Anda tidak menghapus
+                            lagu secara tidak sengaja.</li>
+                    </ol>
+
+                    <h3>Bab 2: Manajemen Jadwal / Rundown</h3>
+                    <ol start="7">
+                        <li><b>Menambah ke Jadwal:</b> Klik tombol panah <kbd>+</kbd> di samping nama lagu, atau
+                            <i>drag</i> lagu tersebut ke area Playlist (Schedule).
+                        </li>
+                        <li><b>Mengurutkan Lagu:</b> Klik tahan dan geser kartu lagu di area Schedule ke atas atau bawah
+                            sesuai rundown acara.</li>
+                        <li><b>Menghapus dari Jadwal:</b> Menekan tanda silang di Schedule hanya menghapus lagu dari
+                            daftar acara, BUKAN menghapusnya dari database komputer Anda.</li>
+                        <li><b>Export Bundle (ZIP):</b> Klik tombol 'Export Bundle' untuk membungkus seluruh setlist
+                            hari ini (beserta data lagunya) menjadi file <code>.zip</code>. Cocok untuk memindahkan
+                            jadwal ke laptop gereja lain.</li>
+                        <li><b>Import Bundle:</b> Buka file ZIP hasil Export dengan fitur Import Bundle.</li>
+                        <li><b>Proteksi Duplikat:</b> Saat Anda melakukan Import Bundle, aplikasi tidak akan menduplikat
+                            lagu (contoh: Lagu "Besar SetiaMu 1" dan "Besar SetiaMu 2"). Sistem cerdas akan menimpa DNA
+                            lagu lama dengan data dari file ZIP.</li>
+                    </ol>
+
+                    <h3>Bab 3: URLs Output & Sistem Layar</h3>
+                    <p><i>Buka browser di HP/Tablet yang satu WiFi, dan ketik IP Laptop VJ (contoh: <code
+                                class="manual-code">http://192.168.1.10:18888/foldback</code>). Layar akan tampil tanpa
+                            kabel!</i></p>
+                    <ol start="13">
+                        <li><b>URL Main Display (<code class="manual-code">/display</code>):</b> Layar ini untuk
+                            jemaat/audiens. Letakkan *window* ini di monitor Proyektor.</li>
+                        <li><b>Fullscreen Proyektor:</b> Setelah memindahkan window Main Display ke layar proyektor,
+                            klik sekali layarnya, lalu tekan <kbd>F11</kbd> di keyboard untuk mode layar penuh.</li>
+                        <li><b>URL Lower Third (<code class="manual-code">/lowerthird</code>):</b> Copy URL ini dan
+                            masukkan ke "Browser Source" di dalam OBS Studio atau vMix untuk keperluan Livestreaming.
+                        </li>
+                        <li><b>Alpha Channel OBS:</b> Tidak perlu repot Color/Chroma Key! Lower Third sudah terprogram
+                            transparan (Alpha) otomatis.</li>
+                        <li><b>URL Foldback (<code class="manual-code">/foldback</code>):</b> Layar monitor untuk
+                            penyanyi di panggung (Singer/WL).</li>
+                        <li><b>Format Foldback:</b> Foldback sengaja berlatar hitam kontras tinggi. Tulisan besar di
+                            tengah adalah baris saat ini, tulisan kecil di bawah adalah baris lagu <i>selanjutnya</i>.
+                        </li>
+                    </ol>
+
+                    <h3>Bab 4: Controller & Live Eksekusi</h3>
+                    <ol start="19">
+                        <li><b>Menembak Slide:</b> Klik kotak lirik mana saja di panel tengah Controller, lirik akan
+                            langsung muncul di Proyektor.</li>
+                        <li><b>Clear Layar (Eject):</b> Klik kotak hitam kosong pertama (sebelum lirik dimulai) atau
+                            tombol Clear untuk mematikan lirik tanpa mereset urutan jalan Anda.</li>
+                        <li><b>Quick Edit Teks:</b> Penyanyi salah lirik? <b>Klik Kanan</b> kotak lirik yang sedang
+                            tayang, ubah teksnya, dan layar proyektor akan berubah instan tanpa perlu menekan Save!</li>
+                        <li><b>Tombol Jump Shortcut:</b> Malas menggunakan Mouse? Tekan <kbd>V</kbd> (Verse),
+                            <kbd>C</kbd> (Chorus), atau <kbd>B</kbd> (Bridge) di keyboard. Kursor akan otomatis melompat
+                            ke bagian tersebut.
+                        </li>
+                        <li><b>Fast Slide Tagging:</b> Tahan tombol <kbd>SHIFT</kbd> dan tekan <kbd>V</kbd> (Biru) atau
+                            <kbd>C</kbd> (Merah) saat menyeleksi blok teks untuk menandai warna Chorus/Verse dengan
+                            super cepat.
+                        </li>
+                        <li><b>Auto-Scroll View:</b> Saat Anda mengklik lirik, layar Controller otomatis akan sedikit
+                            turun (scroll) agar lirik aktif selalu berada di posisi tengah pandangan Anda.</li>
+                    </ol>
+
+                    <h3>Bab 5: Komunikasi Panggung (Stage Control)</h3>
+                    <ol start="25">
+                        <li><b>Stage Message:</b> Ketik instruksi (contoh: "Masuk Cello Saja") di kotak pesan dan kirim.
+                            Pesan ini HANYA tampil di layar Foldback panggung, jemaat tidak akan tahu.</li>
+                        <li><b>Mode Blink (Kedip):</b> Centang kotak 'Blink' sebelum mengirim Stage Message untuk
+                            membuat tulisan tersebut berkedip merah (untuk tanda darurat/habis waktu).</li>
+                        <li><b>Stage Countdown:</b> Atur waktu menit/detik dan mulai timer. Hitung mundur digital besar
+                            akan muncul di monitor penyanyi/pembicara.</li>
+                        <li><b>Audience Alert:</b> Berbeda dengan Stage Message, Alert ini adalah "Running Text" (Teks
+                            Berjalan) untuk mengumumkan pesan darurat (misal plat nomor mobil) ke layar Utama Jemaat.
+                        </li>
+                        <li><b>Pengaturan Speed Alert:</b> Geser slider Speed Alert sebelum menyalakan running text
+                            untuk menyesuaikan seberapa cepat teks berjalan melintas layar. Kecepatannya konstan dan
+                            linear.</li>
+                    </ol>
+
+                    <h3>Bab 6: Tema Visual & Text Editor</h3>
+                    <ol start="30">
+                        <li><b>Custom DNA Editor:</b> Buka Text Editor dari panel kontrol lagu. Perubahan Background dan
+                            Font yang Anda simpan di sini menjadi "DNA" mutlak untuk lagu itu saja.</li>
+                        <li><b>Song Preset Editor:</b> Ubah *dropdown* mode ke "Preset". Anda bisa membuat 1 tema desain
+                            dan menyimpannya ke database untuk dipasang ke puluhan lagu sekaligus.</li>
+                        <li><b>Global Edit Preset:</b> Mau ubah warna teks sebuah Preset? Klik Kanan kartu Preset di tab
+                            Visual (sebelah kiri Controller) lalu pilih Edit.</li>
+                        <li><b>Draft Protection:</b> Jika saat mengedit tema Anda berubah pikiran dan memencet tanda
+                            silang <kbd>✖</kbd>, sistem akan mengembalikan tampilan Proyektor ke kondisi semula berkat
+                            memori <i>Snapshot</i>.</li>
+                        <li><b>GPU Text FX:</b> Pilih animasi transisi Fade, Stagger (Naik per huruf), atau Wave. Proses
+                            animasi murni digerakkan oleh GPU Komputer, bukan RAM.</li>
+                        <li><b>Global Sub Settings:</b> Buka tab Global Settings untuk mengatur warna, jarak, dan ukuran
+                            font khusus untuk bahasa terjemahan (Bilingual).</li>
+                        <li><b>Font Windows Lokal:</b> Tuliskan nama font apa pun yang sudah terinstal di Windows Anda
+                            (Misal: 'Montserrat' atau 'Times New Roman') di kolom Font Name Editor.</li>
+                    </ol>
+
+                    <h3>Bab 7: Keamanan Lisensi & Sistem Hardware</h3>
+                    <ol start="37">
+                        <li><b>Sistem Offline:</b> ShowLyrics bisa berjalan 100% tanpa internet, KECUALI saat pertama
+                            kali aktivasi License Key.</li>
+                        <li><b>Hardware ID Lock:</b> Lisensi Anda diikat ke Hardware PC secara mutlak (dicatat di
+                            Server). Jika ingin pindah PC, Anda wajib menekan 'Release/Deactivate' saat online.</li>
+                        <li><b>Halaman Diagnostics:</b> Buka Diagnostics via Launcher untuk memeriksa 'kesehatan'
+                            file-file JSON Anda. Jika ada file JSON yang korup, statusnya akan merah.</li>
+                        <li><b>Pantau RAM (Memory Check):</b> Halaman Diagnostics juga menampilkan indikator persentase
+                            beban CPU dan RAM komputer PC Anda untuk menghindari resiko *lag* saat acara live.</li>
+                        <li><b>Virtual Chunk Limit:</b> Jangan takut memasukkan 3000 lagu ke Library! Sistem menggunakan
+                            <i>Lazy Loading Virtual Chunking</i>, sehingga RAM browser Anda akan selalu hemat dan gesit.
+                        </li>
+                        <li><b>Safe Restart Server:</b> Jika Backend Python ter-close, Controller HTML tidak perlu
+                            di-refresh ulang. Cukup nyalakan server `main.py` lagi dan WebSocket akan tersambung kembali
+                            (Auto-Reconnect).</li>
+                    </ol>
+                </div>
+
+                <div class="lang-en">
+                    <div class="manual-highlight">
+                        <b>Important Note:</b> ShowLyrics uses Web-Hybrid technology. You can open projector displays
+                        from any laptop, phone, or tablet connected to the same local WiFi!
+                    </div>
+
+                    <h3>⚠️ CRUCIAL SETUP (CHROME SITE SETTINGS)</h3>
+                    <p>To ensure local Windows fonts and the copy-paste clipboard functions work flawlessly, you
+                        <b>MUST</b> grant permissions in your Chrome browser:
+                    </p>
+                    <ol>
+                        <li>Open a new tab in Chrome, and copy-paste this direct settings URL:<br><br>
+                            <kbd>chrome://settings/content/siteDetails?site=http%3A%2F%2F127.0.0.1%3A18888</kbd><br><br>
+                        </li>
+                        <li>On the settings page, find the <b>Fonts</b> permission and change it to <b>Allow</b>.</li>
+                        <li>Find the <b>Clipboard</b> permission and change it to <b>Allow</b>.</li>
+                        <li>Close the settings tab and press <kbd>F5</kbd> to refresh your ShowLyrics tab.</li>
+                    </ol>
+
+                    <h3>Chapter 1: Song Import & Preparation</h3>
+                    <ol>
+                        <li><b>TXT File Upload:</b> Use the Import button next to the Library search box, then select
+                            your <code>.txt</code> lyric file.</li>
+                        <li><b>Double Enter formatting:</b> The server reads empty lines (double enter breaks) in your
+                            text file as an instruction to "split into a new slide". Ensure paragraphs are separated.
+                        </li>
+                        <li><b>Bilingual Lyrics:</b> Type the <kbd>//</kbd> symbol in the middle of a lyric. Example:
+                            <i>Kudus//Holy</i>. The app splits the second line as a translation subtitle.
+                        </li>
+                        <li><b>Saving New Songs:</b> After editing text in the Editor column, the Save button will flash
+                            yellow. Click it to save changes to the local computer database.</li>
+                        <li><b>Deleting Songs:</b> Click the red trash bin icon in the Library tab.</li>
+                        <li><b>Delete Protection:</b> A confirmation dialog will pop up to prevent accidental deletion
+                            of your lyric data.</li>
+                    </ol>
+
+                    <h3>Chapter 2: Schedule / Rundown Management</h3>
+                    <ol start="7">
+                        <li><b>Adding to Schedule:</b> Click the <kbd>+</kbd> button next to a song, or drag it into the
+                            Playlist (Schedule) area.</li>
+                        <li><b>Sorting the Schedule:</b> Click, hold, and drag song cards up or down to arrange your
+                            event rundown.</li>
+                        <li><b>Removing from Schedule:</b> Clicking the cross icon in the Schedule only removes the song
+                            from the event list, NOT from your main database.</li>
+                        <li><b>Export Bundle (ZIP):</b> Click 'Export Bundle' to pack today's setlist (including all its
+                            song data) into a <code>.zip</code> file. Perfect for transferring to another church laptop.
+                        </li>
+                        <li><b>Import Bundle:</b> Open exported ZIP files using the Import Bundle feature.</li>
+                        <li><b>Duplicate Protection:</b> When importing a Bundle, the system prevents duplicate songs
+                            (e.g., "Great is Thy Faithfulness 1" and "2"). It intelligently overwrites old song DNA with
+                            data from the ZIP.</li>
+                    </ol>
+
+                    <h3>Chapter 3: Output URLs & Screen Systems</h3>
+                    <p><i>Open a browser on a phone/tablet on the same WiFi, and type the VJ Laptop's IP (e.g., <code
+                                class="manual-code">http://192.168.1.10:18888/foldback</code>). Wireless display
+                            achieved!</i></p>
+                    <ol start="13">
+                        <li><b>Main Display URL (<code class="manual-code">/display</code>):</b> This screen is for the
+                            audience. Move this window to your Projector monitor.</li>
+                        <li><b>Projector Fullscreen:</b> After moving the Main Display window, click it once, then press
+                            <kbd>F11</kbd> for fullscreen mode.
+                        </li>
+                        <li><b>Lower Third URL (<code class="manual-code">/lowerthird</code>):</b> Copy this URL and
+                            paste it as a "Browser Source" inside OBS Studio or vMix for Livestreaming.</li>
+                        <li><b>OBS Alpha Channel:</b> No Chroma Key needed! Lower Third is pre-programmed to be
+                            automatically transparent (Alpha channel).</li>
+                        <li><b>Foldback URL (<code class="manual-code">/foldback</code>):</b> The stage monitor display
+                            for singers and worship leaders.</li>
+                        <li><b>Foldback Format:</b> Foldbacks have a high-contrast black background. Large text is the
+                            current line, small text below is the <i>upcoming</i> line.</li>
+                    </ol>
+
+                    <h3>Chapter 4: Controller & Live Execution</h3>
+                    <ol start="19">
+                        <li><b>Triggering Slides:</b> Click any lyric box in the central panel, and the text will
+                            instantly appear on the Projector.</li>
+                        <li><b>Clear Screen (Eject):</b> Click the first empty black box (before the lyrics) or the
+                            Clear button to hide lyrics without losing your current timeline position.</li>
+                        <li><b>Quick Text Edit:</b> Did the singer sing a wrong word? <b>Right-Click</b> the active
+                            lyric box, edit the text, and the projector updates instantly in realtime without hitting
+                            save!</li>
+                        <li><b>Jump Shortcut Keys:</b> Hate using the mouse? Press <kbd>V</kbd> (Verse), <kbd>C</kbd>
+                            (Chorus), or <kbd>B</kbd> (Bridge) on your keyboard to snap the cursor to that song section.
+                        </li>
+                        <li><b>Fast Slide Tagging:</b> Hold <kbd>SHIFT</kbd> and press <kbd>V</kbd> (Blue) or
+                            <kbd>C</kbd> (Red) while highlighting text blocks to color-tag them super fast.
+                        </li>
+                        <li><b>Auto-Scroll View:</b> As you trigger lyrics, the Controller panel automatically scrolls
+                            down to keep the active lyric in the center of your view.</li>
+                    </ol>
+
+                    <h3>Chapter 5: Stage Control & Communication</h3>
+                    <ol start="25">
+                        <li><b>Stage Message:</b> Type an instruction (e.g., "Cello Solo") and send it. This message
+                            ONLY appears on the Foldback monitor, hidden from the audience.</li>
+                        <li><b>Blink Mode:</b> Check the 'Blink' box before sending a Stage Message to make the text
+                            flash red (used for urgent/time-out warnings).</li>
+                        <li><b>Stage Countdown:</b> Set the minutes/seconds and start the timer. A large digital
+                            countdown will inject into the speaker's monitor.</li>
+                        <li><b>Audience Alert:</b> Unlike Stage Messages, the Alert is a "Running Text" scroll to
+                            broadcast emergency messages (like a car license plate) to the main audience display.</li>
+                        <li><b>Alert Speed Setting:</b> Adjust the Speed Alert slider before launching running text to
+                            set the linear scrolling speed.</li>
+                    </ol>
+
+                    <h3>Chapter 6: Visual Themes & Text Editor</h3>
+                    <ol start="30">
+                        <li><b>Custom DNA Editor:</b> Open the Text Editor from a song's control panel. Background and
+                            Font changes saved here become the absolute "DNA" for that specific song only.</li>
+                        <li><b>Song Preset Editor:</b> Switch the editor mode to "Preset". Create one design theme and
+                            save it to the database, applying it to dozens of songs instantly via dropdown.</li>
+                        <li><b>Global Preset Edit:</b> Want to change a Preset's color globally? Right-Click the Preset
+                            card on the left panel and select Edit.</li>
+                        <li><b>Draft Protection:</b> If you change your mind during editing and hit the close
+                            <kbd>✖</kbd> button, the system rolls back the Projector output to its original state via
+                            <i>Snapshot Memory</i>.
+                        </li>
+                        <li><b>GPU Text FX:</b> Choose Fade, Stagger, or Wave transitions. Animation calculations are
+                            purely driven by your GPU, keeping system RAM free.</li>
+                        <li><b>Global Sub Settings:</b> Open the Global Settings tab to configure specific colors,
+                            padding, and sizes exclusively for translated (Bilingual) text.</li>
+                        <li><b>Local Windows Fonts:</b> Type the name of any font installed on your PC (e.g.,
+                            'Montserrat' or 'Impact') in the Font Name field, and it will render perfectly.</li>
+                    </ol>
+
+                    <h3>Chapter 7: License Security & System Hardware</h3>
+                    <ol start="37">
+                        <li><b>Offline System:</b> ShowLyrics runs 100% offline without internet, EXCEPT during the
+                            initial License Key activation.</li>
+                        <li><b>Hardware ID Lock:</b> Your license is strictly bound to your PC's Hardware ID via Cloud.
+                            To move PCs, you must click 'Release/Deactivate' while online.</li>
+                        <li><b>Diagnostics Page:</b> Open Diagnostics from the Launcher to run a 'health check' on your
+                            JSON files. Corrupted files will flag red immediately.</li>
+                        <li><b>RAM Monitoring:</b> The Diagnostics page also displays live CPU load and RAM percentage
+                            to prevent live-event stutters.</li>
+                        <li><b>Virtual Chunk Limit:</b> Don't worry about loading 3000 songs! The system uses <i>Lazy
+                                Loading Virtual Chunking</i>, keeping your browser RAM incredibly low and responsive.
+                        </li>
+                        <li><b>Safe Server Restart:</b> If the Python backend closes, you don't need to refresh the HTML
+                            Controller. Just restart `main.py` and the WebSocket auto-reconnects seamlessly.</li>
+                    </ol>
+                </div>
+
+            </div>
+        </div>
+    </div>
+    <div id="update-container"></div>
+
+    <script>
+        // ==========================================
+        // --- TRANSLATION SWITCHER (CSS TOGGLE)
+        // ==========================================
+        function switchLang(lang) {
+            // Kita bermain dengan root body class, ZERO inline css per-element!
+            if (lang === 'en') {
+                document.body.classList.add('is-english');
+                document.getElementById('tab-id').classList.remove('active');
+                document.getElementById('tab-en').classList.add('active');
+            } else {
+                document.body.classList.remove('is-english');
+                document.getElementById('tab-en').classList.remove('active');
+                document.getElementById('tab-id').classList.add('active');
+            }
+        }
+
+        // ==========================================
+        // --- MANUAL MODAL LOGIC (ZERO INLINE CSS)
+        // ==========================================
+        function openManual() {
+            const modal = document.getElementById('ui-manual-modal');
+            modal.classList.add('active');
+            document.body.classList.add('no-scroll');
+
+            // Set Default bahasa ke Indonesia saat dibuka perdana (jika belum di set)
+            if (!document.body.classList.contains('is-english')) switchLang('id');
+        }
+
+        function closeManual() {
+            const modal = document.getElementById('ui-manual-modal');
+            modal.classList.remove('active');
+            document.body.classList.remove('no-scroll');
+        }
+
+        // Tutup modal kalau user klik area hitam luarnya
+        document.getElementById('ui-manual-modal').addEventListener('click', function (e) {
+            if (e.target === this) closeManual();
+        });
+
+        // ==========================================
+        // --- ANIMASI SCROLL REVEAL BAWAAN ---
+        // ==========================================
+        const observerOptions = { root: null, rootMargin: '0px', threshold: 0.1 };
+
+        const observer = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const index = Array.from(entry.target.parentNode.children).indexOf(entry.target);
+                    const delay = (index % 4) * 0.1;
+                    entry.target.style.transitionDelay = `${delay}s`;
+                    entry.target.classList.add('visible');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.doc-item').forEach(item => { observer.observe(item); });
+    </script>
+    <script>
+        const LOCAL_CONFIG = {
+            version: "1.30.8",
+            check_beta: true,
+            api_url: "https://zyvano.github.io/showlyrics/version.json"
+        };
+
+        async function checkAppUpdate() {
+            try {
+                const response = await fetch(`${LOCAL_CONFIG.api_url}?t=${Date.now()}`);
+                const remote = await response.json();
+
+                const current = LOCAL_CONFIG.version;
+                const isNewer = (v1, v2) => v1.localeCompare(v2, undefined, { numeric: true }) > 0;
+
+                if (remote.min_version && isNewer(remote.min_version, current)) {
+                    return showToast(remote, "FORCE");
+                }
+
+                if (remote.latest_version && isNewer(remote.latest_version, current)) {
+                    return showToast(remote, "STABLE");
+                }
+
+                if (LOCAL_CONFIG.check_beta && remote.beta_version) {
+                    if (isNewer(remote.beta_version, current)) {
+                        return showToast(remote, "BETA");
+                    }
+                }
+
+                console.log("Aplikasi sudah versi terbaru.");
+            } catch (err) {
+                console.warn("Gagal menghubungi server update.", err);
+            }
+        }
+
+        function showToast(data, type) {
+            let ui = {
+                title: "Update Tersedia", color: "#007bff",
+                msg: data.changelog || "Versi baru tersedia.", link: data.download_url, btnClose: true
+            };
+
+            if (type === "FORCE") {
+                ui = { title: "Update Wajib!", color: "#dc3545", msg: "Versi ini sudah tidak didukung.", link: data.download_url, btnClose: false };
+            } else if (type === "BETA") {
+                ui = { title: "Versi Beta", color: "#6f42c1", msg: data.beta_changelog || "Versi beta baru tersedia.", link: data.beta_url ? data.beta_url : data.download_url, btnClose: true };
+            }
+
+            const container = document.getElementById('update-container');
+            if (container) {
+                container.innerHTML = `
+                    <div class="update-toast ${type === 'FORCE' ? 'is-force' : ''}" style="border-left: ${type === 'FORCE' ? 'none' : '5px solid ' + ui.color}">
+                        <h4 style="margin:0; color:${ui.color}">${ui.title}</h4>
+                        <p style="font-size:13px; margin: 10px 0;">${ui.msg}</p>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <button onclick="openDownloadLink('${ui.link}')" class="update-btn" style="background:${ui.color}; color:white; padding:5px 10px; border-radius:4px; border:none; cursor:pointer; font-size:12px; font-weight:bold;">Update</button>
+                            ${ui.btnClose ? `<button onclick="this.parentElement.parentElement.remove()" style="background:none; border:none; color:#888; cursor:pointer; font-size:12px;">Nanti</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Buka link download di sistem browser (Chrome/Edge), bukan sub-window Electron
+        function openDownloadLink(url) {
+            if (window.electronAPI && window.electronAPI.openExternal) {
+                // Mode Electron: kirim ke main process → shell.openExternal()
+                window.electronAPI.openExternal(url);
+            } else {
+                // Mode Browser biasa (Chrome langsung): buka tab baru
+                window.open(url, '_blank', 'noopener,noreferrer');
+            }
+        }
+
+        window.addEventListener('load', checkAppUpdate);
+    </script>
+</body>
+
+</html>

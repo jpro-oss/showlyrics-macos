@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Background Engine</title>
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: transparent;
+            overflow: hidden;
+        }
+
+        .bg-player {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            background-color: transparent;
+            transform: translateZ(0);
+            backface-visibility: hidden;
+            /* will-change dihapus dari CSS default; hanya aktif saat transisi via JS */
+        }
+    </style>
+</head>
+
+<body>
+    <video id="vid1" class="bg-player" muted loop playsinline preload="auto" disablepictureinpicture></video>
+    <video id="vid2" class="bg-player" muted loop playsinline preload="auto" disablepictureinpicture></video>
+
+    <script>
+        /* ========== KONFIGURASI STABILITAS ========== */
+        const SYNC_THRESHOLD_HARD = 1.2;      // Seek paksa hanya jika drift > 1.2s
+        const SYNC_THRESHOLD_IGNORE = 0.4;    // Abaikan drift di bawah 0.4s
+        const SYNC_DEBOUNCE_MS = 180;         // Debounce antar command sync
+        const SYNC_COOLDOWN_MS = 800;         // Cooldown global antar seek
+        const LOAD_WATCHDOG_MS = 8000;        // Lebih toleran dari 5 detik sebelumnya
+        const TRANSITION_MIN_GAP_MS = 250;    // Anti-spam transisi
+
+        /* ========== STATE ========== */
+        let activeVid = 1;
+        let globalVolume = 1.0;
+        let globalMuted = false;
+        let bgRequestId = 0;
+        let isTransitioning = false;
+        let lastTransitionAt = 0;
+        let lastSyncAt = 0;
+        let crossfadeTime = 500;
+        let lastBgSignature = "";
+        let videoErrorCount = 0;
+        const MAX_VIDEO_ERRORS = 3;
+        const SYNC_SNAPSHOT_KEY = "showlyrics_video_timeline_snapshot";
+
+        let ws = null;
+        let reconnectTimer = null;
+        let fadeTimeout = null;
+        let loadWatchdogTimeout = null;
+        let syncDebounceTimer = null;
+        let nextVidCanPlayHandler = null;
+
+        const v1 = document.getElementById("vid1");
+        const v2 = document.getElementById("vid2");
+
+        /* ========== HELPERS ========== */
+        function getCurrentVideo() { return activeVid === 1 ? v1 : v2; }
+        function getNextVideo() { return activeVid === 1 ? v2 : v1; }
+
+        function normalizeUrl(url) {
+            if (!url) return "";
+            try { return new URL(url, window.location.origin).href; } catch (_) { return url; }
+        }
+
+        function forceMuted(video) {
+            if (!video) return;
+            video.muted = true;
+            video.volume = 0;
+            video.setAttribute("muted", "");
+        }
+
+        function applyVolumeState(video) {
+            if (!video) return;
+            // Force background.html to be fully muted to prevent audio looping or double-triggering
+            video.muted = true;
+            video.volume = 0;
+            video.setAttribute("muted", "");
+        }
+
+        function cleanupVideo(video) {
+            if (!video) return;
+            try {
+                video.pause();
+                video.removeAttribute("src");
+                video.src = "";
+                video.load();
+                video.style.opacity = "0";
+                video.style.willChange = "auto";
+                video.dataset.behavior = "";
+            } catch (e) {
+                console.warn("Cleanup video error:", e);
+            }
+        }
+
+        function clearTimers() {
+            if (fadeTimeout) { clearTimeout(fadeTimeout); fadeTimeout = null; }
+            if (loadWatchdogTimeout) { clearTimeout(loadWatchdogTimeout); loadWatchdogTimeout = null; }
+            if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; }
+        }
+
+        /* ========== TIMELINE & SYNC (STABIL) ========== */
+        function applySyncTime(rawValue, options = {}) {
+            const curr = getCurrentVideo();
+            if (!curr || !curr.src) return;
+
+            const t = parseFloat(rawValue);
+            if (!Number.isFinite(t)) return;
+
+            // Jangan ganggu frame awal yang sedang decode
+            if (!options.force && curr.currentTime < 0.5) return;
+
+            const diff = Math.abs(curr.currentTime - t);
+            if (diff < (options.force ? 0.08 : SYNC_THRESHOLD_IGNORE)) return; // Abaikan drift kecil
+
+            const now = performance.now();
+            if (!options.force && now - lastSyncAt < SYNC_COOLDOWN_MS) return; // Throttle global
+
+            // Hanya hard seek jika drift besar. Micro-seek dihapus untuk stabilitas decoder.
+            if (options.force || diff > SYNC_THRESHOLD_HARD) {
+                curr.currentTime = t;
+                lastSyncAt = now;
+            }
+        }
+
+        function scheduleSync(rawValue, options = {}) {
+            if (options.force) {
+                applySyncTime(rawValue, options);
+                return;
+            }
+            if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+            syncDebounceTimer = setTimeout(() => {
+                syncDebounceTimer = null;
+                applySyncTime(rawValue);
+            }, SYNC_DEBOUNCE_MS);
+        }
+
+        function applySnapshotTimeline() {
+            try {
+                const raw = localStorage.getItem(SYNC_SNAPSHOT_KEY);
+                if (!raw) return;
+                const snap = JSON.parse(raw);
+                if (!snap || !snap.activeVideoUrl) return;
+
+                const curr = getCurrentVideo();
+                const currUrl = normalizeUrl(curr.currentSrc || curr.src);
+                const snapUrl = normalizeUrl(snap.activeVideoUrl);
+                if (!currUrl || currUrl !== snapUrl) return;
+
+                const elapsed = Math.max(0, (Date.now() - Number(snap.sentAt || Date.now())) / 1000);
+                const target = Number(snap.currentTime || 0) + (snap.isPlaying ? elapsed : 0);
+
+                scheduleSync(target);
+            } catch (_) { }
+        }
+
+        /* ========== VIDEO INIT ========== */
+        function initializeVideoElement(video) {
+            if (!video) return;
+            video.preload = "auto";
+            video.playsInline = true;
+            video.disablePictureInPicture = true;
+            video.setAttribute("playsinline", "");
+            video.setAttribute("preload", "auto");
+            video.style.transform = "translateZ(0)";
+            video.style.backfaceVisibility = "hidden";
+            video.style.willChange = "auto"; // Default tenang, aktifkan hanya saat fade
+            forceMuted(video);
+
+            video.addEventListener("error", () => {
+                videoErrorCount++;
+                console.warn(`Background video error (${videoErrorCount}):`, video.error);
+                if (videoErrorCount >= MAX_VIDEO_ERRORS) videoErrorCount = 0;
+            });
+
+            video.addEventListener("loadeddata", () => {
+                videoErrorCount = 0;
+                if (video === getCurrentVideo()) {
+                    applyVolumeState(video);
+                } else {
+                    forceMuted(video);
+                }
+            });
+
+            // Handler stalled yang brutal DIHAPUS. Biarkan browser menangani buffering native.
+
+            video.addEventListener("ended", () => {
+                if (video.dataset.behavior === "once_clear") {
+                    video.style.opacity = 0;
+                    setTimeout(() => cleanupVideo(video), crossfadeTime);
+                }
+            });
+        }
+
+        /* ========== BACKGROUND MANAGER (RACE-SAFE) ========== */
+        function setBackground(payload = {}) {
+            const url = payload.url || "";
+            const behavior = payload.behavior || "loop";
+            const forceReplay = payload.forceReplay === true;
+            const signature = `${url}|${behavior}`;
+
+            // Dedup: jika parameter sama dan masih ada url, jangan restart
+            if (signature === lastBgSignature && url && !forceReplay) {
+                applySnapshotTimeline();
+                return;
+            }
+
+            // Anti-spam transisi visual
+            if (performance.now() - lastTransitionAt < TRANSITION_MIN_GAP_MS && url && !forceReplay) {
+                // Masih proses transisi terlalu cepat -> abaikan atau bisa di-queue. 
+                // Di sini kita abaikan untuk mencegah chaos.
+                return;
+            }
+
+            lastBgSignature = signature;
+            bgRequestId += 1;
+            const requestId = bgRequestId;
+
+            clearTimers();
+
+            // Bersihkan listener lama di nextVid agar tidak fire dari request sebelumnya
+            const nextVid = getNextVideo();
+            if (nextVidCanPlayHandler) {
+                nextVid.removeEventListener("canplay", nextVidCanPlayHandler);
+                nextVidCanPlayHandler = null;
+            }
+
+            const currVid = getCurrentVideo();
+
+            if (!url) {
+                isTransitioning = true;
+                lastTransitionAt = performance.now();
+                currVid.style.willChange = "opacity, transform";
+                currVid.style.opacity = 0;
+                fadeTimeout = setTimeout(() => {
+                    if (requestId !== bgRequestId) return;
+                    cleanupVideo(currVid);
+                    isTransitioning = false;
+                }, crossfadeTime);
+                return;
+            }
+
+            const incomingUrl = normalizeUrl(url);
+            const currUrl = normalizeUrl(currVid.currentSrc || currVid.src);
+            if (currUrl === incomingUrl) {
+                if (forceReplay) {
+                    currVid.dataset.behavior = behavior;
+                    currVid.loop = (behavior === "loop" || behavior === undefined);
+                    try { currVid.currentTime = 0; } catch (_) { }
+                    currVid.play().catch(() => { });
+                } else {
+                    applySnapshotTimeline();
+                }
+                return;
+            }
+
+            // Persiapkan video berikutnya dengan keadaan bersih
+            cleanupVideo(nextVid);
+            nextVid.dataset.behavior = behavior;
+            nextVid.loop = (behavior === "loop" || behavior === undefined);
+            forceMuted(nextVid);
+            nextVid.src = url;
+            nextVid.load();
+
+            let playbackStarted = false;
+
+            nextVidCanPlayHandler = function onCanPlay() {
+                if (requestId !== bgRequestId) return;
+                if (playbackStarted) return;
+                playbackStarted = true;
+
+                nextVid.play().then(() => {
+                    if (requestId !== bgRequestId) return;
+
+                    // Swap activeVid SEBELUM fade agar getCurrentVideo() konsisten
+                    activeVid = activeVid === 1 ? 2 : 1;
+                    applyVolumeState(nextVid);
+                    forceMuted(currVid);
+                    isTransitioning = true;
+                    lastTransitionAt = performance.now();
+
+                    // Aktifkan hardware acceleration hanya saat transisi
+                    nextVid.style.willChange = "opacity, transform";
+                    currVid.style.willChange = "opacity, transform";
+
+                    nextVid.style.opacity = 1;
+                    currVid.style.opacity = 0;
+
+                    // Beri jeda 400ms agar decoder baru tidak langsung disuruh seek
+                    setTimeout(() => applySnapshotTimeline(), 400);
+
+                    fadeTimeout = setTimeout(() => {
+                        if (requestId !== bgRequestId) return;
+                        cleanupVideo(currVid);
+                        isTransitioning = false;
+                    }, crossfadeTime);
+                }).catch((err) => {
+                    console.warn("Autoplay prevented or playback error:", err);
+                    playbackStarted = false;
+                });
+            };
+
+            nextVid.addEventListener("canplay", nextVidCanPlayHandler, { once: true });
+
+            // Watchdog: hanya reload jika benar-benar tidak ada data sama sekali (readyState < 2)
+            loadWatchdogTimeout = setTimeout(() => {
+                if (requestId !== bgRequestId) return;
+                if (nextVid.readyState < 2 && nextVid.src) {
+                    console.warn("Load watchdog triggered: reloading video");
+                    nextVid.load();
+                }
+            }, LOAD_WATCHDOG_MS);
+        }
+
+        /* ========== WEBSOCKET (DENGAN THROTTLING & DEDUP) ========== */
+        function connectWebSocket() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+            try {
+                ws = new WebSocket("ws://" + window.location.host + "/ws");
+            } catch (e) {
+                console.error("Gagal membuat WebSocket", e);
+                scheduleReconnect();
+                return;
+            }
+
+            ws.onopen = () => {
+                console.log("WebSocket tersambung");
+                if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+                setTimeout(() => applySnapshotTimeline(), 500);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    const action = data.action || data.type;
+                    const payload = data.payload || {};
+
+                    if (action === "update_bg_config") {
+                        if (payload.transition) {
+                            crossfadeTime = Math.max(0, payload.transition * 1000);
+                            const cssDuration = `${payload.transition}s`;
+                            v1.style.transition = `opacity ${cssDuration} ease-in-out`;
+                            v2.style.transition = `opacity ${cssDuration} ease-in-out`;
+                        }
+                        if (payload.fit) {
+                            v1.style.objectFit = payload.fit;
+                            v2.style.objectFit = payload.fit;
+                        }
+                    }
+
+                    if (action === "update_background") {
+                        // Dedup dilakukan juga di dalam setBackground, tapi double-check di sini
+                        setBackground(payload);
+                    }
+
+                    if (action === "bg_control" && payload.target === "video") {
+                        const currVid = getCurrentVideo();
+                        const cmd = payload.command;
+
+
+
+                        if (cmd === "play") {
+                            currVid.play().catch(() => { });
+                        } else if (cmd === "pause") {
+                            currVid.pause();
+                        } else if (cmd === "replay") {
+                            const expectedUrl = payload.url ? normalizeUrl(payload.url) : "";
+                            const currentUrl = normalizeUrl(currVid.currentSrc || currVid.src);
+                            if (!expectedUrl || currentUrl === expectedUrl) {
+                                currVid.currentTime = 0;
+                                currVid.play().catch(() => { });
+                            }
+                        } else if (cmd === "loop") {
+                            currVid.loop = (payload.value === "loop" || payload.value === true);
+                        } else if (cmd === "volume") {
+                            let val = parseFloat(payload.value);
+                            if (isNaN(val)) val = 1.0;
+                            if (val > 1.0) val = val / 100.0;
+                            globalVolume = Math.max(0, Math.min(1, val));
+                            applyVolumeState(currVid);
+                        } else if (cmd === "mute") {
+                            globalMuted = !!payload.value;
+                            applyVolumeState(currVid);
+                        } else if (cmd === "sync_time") {
+                            // Tidak langsung seek — masukkan antrian debounce
+                            scheduleSync(payload.value, { force: payload.force === true });
+                        } else if (cmd === "update_behavior") {
+                            currVid.dataset.behavior = payload.value;
+                            currVid.loop = (payload.value === "loop" || payload.value === undefined);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Gagal parsing data WS", e);
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.error("WebSocket error:", err);
+            };
+
+            ws.onclose = () => {
+                console.warn("WebSocket terputus, menjadwalkan reconnect...");
+                scheduleReconnect();
+            };
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimer) return;
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connectWebSocket();
+            }, 3000);
+        }
+
+        function reconnectWebSocket() {
+            if (ws) {
+                try { ws.close(); } catch (_) { }
+                ws = null;
+            }
+            connectWebSocket();
+        }
+
+        /* ========== INIT ========== */
+        initializeVideoElement(v1);
+        initializeVideoElement(v2);
+        connectWebSocket();
+
+        /* ========== EVENT LISTENERS GLOBAL ========== */
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+                forceMuted(v1);
+                forceMuted(v2);
+                reconnectWebSocket();
+                // Jangan langsung sync saat kembali; biarkan decoder stabil dulu
+                setTimeout(() => applySnapshotTimeline(), 600);
+            }
+        });
+
+        window.addEventListener("storage", (e) => {
+            if (e.key === SYNC_SNAPSHOT_KEY) {
+                applySnapshotTimeline();
+            }
+        });
+
+        window.addEventListener("beforeunload", () => {
+            if (ws) {
+                try { ws.close(); } catch (_) { }
+            }
+            clearTimers();
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+        });
+
+        // Polling ringan untuk menjaga timeline agar tidak terlalu drift jika WS tidak aktif
+        setInterval(() => {
+            if (!isTransitioning && document.visibilityState === "visible") {
+                applySnapshotTimeline();
+            }
+        }, 5000);
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scripture LowerThird Engine</title>
+    <style>
+        :root {
+            --scr-bg-color: transparent;
+            --scr-bg-blur: 0px;
+            --scr-full-bg-color: transparent;
+            --scr-full-bg-blur: 0px;
+            --scr-overlay-height: 380px; 
+            --scr-overlay-radius: 15px;
+            --scr-margin-x: 40px; 
+            --scr-margin-y: 40px;
+
+            --scr-title-font: 'Montserrat', sans-serif;
+            --scr-title-size: 28px;
+            --scr-title-color: #00e5ff;
+            --scr-title-align: left;
+            --scr-title-pad: 15px 20px 15px 20px;
+
+            --scr-body-font: 'Montserrat', sans-serif;
+            --scr-body-size: 45px;
+            --scr-body-color: #ffffff;
+            --scr-body-align: left;
+            --scr-body-pad: 20px 30px 20px 30px;
+        }
+
+        body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
+
+        #scr-full-bg {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: var(--scr-full-bg-color); backdrop-filter: blur(var(--scr-full-bg-blur));
+            -webkit-backdrop-filter: blur(var(--scr-full-bg-blur));
+            opacity: 0; transition: opacity 0.4s; pointer-events: none; z-index: 1;
+        }
+        #scr-full-bg.show { opacity: 1; }
+
+        #scripture-layer {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            display: flex; flex-direction: column; align-items: center;
+            opacity: 0; transition: opacity 0.4s; pointer-events: none; z-index: 2;
+        }
+        #scripture-layer.show { opacity: 1; }
+
+        .scr-wrapper {
+            width: 1920px; height: var(--scr-overlay-height);
+            display: flex; flex-direction: column; box-sizing: border-box;
+        }
+
+        .scr-content-box {
+            width: calc(100% - (var(--scr-margin-x) * 2)); height: calc(100% - (var(--scr-margin-y) * 2));
+            margin: var(--scr-margin-y) var(--scr-margin-x);
+            background-color: var(--scr-bg-color); backdrop-filter: blur(var(--scr-bg-blur));
+            -webkit-backdrop-filter: blur(var(--scr-bg-blur)); border-radius: var(--scr-overlay-radius);
+            display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box;
+        }
+
+        .scr-title-box {
+            font-family: var(--scr-title-font); font-size: var(--scr-title-size);
+            color: var(--scr-title-color); text-align: var(--scr-title-align);
+            padding: var(--scr-title-pad); box-sizing: border-box; flex-shrink: 0; font-weight: bold;
+        }
+
+        .scr-body-container {
+            flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-start;
+            padding: var(--scr-body-pad); box-sizing: border-box; overflow: hidden;
+        }
+        .scr-body-box {
+            font-family: var(--scr-body-font); color: var(--scr-body-color); text-align: var(--scr-body-align);
+            display: flex; flex-direction: column; justify-content: flex-start;
+        }
+        #scr-v1, #scr-v2 { font-size: var(--scr-body-size); }
+        #scr-v2 { opacity: 0.8; margin-top: 15px; } 
+        
+        .te-hidden { display: none !important; }
+        .scr-version-label { font-size: 0.55em; opacity: 0.8; margin-right: 8px; vertical-align: super; font-weight: 900; background: rgba(0,0,0,0.3); padding: 3px 6px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <div id="scr-full-bg"></div>
+    <div id="scripture-layer">
+        <div class="scr-wrapper" id="scr-wrapper">
+            <div class="scr-content-box" id="scr-overlay-box">
+                <div class="scr-title-box" id="scr-title"></div>
+                <div class="scr-body-container" id="scr-container">
+                    <div class="scr-body-box">
+                        <div id="scr-v1"></div>
+                        <div id="scr-v2" class="te-hidden"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 🎯 MESIN SKALA 1920 KHUSUS LT
+        function scaleScriptureLayer() {
+            const wrapper = document.getElementById('scr-wrapper');
+            if (!wrapper) return;
+            const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+            wrapper.style.transform = `scale(${scale})`;
+        }
+        window.addEventListener('resize', scaleScriptureLayer);
+        scaleScriptureLayer();
+
+        // 🎯 KONEKSI WEBSOCKET KHUSUS LT
+        let ws;
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.action === "update_scripture") {
+                    const payload = data.payload;
+                    const layer = document.getElementById("scripture-layer");
+                    const fullBg = document.getElementById("scr-full-bg");
+                    
+                    if (payload.show_lt === false) {
+                        layer.classList.remove("show"); fullBg.classList.remove("show");
+                    } else if (payload.show_lt === true) {
+                        document.getElementById("scr-title").innerText = `${payload.book} ${payload.chapter}:${payload.verse}`;
+                        
+                        const labelV1 = payload.v1_name ? `<span class="scr-version-label" style="color:var(--scr-title-color);">${payload.v1_name}</span> ` : "";
+                        const labelV2 = payload.v2_name ? `<span class="scr-version-label" style="color:var(--scr-title-color);">${payload.v2_name}</span> ` : "";
+
+                        document.getElementById("scr-v1").innerHTML = `${labelV1}${payload.text1}`;
+                        
+                        const v2El = document.getElementById("scr-v2");
+                        if (payload.text2) {
+                            v2El.innerHTML = `${labelV2}${payload.text2}`;
+                            v2El.classList.remove("te-hidden");
+                        } else {
+                            v2El.classList.add("te-hidden");
+                        }
+                        
+                        layer.classList.add("show"); fullBg.classList.add("show");
+                        
+                        // 🎯 TRIGGER AUTO-FIT BERTAHAP
+                        autoFitVerse();
+                        setTimeout(autoFitVerse, 50);
+                        setTimeout(autoFitVerse, 200);
+                    }
+                } 
+                else if (data.action === "update_scripture_lt_config") {
+                    applyConfig(data.payload);
+                    autoFitVerse();
+                    setTimeout(autoFitVerse, 50);
+                }
+            };
+            ws.onclose = () => setTimeout(connectWebSocket, 1000);
+        }
+        connectWebSocket();
+
+        function hexToRgba(hex, opacity) {
+            if (!hex) return 'transparent';
+            hex = hex.replace('#', '');
+            const r = parseInt(hex.substring(0, 2), 16);
+            const g = parseInt(hex.substring(2, 4), 16);
+            const b = parseInt(hex.substring(4, 6), 16);
+            return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+        }
+
+        function applyConfig(c) {
+            const root = document.documentElement.style;
+            const layer = document.getElementById("scripture-layer");
+            const wrapper = document.getElementById("scr-wrapper");
+            if (!layer || !wrapper) return;
+
+            let rgbaColor = 'transparent';
+            if (c.bg_type === "color") rgbaColor = hexToRgba(c.bg_color, c.mode === "fullscreen" ? 1.0 : c.bg_opacity);
+            
+            if (c.mode === "fullscreen") {
+                root.setProperty('--scr-full-bg-color', rgbaColor); root.setProperty('--scr-full-bg-blur', `${c.bg_blur}px`);
+                root.setProperty('--scr-bg-color', 'transparent'); root.setProperty('--scr-bg-blur', '0px');
+                root.setProperty('--scr-overlay-height', '1080px'); root.setProperty('--scr-overlay-radius', '0px');
+                root.setProperty('--scr-margin-x', '0px'); root.setProperty('--scr-margin-y', '0px');
+                layer.style.justifyContent = 'center'; wrapper.style.transformOrigin = 'center center';
+            } else {
+                root.setProperty('--scr-full-bg-color', 'transparent'); root.setProperty('--scr-full-bg-blur', '0px');
+                root.setProperty('--scr-bg-color', rgbaColor); root.setProperty('--scr-bg-blur', `${c.bg_blur}px`);
+                const pxHeight = (parseInt(c.overlay_height) / 100) * 1080;
+                root.setProperty('--scr-overlay-height', `${pxHeight}px`); root.setProperty('--scr-overlay-radius', `${c.overlay_radius}px`);
+                root.setProperty('--scr-margin-x', '40px'); root.setProperty('--scr-margin-y', '40px');
+                layer.style.justifyContent = c.overlay_pos === 'top' ? 'flex-start' : 'flex-end';
+                wrapper.style.transformOrigin = c.overlay_pos === 'top' ? 'center top' : 'center bottom';
+            }
+
+            root.setProperty('--scr-title-font', `"${c.title_font}", sans-serif`); root.setProperty('--scr-title-size', `${c.title_size}px`);
+            root.setProperty('--scr-title-color', c.title_color); root.setProperty('--scr-title-align', c.title_align);
+            root.setProperty('--scr-title-pad', `${c.title_pad_t}px ${c.title_pad_r}px ${c.title_pad_b}px ${c.title_pad_l}px`);
+
+            root.setProperty('--scr-body-font', `"${c.body_font}", sans-serif`); root.setProperty('--scr-body-size', `${c.body_size}px`);
+            root.setProperty('--scr-body-color', c.body_color); root.setProperty('--scr-body-align', c.body_align);
+            root.setProperty('--scr-body-pad', `${c.body_pad_t}px ${c.body_pad_r}px ${c.body_pad_b}px ${c.body_pad_l}px`);
+            
+            root.setProperty('--scr-body-auto', c.body_auto ? 'true' : 'false');
+            if (!c.body_auto) {
+                document.getElementById('scr-v1').style.fontSize = ''; 
+                if (document.getElementById('scr-v2')) document.getElementById('scr-v2').style.fontSize = '';
+            }
+        }
+
+        // 🎯 ENGINE AUTO-FIT YANG LEBIH CERDAS
+        let isFitting = false;
+        function autoFitVerse() {
+            const root = document.documentElement.style;
+            if (root.getPropertyValue('--scr-body-auto') !== 'true') return;
+            if (isFitting) return;
+            isFitting = true;
+
+            const container = document.getElementById("scr-container");
+            const v1Box = document.getElementById("scr-v1");
+            const v2Box = document.getElementById("scr-v2");
+            if (!container || !v1Box) { isFitting = false; return; }
+            
+            let currentSize = parseInt(root.getPropertyValue('--scr-body-size')) || 80;
+            if (currentSize < 80) currentSize = 100;
+
+            v1Box.style.fontSize = currentSize + "px";
+            if (v2Box) v2Box.style.fontSize = currentSize + "px";
+
+            requestAnimationFrame(() => {
+                while ((container.scrollHeight > container.clientHeight) && currentSize > 12) {
+                    currentSize -= 2;
+                    v1Box.style.fontSize = currentSize + "px";
+                    if (v2Box) v2Box.style.fontSize = currentSize + "px"; 
+                }
+                isFitting = false;
+            });
+        }
+
+        const observer = new MutationObserver(() => {
+            autoFitVerse();
+        });
+        const target = document.getElementById('scr-v1');
+        if (target) observer.observe(target, { childList: true, characterData: true, subtree: true });
+    </script>
+</body>
+</html>

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Diagnostics - ShowLyrics</title>
+    
+    <style>
+        :root {
+            --bg-main: #09090b; 
+            --bg-panel: rgba(24, 24, 27, 0.6);
+            --border: rgba(255, 255, 255, 0.08);
+            --text-main: #f4f4f5;
+            --text-muted: #a1a1aa;
+            --accent-blue: #3b82f6;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+        }
+
+        body {
+            margin: 0; padding: 30px;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            /* OFFLINE FONT SYSTEM */
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            height: 100vh; box-sizing: border-box;
+            display: flex; flex-direction: column; gap: 20px;
+            overflow: hidden;
+        }
+
+        /* HEADER */
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+        .title { font-size: 1.5rem; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 10px; }
+        .btn-close { 
+            background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text-main);
+            padding: 8px 16px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px;
+            font-family: inherit; font-size: 0.85rem; font-weight: 500; transition: 0.2s;
+        }
+        .btn-close:hover { background: rgba(239, 68, 68, 0.1); color: var(--danger); border-color: rgba(239, 68, 68, 0.3); }
+
+        /* GRID LAYOUT */
+        .main-grid { display: grid; grid-template-columns: 350px 1fr; gap: 20px; flex: 1; overflow: hidden; }
+        .left-col { display: flex; flex-direction: column; gap: 20px; overflow-y: auto; padding-right: 5px; }
+        .left-col::-webkit-scrollbar { width: 4px; }
+        .left-col::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+
+        /* PANELS */
+        .panel {
+            background: var(--bg-panel); border: 1px solid var(--border);
+            border-radius: 16px; padding: 20px; backdrop-filter: blur(12px);
+        }
+        .panel-title { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 15px 0; display: flex; align-items: center; gap: 8px; }
+
+        /* HARDWARE METRICS */
+        .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
+        .metric-box { background: rgba(0,0,0,0.3); border: 1px solid var(--border); padding: 15px; border-radius: 12px; }
+        .metric-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 5px; }
+        .metric-value { font-size: 1.5rem; font-weight: 600; display: flex; align-items: baseline; gap: 5px; }
+        .metric-value span { font-size: 0.85rem; color: var(--text-muted); font-weight: 400; }
+        
+        .sys-info { font-size: 0.8rem; color: var(--text-muted); display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+        /* DATABASE LIST */
+        .db-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 8px; margin-bottom: 5px; background: rgba(255,255,255,0.02); }
+        .db-item:hover { background: rgba(255,255,255,0.05); }
+        .db-name { font-size: 0.85rem; font-weight: 500; }
+        .badge { padding: 4px 10px; border-radius: 12px; font-size: 0.7rem; font-weight: 600; font-family: monospace; }
+        .badge.ok { background: rgba(16, 185, 129, 0.1); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); }
+        .badge.err { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.2); }
+
+        /* TERMINAL */
+        .terminal-panel { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+        .terminal-header { padding: 15px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; background: rgba(0,0,0,0.2); }
+        .terminal-body { flex: 1; padding: 15px 20px; overflow-y: auto; font-family: Consolas, monospace; font-size: 0.8rem; line-height: 1.6; color: #a1a1aa; }
+        .terminal-body::-webkit-scrollbar { width: 6px; }
+        .terminal-body::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+        
+        .log-line { border-bottom: 1px dashed rgba(255,255,255,0.03); padding: 4px 0; }
+        .log-line:hover { background: rgba(255,255,255,0.02); }
+        
+        .c-info { color: var(--accent-blue); }
+        .c-warn { color: var(--warning); }
+        .c-err { color: var(--danger); }
+        .c-front { color: #a78bfa; }
+        .c-method { color: var(--success); }
+
+        .indicator { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 10px var(--success); transition: 0.2s; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2 class="title">
+            <span>🖥️</span> System Diagnostics
+        </h2>
+        <button class="btn-close" onclick="window.close()">
+            ✖ Close Panel
+        </button>
+    </div>
+
+    <div class="main-grid">
+        
+        <div class="left-col">
+            <div class="panel">
+                <h3 class="panel-title"><span>🧠</span> Server Performance</h3>
+                <div class="metric-grid">
+                    <div class="metric-box">
+                        <div class="metric-label">CPU USAGE</div>
+                        <div class="metric-value" id="cpu-val">--<span>%</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">RAM USAGE</div>
+                        <div class="metric-value" id="ram-val">--<span>%</span></div>
+                    </div>
+                </div>
+                <div class="sys-info"><span>Processor</span> <span id="sys-cpu" style="color: #fff;">AMD Ryzen 5 3500U</span></div>
+                <div class="sys-info"><span>Total RAM</span> <span id="sys-ram" style="color: #fff;">-- GB</span></div>
+            </div>
+
+
+            <div class="panel">
+                <h3 class="panel-title"><span>🗄️</span> Database Integrity</h3>
+                <div id="db-container">
+                    <div style="font-size: 0.8rem; color: #666; text-align: center; padding: 20px;">Scanning...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel terminal-panel">
+            <div class="terminal-header">
+                <h3 class="panel-title" style="margin: 0;"><span>💻</span> Realtime Logs</h3>
+                <div style="display: flex; align-items: center; gap: 10px; font-size: 0.75rem; color: var(--text-muted);">
+                    <div class="indicator" id="live-dot"></div> Live Sync
+                </div>
+            </div>
+            <div class="terminal-body" id="terminal-box">
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const terminal = document.getElementById("terminal-box");
+        let autoScroll = true;
+        let lastLogCount = 0;
+
+        terminal.addEventListener('scroll', () => {
+            autoScroll = terminal.scrollHeight - terminal.scrollTop <= terminal.clientHeight + 10;
+        });
+        
+        async function fetchDiagnostics() {
+            try {
+                const res = await fetch('/api/diagnostics');
+                const data = await res.json();
+
+                // 1. UPDATE HARDWARE METRICS
+                if(data.system) {
+                    document.getElementById("cpu-val").innerHTML = `${data.system.cpu_usage.replace('%','')}<span>%</span>`;
+                    document.getElementById("ram-val").innerHTML = `${data.system.ram_usage.replace('%','')}<span>%</span>`;
+                    document.getElementById("sys-cpu").innerText = data.system.cpu;
+                    document.getElementById("sys-ram").innerText = data.system.ram_total;
+                }
+
+
+                // 3. UPDATE DB HEALTH
+                const dbContainer = document.getElementById("db-container");
+                dbContainer.innerHTML = "";
+                for (const [name, status] of Object.entries(data.databases)) {
+                    let badgeClass = status === "OK" ? "ok" : "err";
+                    dbContainer.innerHTML += `
+                        <div class="db-item">
+                            <span class="db-name">${name}</span>
+                            <span class="badge ${badgeClass}">${status}</span>
+                        </div>
+                    `;
+                }
+
+                // 4. UPDATE LOGS
+                if (data.logs.length !== lastLogCount || data.logs.length === 200) {
+                    terminal.innerHTML = "";
+                    data.logs.forEach(log => {
+                        let fLog = log;
+                        fLog = fLog.replace("INFO:", "<span class='c-info'>[INFO]</span>");
+                        fLog = fLog.replace("WARN:", "<span class='c-warn'>[WARN]</span>");
+                        fLog = fLog.replace("ERROR:", "<span class='c-err'>[FAIL]</span>");
+                        fLog = fLog.replace(/\[FRONTEND-.*?\]/, m => `<span class='c-front'>${m}</span>`);
+                        fLog = fLog.replace(/\"(GET|POST|DELETE|PUT)/, "\"<span class='c-method'>$1</span>");
+                        
+                        terminal.innerHTML += `<div class="log-line">> ${fLog}</div>`;
+                    });
+                    lastLogCount = data.logs.length;
+                    if (autoScroll) terminal.scrollTop = terminal.scrollHeight;
+                }
+
+                // Blink Indicator
+                const dot = document.getElementById("live-dot");
+                dot.style.opacity = "0.2";
+                setTimeout(() => dot.style.opacity = "1", 200);
+
+            } catch (err) { console.error("API Fetch Error"); }
+        }
+
+        setInterval(fetchDiagnostics, 1500);
+        fetchDiagnostics();
+    </script>
+</body>
+</html>

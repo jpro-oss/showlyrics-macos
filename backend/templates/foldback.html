@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body {
+            background-color: #000;
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* LAYOUT */
+        #top-section {
+            flex: 1;
+            /* Isi sisa ruang */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0 40px;
+            /* Padding kiri kanan aman */
+            text-align: center;
+            overflow: hidden;
+            /* Sembunyikan kalau ada glitch dikit */
+            position: relative;
+            z-index: 2;
+        }
+
+        #bottom-section {
+            height: 25vh;
+            /* Next Lyrics Jauh lebih tinggi sekarang */
+            min-height: 100px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: #111;
+            color: #888;
+            border-top: 4px solid #333;
+            text-align: center;
+            padding: 10px;
+            overflow: hidden;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* TEXT STYLES */
+        .current-text {
+            color: #fff;
+            font-weight: 900;
+            line-height: 1.1;
+            white-space: pre-wrap;
+            /* Font size diatur JS */
+            width: 100%;
+        }
+
+        .next-label {
+            font-size: 5vh;
+            color: #ffc107;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .next-text {
+            font-weight: bold;
+            line-height: 1.1;
+            white-space: pre-wrap;
+            color: #aaa;
+            width: 100%;
+            /* Font size diatur JS juga */
+        }
+
+        /* CLOCK */
+        #clock {
+            position: absolute;
+            top: 0;
+            right: 0;
+            font-size: 5vh;
+            font-weight: bold;
+            color: #00ff00;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 5px 20px;
+            border-bottom-left-radius: 15px;
+            z-index: 10;
+        }
+
+        #stage-countdown-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 15vw;
+            font-weight: bold;
+            color: #ff3333;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px 50px;
+            border: 5px solid #ff3333;
+            border-radius: 20px;
+            display: none;
+            z-index: 300;
+        }
+
+        /* STAGE MESSAGE (POPUP) */
+        #stage-msg-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80%;
+            padding: 40px;
+            background: #ffc107;
+            color: #000;
+            font-size: 8vw;
+            font-weight: 900;
+            text-align: center;
+            border: 5px solid #fff;
+            border-radius: 20px;
+            display: none;
+            z-index: 200;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+        }
+
+        .flash {
+            animation: flasher 0.5s infinite alternate;
+        }
+
+        @keyframes flasher {
+            from {
+                opacity: 1;
+            }
+
+            to {
+                opacity: 0.2;
+            }
+        }
+
+        /* ALERT CRAWL (Mirroring Main Display) */
+        #fb-alert-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: #8b0000;
+            color: #fff;
+            font-size: 3vh;
+            font-weight: bold;
+            padding: 5px;
+            text-align: center;
+            display: none;
+            z-index: 100;
+        }
+        
+        /* Hide broken images completely - no broken icon visible */
+        #fb-video[data-broken="true"],
+        #fb-photo[data-broken="true"],
+        #fb-ppt[data-broken="true"],
+        img:not([src]), 
+        img[src=""], 
+        img[src="null"] {
+            display: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }
+    </style>
+    <script src="/static/wm.js?v={{ VERSION }}"></script>
+</head>
+
+<body>
+
+    <div id="clock">00:00</div>
+    <div id="stage-countdown-box">00:00</div>
+    <div id="fb-alert-bar">⚠ AUDIENCE ALERT: <span id="fb-alert-text"></span></div>
+    <div id="stage-msg-box"></div>
+
+    <!-- NEW FOLDBACK MEDIA ELEMENTS -->
+    <div id="fb-media-label"
+        style="position:absolute; top:2vh; left:2vw; font-size:3vh; color:#fff; font-weight:bold; z-index:10; background:rgba(0,0,0,0.7); padding:5px 15px; border-radius:10px; display:none; max-width:40vw; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+    </div>
+
+    <video id="fb-video" autoplay loop muted data-broken="false"
+        style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:none; z-index:9997; opacity:0.6; pointer-events:none;"></video>
+    <img id="fb-photo" data-broken="false"
+        style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:none; z-index:9998; opacity:0.6; pointer-events:none;">
+    <img id="fb-ppt" data-broken="false"
+        style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:none; z-index:9999; opacity:0.8; pointer-events:none;">
+
+    <div id="top-section">
+        <div id="curr-txt" class="current-text">WAITING...</div>
+    </div>
+
+    <div id="bottom-section">
+        <div id="next-txt" class="next-text">Ready</div>
+    </div>
+
+    <script>
+        function loadImageDirect(url, imgElement) {
+            if (!url) {
+                if (imgElement) {
+                    imgElement.src = "";
+                    imgElement.dataset.broken = "false";
+                }
+                return;
+            }
+            // Direct image loading - no fetch/blob to avoid IDM detection
+            imgElement.onerror = function() {
+                console.warn("[FOLDBACK] Image failed to load:", url);
+                imgElement.dataset.broken = "true";
+                imgElement.style.display = "none";
+            };
+            imgElement.onload = function() {
+                imgElement.dataset.broken = "false";
+            };
+            imgElement.dataset.broken = "false";
+            imgElement.src = url;
+        }
+
+        let globalSubColor = "#ffc107";
+        let globalSubSize = 0.6;
+
+        // Ambil warna terjemahan pas proyektor pertama nyala
+        fetch('/api/global_sub_settings')
+            .then(res => res.json())
+            .then(data => {
+                if (data.color) globalSubColor = data.color;
+                if (data.size) globalSubSize = data.size;
+            }).catch(e => console.log("Gagal load global sub settings"));
+
+        const currEl = document.getElementById("curr-txt");
+        const nextEl = document.getElementById("next-txt");
+        const topSec = document.getElementById("top-section");
+        const botSec = document.getElementById("bottom-section");
+        const clockEl = document.getElementById("clock");
+
+        // Simpan Config Terakhir
+        let activeConfig = {
+            curr_size: 300,
+            next_size: 100
+        };
+        let countdownInterval;
+
+        // JAM DIGITAL
+        setInterval(() => {
+            const now = new Date();
+            clockEl.innerText = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }, 1000);
+
+        function sanitizeHTML(str) {
+            if (!str) return "";
+            // Cukup halangi tag kurung siku (< dan >) aja.
+            // Biarkan tanda petik ('), kutip ("), dan dan (&) tampil normal.
+            return str.replace(/[<>]/g, function (tag) {
+                const charsToReplace = { '<': '&lt;', '>': '&gt;' };
+                return charsToReplace[tag] || tag;
+            });
+        }
+
+        // --- MAGIC ENGINE BUAT FOLDBACK ---
+        function processBilingual(rawText) {
+            if (!rawText) return "";
+
+            // 🚀 1. CUCI TEKS DARI SCRIPT JAHAT (Anti-XSS)
+            let cleanText = sanitizeHTML(rawText);
+
+            // 🚀 2. FIX BUG PEMENGGALAN KATA (-), sama kayak di display
+            let safeText = cleanText.replace(/-/g, '\u2011');
+
+            let lines = safeText.split('\n');
+            let formattedLines = lines.map(line => {
+                // Proses bilingual format lama (//)
+                if (line.includes("//")) {
+                    let parts = line.split("//");
+                    let mainText = parts[0].trim();
+                    let subText = parts.slice(1).join("//").trim();
+                    return `${mainText}<span style="color:${globalSubColor}; font-size:${globalSubSize}em; font-style:italic; opacity:0.9; line-height: 1.2; display:block; margin-top:-5px;">${subText}</span>`;
+                }
+                // Proses bilingual format baru: Haleluya (Hallelujah)
+                let startIdx = line.indexOf('(');
+                let endIdx = line.lastIndexOf(')');
+                if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+                    let mainText = line.substring(0, startIdx).trim();
+                    let subText = line.substring(startIdx + 1, endIdx).trim();
+                    return `${mainText}<span style="color:${globalSubColor}; font-size:${globalSubSize}em; font-style:italic; opacity:0.9; line-height: 1.2; display:block; margin-top:-5px;">${subText}</span>`;
+                }
+
+                return line;
+            });
+            return formattedLines.join("<br>");
+        }
+
+        // ==========================================
+        // --- MEDIA STATE ENGINE ---
+        // ==========================================
+        let hasLyrics = false;
+        let isScriptureMode = false;
+        let currentBgUrl = "";
+        let currentBgName = "";
+        let currentPhotoUrl = "";
+        let currentPhotoName = "";
+        let currentPptUrl = "";
+        const VIDEO_TIMELINE_SNAPSHOT_KEY = "showlyrics_video_timeline_snapshot";
+        const fbVideoEl = document.getElementById('fb-video');
+
+        function applyFoldbackSyncTime(rawTime) {
+            const t = parseFloat(rawTime);
+            if (!Number.isFinite(t) || !fbVideoEl.src) return;
+            const diff = Math.abs(fbVideoEl.currentTime - t);
+            if (diff > 0.35) fbVideoEl.currentTime = t;
+            else if (diff > 0.08) fbVideoEl.currentTime += (t - fbVideoEl.currentTime) * 0.3;
+        }
+
+        function applyFoldbackSnapshotIfMatch() {
+            try {
+                const raw = localStorage.getItem(VIDEO_TIMELINE_SNAPSHOT_KEY);
+                if (!raw || !currentBgUrl || !fbVideoEl.src) return;
+                const snap = JSON.parse(raw);
+                if (!snap || !snap.activeVideoUrl) return;
+                const currentUrl = new URL(fbVideoEl.currentSrc || fbVideoEl.src, window.location.origin).href;
+                const snapUrl = new URL(snap.activeVideoUrl, window.location.origin).href;
+                if (currentUrl !== snapUrl) return;
+                const elapsed = Math.max(0, (Date.now() - Number(snap.sentAt || Date.now())) / 1000);
+                const target = Number(snap.currentTime || 0) + (snap.isPlaying ? elapsed : 0);
+                applyFoldbackSyncTime(target);
+            } catch (_) {}
+        }
+
+        function updateMediaVisibility() {
+            const fbVideo = document.getElementById('fb-video');
+            const fbPhoto = document.getElementById('fb-photo');
+            const fbPpt = document.getElementById('fb-ppt');
+            const fbLabel = document.getElementById('fb-media-label');
+
+            if (currentPptUrl) {
+                if (fbPpt.dataset.originalSrc !== currentPptUrl) {
+                    fbPpt.dataset.originalSrc = currentPptUrl;
+                    fbPpt.onerror = function() {
+                        console.warn("[FOLDBACK PPT] PPT image failed to load:", currentPptUrl);
+                        fbPpt.dataset.broken = "true";
+                        fbPpt.style.display = "none";
+                    };
+                    fbPpt.onload = function() {
+                        fbPpt.dataset.broken = "false";
+                    };
+                    loadImageDirect(currentPptUrl + "?t=" + Date.now(), fbPpt);
+                }
+                fbPpt.style.display = 'block';
+                fbVideo.style.display = 'none';
+                fbPhoto.style.display = 'none';
+                fbLabel.style.display = 'none';
+            } else {
+                fbPpt.style.display = 'none';
+
+                // Jika ada lirik ATAU ayat alkitab yg lagi tayang -> Tulis Label Saja
+                if (hasLyrics || isScriptureMode) {
+                    fbVideo.style.display = 'none';
+                    fbPhoto.style.display = 'none';
+
+                    let labelText = "";
+                    if (currentBgUrl && currentBgName) {
+                        labelText = "🎥 " + currentBgName;
+                    } else if (currentPhotoUrl && currentPhotoName) {
+                        labelText = "🖼️ " + currentPhotoName;
+                    }
+
+                    if (labelText) {
+                        fbLabel.innerText = labelText;
+                        fbLabel.style.display = 'block';
+                    } else {
+                        fbLabel.style.display = 'none';
+                    }
+                } else {
+                    // KOSONG TANPA LIRIK (Tampilkan video / foto full screen)
+                    fbLabel.style.display = 'none';
+
+                    if (currentBgUrl) {
+                        fbVideo.onerror = function() {
+                            console.warn("[FOLDBACK VIDEO] Video failed to load:", currentBgUrl);
+                            fbVideo.dataset.broken = "true";
+                            fbVideo.style.display = "none";
+                        };
+                        fbVideo.onloadedmetadata = function() {
+                            fbVideo.dataset.broken = "false";
+                        };
+                        if (fbVideo.src !== window.location.origin + currentBgUrl && fbVideo.src !== currentBgUrl) fbVideo.src = currentBgUrl;
+                        fbVideo.style.display = 'block';
+                        fbPhoto.style.display = 'none';
+                    } else if (currentPhotoUrl) {
+                        fbPhoto.onerror = function() {
+                            console.warn("[FOLDBACK PHOTO] Photo failed to load:", currentPhotoUrl);
+                            fbPhoto.dataset.broken = "true";
+                            fbPhoto.style.display = "none";
+                        };
+                        fbPhoto.onload = function() {
+                            fbPhoto.dataset.broken = "false";
+                        };
+                        if (fbPhoto.src !== window.location.origin + currentPhotoUrl && fbPhoto.src !== currentPhotoUrl) fbPhoto.src = currentPhotoUrl;
+                        fbPhoto.style.display = 'block';
+                        fbVideo.style.display = 'none';
+                    } else {
+                        fbVideo.style.display = 'none';
+                        fbPhoto.style.display = 'none';
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // --- AUTO-RECONNECT WEBSOCKET ENGINE ---
+        // ==========================================
+        let ws;
+        let reconnectTimer;
+        let isWebSocketConnected = false;
+
+
+
+        function connectWebSocket() {
+            // Bikin koneksi baru
+            ws = new WebSocket("ws://" + window.location.host + "/ws");
+
+            // 1. SENSOR KONEK: Kalau sukses nyambung, matikan timer reconnect
+            ws.onopen = function () {
+                console.log("✅ WebSocket Connected!");
+                clearTimeout(reconnectTimer);
+                isWebSocketConnected = true;        // 👈 Track connection status
+
+                _WEShield.onConnect();
+            };
+
+            // 2. SENSOR MATI: Kalau server mati / kabel putus, otomatis jalanin ini
+            ws.onclose = function (e) {
+                console.warn("❌ WebSocket Terputus! Mencoba nyambung lagi dalam 2 detik...");
+                isWebSocketConnected = false;  // 👈 Connection status = false
+
+                _WEShield.onDisconnect();
+
+                reconnectTimer = setTimeout(connectWebSocket, 2000);
+            };
+
+            // 3. SENSOR ERROR: Kalau nge-glitch, paksa tutup biar masuk ke onclose
+            ws.onerror = function (err) {
+                console.error("⚠️ WebSocket Error, menutup koneksi...", err);
+                ws.close();
+            };
+
+            // 4. ENGINE UTAMA LIRIK (Pindahan dari kode lama)
+            ws.onmessage = function (event) {
+                const data = JSON.parse(event.data);
+                if (_WEShield.handleMessage(data)) return;
+
+
+                // 1. UPDATE TEKS
+                if (data.type === "update_state") {
+
+                    const s = data.state;
+                    isScriptureMode = false;
+
+                    // Update memori warna kalo slider digeser
+                    if (s.sub_color) globalSubColor = s.sub_color;
+                    if (s.sub_size) globalSubSize = s.sub_size;
+
+                    if (s.show) {
+                        currEl.innerHTML = processBilingual(s.text || "");
+                        nextEl.innerHTML = processBilingual(s.next_text || "");
+                        currEl.style.opacity = 1;
+                        // Cek lirik yang eksis untuk rendering background
+                        hasLyrics = !!(s.text && s.text.trim());
+                    } else {
+                        currEl.style.opacity = 0.3;
+                        hasLyrics = false;
+                    }
+                    updateMediaVisibility();
+                    // Trigger Auto Fit setiap ganti slide
+                    fitText();
+                }
+
+                if (data.action === "update_scripture" || data.type === "update_scripture") {
+                    const p = data.payload;
+                    if (p.show_display && p.text1) {
+                        let combined = p.text1 + (p.text2 ? "\n(" + p.text2 + ")" : "");
+                        let ref = (p.book || "") + " " + (p.chapter || "") + ":" + (p.verse || "");
+                        let textToShow = combined + "\n[" + ref.trim() + "]";
+
+                        currEl.innerHTML = processBilingual(textToShow);
+                        nextEl.innerHTML = "";
+                        currEl.style.opacity = 1;
+                        isScriptureMode = true;
+
+                        updateMediaVisibility();
+                        fitText();
+                    }
+                }
+
+                if (data.action === "update_background" || data.type === "update_background") {
+                    currentBgUrl = data.payload.url || "";
+                    currentBgName = data.payload.name || "";
+                    updateMediaVisibility();
+                    applyFoldbackSnapshotIfMatch();
+                }
+                if ((data.action === "bg_control" || data.type === "bg_control") && data.payload?.target === "video" && data.payload?.command === "sync_time") {
+                    applyFoldbackSyncTime(data.payload.value);
+                }
+
+                if (data.action === "update_photo" || data.type === "update_photo") {
+                    currentPhotoUrl = data.payload.url || "";
+                    currentPhotoName = data.payload.name || "";
+                    updateMediaVisibility();
+                }
+
+                if (data.action === "update_presentation" || data.type === "update_presentation") {
+                    currentPptUrl = data.payload.url || "";
+                    updateMediaVisibility();
+                }
+
+                // 2. UPDATE CONFIG
+                if (data.type === "update_fb_config") {
+                    const c = data.config;
+                    activeConfig = c; // Update memori lokal
+
+                    document.body.style.backgroundColor = c.bg_color;
+                    currEl.style.color = c.curr_color;
+                    nextEl.style.color = c.next_color;
+
+                    if (c.layout === 'full') {
+                        botSec.style.display = 'none';
+                        topSec.style.height = '100vh';
+                    } else {
+                        botSec.style.display = 'flex';
+                        topSec.style.height = 'auto';
+                    }
+                    // Trigger Auto Fit saat config berubah
+                    fitText();
+                }
+                if (data.type === "stage_msg") {
+                    const d = data.data;
+                    const box = document.getElementById("stage-msg-box");
+                    if (d.show && d.text) {
+                        box.innerText = d.text;
+                        box.style.display = "block";
+                        if (d.flash) box.classList.add("flash"); else box.classList.remove("flash");
+                    } else {
+                        box.style.display = "none";
+                    }
+                }
+
+                // 2. STAGE COUNTDOWN (Timer)
+                if (data.type === "stage_countdown") {
+                    const d = data.data;
+                    const box = document.getElementById("stage-countdown-box");
+
+                    if (d.action === 'stop') {
+                        clearInterval(countdownInterval);
+                        box.style.display = "none";
+                        return;
+                    }
+
+                    if (d.action === 'start') {
+                        clearInterval(countdownInterval);
+                        box.style.display = "block";
+
+                        let timeLeft = d.seconds;
+
+                        // Update function
+                        const updateTimer = () => {
+                            const m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+                            const s = (timeLeft % 60).toString().padStart(2, '0');
+                            box.innerText = `${m}:${s}`;
+
+                            if (timeLeft <= 0) {
+                                clearInterval(countdownInterval);
+                                box.style.color = "red"; // Warnain merah pas abis
+                                box.classList.add("flash"); // Kedip-kedip
+                            }
+                            timeLeft--;
+                        };
+
+                        updateTimer(); // Run once immediately
+                        countdownInterval = setInterval(updateTimer, 1000);
+                    }
+                }
+
+
+            };
+
+            // --- LOGIC AUTO FIT ---
+            function fitText() {
+                // 1. Fit Current Text
+                resizeElement(currEl, topSec, activeConfig.curr_size || 300);
+
+                // 2. Fit Next Text (Biar dia juga muat kalau kepanjangan)
+                if (botSec.style.display !== 'none') {
+                    // Kurangi dikit max-height botSec buat label "NEXT:"
+                    resizeElement(nextEl, botSec, activeConfig.next_size || 100, 40);
+                }
+            }
+
+            function resizeElement(el, container, maxSize, heightPadding = 0) {
+                if (!el.innerText) return;
+
+                let size = maxSize; // Mulai dari ukuran Max (Settingan User)
+                el.style.fontSize = size + "px";
+
+                // Loop: Kecilin font selama teks masih meluap dari wadahnya
+                while (
+                    (el.scrollHeight > (container.clientHeight - heightPadding) ||
+                        el.scrollWidth > container.clientWidth) &&
+                    size > 20 // Jangan lebih kecil dari 20px
+                ) {
+                    size -= 5; // Turunkan 5px per step
+                    el.style.fontSize = size + "px";
+                }
+            }
+
+            // Fit ulang kalau window di-resize
+            window.addEventListener('resize', fitText);
+
+
+            // ==========================================
+            // --- CONSOLE.LOG INTERCEPTOR (PENYADAP) ---
+            // ==========================================
+            const originalLog = console.log;
+            const originalWarn = console.warn;
+            const originalError = console.error;
+
+            // Ambil nama file saat ini biar tau log-nya dari mana (misal: "resolume" atau "display")
+            const pageSource = window.location.pathname.replace('/', '') || 'index';
+
+            function sendLogToServer(level, args) {
+                try {
+                    // Ubah object/array jadi string biar bisa dikirim
+                    const msg = Array.from(args).map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ');
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            action: "frontend_log",
+                            payload: { source: pageSource, level: level, message: msg }
+                        }));
+                    }
+                } catch (e) { } // Abaikan kalau gagal ngirim (biar ga error loop)
+            }
+
+            console.log = function () {
+                originalLog.apply(console, arguments);
+                sendLogToServer("INFO", arguments);
+            };
+            console.warn = function () {
+                originalWarn.apply(console, arguments);
+                sendLogToServer("WARN", arguments);
+            };
+            console.error = function () {
+                originalError.apply(console, arguments);
+                sendLogToServer("ERROR", arguments);
+            };
+        }// Jalankan koneksi pertama kali saat layar dibuka
+        connectWebSocket();
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") applyFoldbackSnapshotIfMatch();
+        });
+        // ==========================================
+    </script>
+</body>
+
+</html>
