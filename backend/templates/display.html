@@ -35,6 +35,8 @@
             --glow-color: rgba(255, 255, 255, 0.8);
             --main-color: #ffffff;
             --fade-speed: 0.8s;
+            --loop-handoff-ms: 800ms;
+            --loop-handoff-ease: cubic-bezier(0.16, 1, 0.3, 1);
             --main-font: 'Montserrat', sans-serif;
             --main-font-size: 5vw;
             /* <--- INI TAMBAHANNYA */
@@ -127,6 +129,24 @@
             opacity: 1;
         }
 
+        .lyric-group:not(.active) {
+            animation-play-state: paused;
+        }
+
+        .lyric-group.lyric-dormant,
+        .lyric-group.lyric-dormant * {
+            animation-play-state: paused !important;
+        }
+
+        .lyric-group.lyric-dormant {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .compositing-active {
+            will-change: transform, opacity, filter;
+        }
+
         .lyric-wrapper {
             position: relative;
             display: flex;
@@ -159,7 +179,6 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            will-change: transform, opacity;
             transform: translateZ(0);
         }
 
@@ -170,7 +189,6 @@
             line-height: 1;
             word-wrap: break-word;
             overflow-wrap: break-word;
-            will-change: filter, transform;
             transform: translateZ(0);
             display: flex;
             flex-direction: column;
@@ -187,7 +205,6 @@
             height: 100%;
             z-index: 1;
             pointer-events: none;
-            will-change: filter, opacity;
             transform: translateZ(0);
         }
 
@@ -925,8 +942,7 @@
         /* ========================================= */
         /* ANIMASI SPLIT CHAR (TARGET .char EKSKLUSIF) */
         /* ========================================= */
-        .fx-stagger .lyric-text .char,
-        .fx-stagger .lyric-ghost .char {
+        .fx-stagger .lyric-text .char {
             opacity: 0;
             animation: staggerUp var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
@@ -943,8 +959,7 @@
             }
         }
 
-        .fx-spin .lyric-text .char,
-        .fx-spin .lyric-ghost .char {
+        .fx-spin .lyric-text .char {
             opacity: 0;
             transform-origin: center center;
             animation: letterSpin var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
@@ -964,8 +979,7 @@
             }
         }
 
-        .fx-wave .lyric-text .char,
-        .fx-wave .lyric-ghost .char {
+        .fx-wave .lyric-text .char {
             opacity: 0;
             animation: liquidWave var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
@@ -986,8 +1000,7 @@
             }
         }
 
-        .fx-gauss .lyric-text .char,
-        .fx-gauss .lyric-ghost .char {
+        .fx-gauss .lyric-text .char {
             opacity: 0;
             animation: gaussMerge var(--fade-speed) ease-out forwards;
         }
@@ -1006,8 +1019,7 @@
             }
         }
 
-        .fx-glitch .lyric-text .char,
-        .fx-glitch .lyric-ghost .char {
+        .fx-glitch .lyric-text .char {
             opacity: 0;
             animation: softGlitch var(--fade-speed) steps(3) forwards;
         }
@@ -2082,16 +2094,16 @@
         }
 
         /* ENERGETIC PRAISE: Per-Char Effects */
-        .fx-punch .char,
-        .fx-elastic .char,
-        .fx-flashpop .char,
-        .fx-whip .char,
-        .fx-gdrop .char,
-        .fx-rgb .char,
-        .fx-shake .char,
-        .fx-smash .char,
-        .fx-slash .char,
-        .fx-terminal .char {
+        .fx-punch .lyric-text .char,
+        .fx-elastic .lyric-text .char,
+        .fx-flashpop .lyric-text .char,
+        .fx-whip .lyric-text .char,
+        .fx-gdrop .lyric-text .char,
+        .fx-rgb .lyric-text .char,
+        .fx-shake .lyric-text .char,
+        .fx-smash .lyric-text .char,
+        .fx-slash .lyric-text .char,
+        .fx-terminal .lyric-text .char {
             vertical-align: baseline !important;
             line-height: 1 !important;
             display: inline-block;
@@ -2232,7 +2244,7 @@
         /* ========================================= */
 
         /* 6. PUNCH (Tornado Spin): Mutar dari jarak pandang jauh hingga menabrak layar */
-        .fx-punch .char {
+        .fx-punch .lyric-text .char {
             animation: pPunch var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
             display: inline-block;
         }
@@ -2252,7 +2264,7 @@
         }
 
         /* 7. ELASTIC (Squish & Squash): Memipih super gepeng horizontal lalu loncat normal (True Jelly) */
-        .fx-elastic .char {
+        .fx-elastic .lyric-text .char {
             animation: pElastic var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
             display: inline-block;
             transform-origin: center;
@@ -2282,7 +2294,7 @@
         }
 
         /* 8. FLASHPOP (CRT TV On): Berawal dari garis cahaya super tipis lalu melebar jadi huruf */
-        .fx-flashpop .char {
+        .fx-flashpop .lyric-text .char {
             animation: pFlash var(--fade-speed) cubic-bezier(0.1, 0.9, 0.2, 1) both;
             display: inline-block;
         }
@@ -2312,7 +2324,7 @@
         }
 
         /* 9. WHIP (3D Door Slam): Berayun seperti pintu dibanting tutup dari samping */
-        .fx-whip .char {
+        .fx-whip .lyric-text .char {
             animation: pWhip var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
             display: inline-block;
             transform-origin: left;
@@ -2333,7 +2345,7 @@
         }
 
         /* 10. GDROP (Giant Stomp): Karakter raksasa dari atas layar nge-stomp ke dalam layar */
-        .fx-gdrop .char {
+        .fx-gdrop .lyric-text .char {
             animation: pDrop var(--fade-speed) cubic-bezier(0.5, 0, 0.1, 1) both;
             display: inline-block;
         }
@@ -2474,7 +2486,7 @@
         /* ========================================= */
 
         /* 6. RGB GLITCH: Shadow Merah & Biru misah lalu nabrak bersatu */
-        .fx-rgb .char {
+        .fx-rgb .lyric-text .char {
             animation: aeRGB var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
             display: inline-block;
         }
@@ -2501,7 +2513,7 @@
         }
 
         /* 7. IMPACT SHAKE: Teks jatuh keras trus kameranya gempa (Shake) */
-        .fx-shake .char {
+        .fx-shake .lyric-text .char {
             animation: aeShake var(--fade-speed) cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
             display: inline-block;
         }
@@ -2541,7 +2553,7 @@
         }
 
         /* 8. KINETIC SMASH: Muter dari sudut tajam lalu ngerem mendadak */
-        .fx-smash .char {
+        .fx-smash .lyric-text .char {
             animation: aeSmash var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
             display: inline-block;
         }
@@ -2561,7 +2573,7 @@
         }
 
         /* 9. NINJA SLASH: Dipotong diagonal (Masking Polygon) trus nyatu */
-        .fx-slash .char {
+        .fx-slash .lyric-text .char {
             animation: aeSlash var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) both;
             display: inline-block;
         }
@@ -2581,7 +2593,7 @@
         }
 
         /* 10. TERMINAL TYPE: Ngetik instan ala koding Hacker (No fade) */
-        .fx-terminal .char {
+        .fx-terminal .lyric-text .char {
             animation: aeTerminal var(--fade-speed) steps(1, end) both;
             display: inline-block;
             border-right: 3px solid transparent;
@@ -3306,11 +3318,11 @@
         /* Last char appears first, ripples backward to first char */
         /* ============================================================= */
 
-        .fx-shockwave .char,
-        .fx-overdrive .char,
-        .fx-nuke .char,
-        .fx-voltage .char,
-        .fx-riot .char {
+        .fx-shockwave .lyric-text .char,
+        .fx-overdrive .lyric-text .char,
+        .fx-nuke .lyric-text .char,
+        .fx-voltage .lyric-text .char,
+        .fx-riot .lyric-text .char {
             display: inline-block;
             vertical-align: baseline !important;
             line-height: 1 !important;
@@ -3320,7 +3332,7 @@
         }
 
         /* 6. SHOCKWAVE: Chars explode from microscale then snap back, reverse cascade */
-        .fx-shockwave .char {
+        .fx-shockwave .lyric-text .char {
             animation: pShockwave var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
         }
 
@@ -3349,7 +3361,7 @@
         }
 
         /* 7. OVERDRIVE: Chars slam from extreme horizontal skew, reverse cascade */
-        .fx-overdrive .char {
+        .fx-overdrive .lyric-text .char {
             animation: pOverdrive var(--fade-speed) cubic-bezier(0.68, -0.55, 0.265, 1.55) both;
         }
 
@@ -3373,7 +3385,7 @@
         }
 
         /* 8. NUKE: Chars implode from microscale then bounce, reverse cascade */
-        .fx-nuke .char {
+        .fx-nuke .lyric-text .char {
             animation: pNuke var(--fade-speed) cubic-bezier(0.5, -0.3, 0.1, 1.5) both;
         }
 
@@ -3402,11 +3414,11 @@
         }
 
         /* 9. VOLTAGE: Electric crackling – odd from top, even from bottom (sequential) */
-        .fx-voltage .char {
+        .fx-voltage .lyric-text .char {
             animation: pVoltageA var(--fade-speed) steps(4) both;
         }
 
-        .fx-voltage .char:nth-child(even) {
+        .fx-voltage .lyric-text .char:nth-child(even) {
             animation-name: pVoltageB;
         }
 
@@ -3465,15 +3477,15 @@
         }
 
         /* 10. RIOT: Chars spin from 3 rotating angles in chaotic rhythm (sequential) */
-        .fx-riot .char {
+        .fx-riot .lyric-text .char {
             animation: pRiotA var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
         }
 
-        .fx-riot .char:nth-child(3n+1) {
+        .fx-riot .lyric-text .char:nth-child(3n+1) {
             animation-name: pRiotB;
         }
 
-        .fx-riot .char:nth-child(3n+2) {
+        .fx-riot .lyric-text .char:nth-child(3n+2) {
             animation-name: pRiotC;
         }
 
@@ -3519,12 +3531,14 @@
             }
         }
 
-        /* ========================================= */
-        /* --- PRO MOTION LOOPS (SUBTLE & ELEGANT) --- */
-        /* ========================================= */
+        /* =========================================================== */
+        /* --- PRO MOTION LOOPS (SUBTLE & ELEGANT) ---                */
+        /* FIX v2: Target .lyric-text (bukan layer itu sendiri)        */
+        /* Agar tidak konflik dengan FX IN yang animates .lyric-wrapper */
+        /* =========================================================== */
 
         /* 1. LAZY: Melayang vertikal super lambat (Ambient Float) */
-        .loop-lazy {
+        .loop-lazy .lyric-text {
             animation: proLazy 8s cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
         }
 
@@ -3541,7 +3555,7 @@
         }
 
         /* 2. JINGLE: Bernapas pelan, membesar/mengecil (Cinematic Breathe) */
-        .loop-jingle {
+        .loop-jingle .lyric-text {
             animation: proBreathe 4s ease-in-out infinite alternate;
         }
 
@@ -3558,7 +3572,7 @@
         }
 
         /* 3. GRUNGE: Getaran analog yang sangat halus (VHS Tracking micro-shake) */
-        .loop-grunge {
+        .loop-grunge .lyric-text {
             animation: proGrunge 0.2s infinite;
         }
 
@@ -3575,7 +3589,7 @@
         }
 
         /* 4. STROBE: Denyut cahaya ambient (Glow Pulse), BUKAN kedip layar */
-        .loop-strobe {
+        .loop-strobe .lyric-text {
             animation: proGlowPulse 2.5s ease-in-out infinite alternate;
         }
 
@@ -3592,7 +3606,7 @@
         }
 
         /* 5. NEON PULSE: Perubahan warna Hue yang sangat lambat dan tipis (Aura Shift) */
-        .loop-pulse-neon {
+        .loop-pulse-neon .lyric-text {
             animation: proAura 10s linear infinite alternate;
         }
 
@@ -3607,7 +3621,7 @@
         }
 
         /* 6. EARTHQUAKE: Efek "Handheld Camera" (kamera dipegang tangan, goyang lambat) */
-        .loop-earthquake {
+        .loop-earthquake .lyric-text {
             animation: proHandheld 6s ease-in-out infinite;
         }
 
@@ -3632,7 +3646,7 @@
         }
 
         /* 7. HYPNOTIC: Efek Parallax 3D yang sangat tipis merespon seolah ada lensa */
-        .loop-hypnotic {
+        .loop-hypnotic .lyric-text {
             animation: proParallax 8s ease-in-out infinite alternate;
             transform-style: preserve-3d;
         }
@@ -3648,7 +3662,7 @@
         }
 
         /* 8. SONAR PING: Garis tepi (stroke) cahaya yang muncul berkala (Edge Scan) */
-        .loop-sonar {
+        .loop-sonar .lyric-text {
             animation: proScan 4s cubic-bezier(0.1, 0.9, 0.2, 1) infinite;
         }
 
@@ -3672,7 +3686,7 @@
         }
 
         /* 9. RGB GLITCH: Glitch Subtil, cuma misah 1-2 pixel jarang-jarang (Tasteful Glitch) */
-        .loop-glitch-rgb {
+        .loop-glitch-rgb .lyric-text {
             animation: proRGB 5s infinite;
         }
 
@@ -3697,7 +3711,7 @@
         }
 
         /* 10. VERTIGO: Blur horizontal yang sesekali lewat (Wind/Speed effect) */
-        .loop-vertigo {
+        .loop-vertigo .lyric-text {
             animation: proWind 4s ease-in-out infinite;
         }
 
@@ -3715,14 +3729,62 @@
             }
         }
 
-        /* ============================================================ */
-        /* --- WORSHIP LINE (5) — animate .lyric-wrapper, aman tema --- */
-        /* ============================================================ */
+        /* ============================================================== */
+        /* --- UNIFIED LOOP HANDOFF (all loop-* / fx-* transitions)     --- */
+        /* ============================================================== */
+
+        [class*='loop-'].loop-handoff .lyric-wrapper,
+        [class*='loop-'].loop-handoff .lyric-text,
+        [class*='loop-'].loop-handoff .word,
+        [class*='loop-'].loop-handoff .char {
+            animation-play-state: paused !important;
+        }
+
+        [class*='loop-'].loop-handoff-active:not(.loop-ready) .lyric-wrapper,
+        [class*='loop-'].loop-handoff-active:not(.loop-ready) .lyric-text,
+        [class*='loop-'].loop-handoff-active:not(.loop-ready) .word,
+        [class*='loop-'].loop-handoff-active:not(.loop-ready) .char {
+            transition: transform var(--loop-handoff-ms) var(--loop-handoff-ease),
+                filter var(--loop-handoff-ms) ease,
+                opacity var(--loop-handoff-ms) ease !important;
+        }
+
+        [class*='loop-'].loop-handoff .lyric-wrapper::after {
+            content: '';
+            position: absolute;
+            inset: -4%;
+            pointer-events: none;
+            background: transparent;
+            opacity: 0.35;
+            transition: opacity var(--loop-handoff-ms) ease;
+            z-index: 5;
+        }
+
+        [class*='loop-'].loop-handoff-active .lyric-wrapper::after {
+            opacity: 0;
+        }
+
+        /* ============================================================== */
+        /* --- WORSHIP LINE (5) — animate .lyric-wrapper              ---  */
+        /* FIX v2: Gunakan animation-play-state: paused sampai FX selesai  */
+        /* Kelas .loop-ready diset oleh JS setelah FX IN animationend       */
+        /* ============================================================== */
+
+        /* Base: semua wrapper-loop dimulai PAUSED, baru jalan setelah .loop-ready */
+        [class*='loop-worship-line-'] .lyric-wrapper,
+        [class*='loop-praise-line-'] .lyric-wrapper {
+            animation-play-state: paused;
+        }
+
+        [class*='loop-worship-line-'].loop-ready .lyric-wrapper,
+        [class*='loop-praise-line-'].loop-ready .lyric-wrapper {
+            animation-play-state: running;
+        }
 
         /* 1. Deep Shadow Breathe */
         .loop-worship-line-deep-shadow .lyric-wrapper {
             animation: wlDeepShadow 5s ease-in-out infinite alternate;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes wlDeepShadow {
@@ -3742,7 +3804,7 @@
         /* 2. Diagonal Light Scan */
         .loop-worship-line-elegant-diagonal-scan .lyric-wrapper {
             animation: wlDiagScan 6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes wlDiagScan {
@@ -3765,7 +3827,7 @@
         /* 3. Soft Smoke Rise */
         .loop-worship-line-soft-smoke .lyric-wrapper {
             animation: wlSoftSmoke 6s ease-in-out infinite alternate;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes wlSoftSmoke {
@@ -3785,7 +3847,7 @@
         /* 4. Sacred Breath — deep inhale scale */
         .loop-worship-line-sacred-breath .lyric-wrapper {
             animation: wlSacredBreath 4.5s ease-in-out infinite alternate;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes wlSacredBreath {
@@ -3805,7 +3867,7 @@
         /* 5. Holy Glow Drift */
         .loop-worship-line-glow-drift .lyric-wrapper {
             animation: wlGlowDrift 5.5s ease-in-out infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes wlGlowDrift {
@@ -4040,7 +4102,7 @@
         /* 1. RGB Split — transform on wrapper */
         .loop-praise-line-clear-shadow-rgb .lyric-wrapper {
             animation: plRGBSplit 2.5s steps(4) infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plRGBSplit {
@@ -4070,7 +4132,7 @@
         /* 2. Metal Sheen sweep */
         .loop-praise-line-metal-sheen .lyric-wrapper {
             animation: plMetalSheen 4.5s linear infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plMetalSheen {
@@ -4093,7 +4155,7 @@
         /* 3. RGB Signal Break */
         .loop-praise-line-rgb-signal .lyric-wrapper {
             animation: plRGBSignal 1.8s steps(3) infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plRGBSignal {
@@ -4118,7 +4180,7 @@
         /* 4. Shadow Running */
         .loop-praise-line-shadow-running .lyric-wrapper {
             animation: plShadowRun 3s ease-in-out infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plShadowRun {
@@ -4141,7 +4203,7 @@
         /* 5. Big Shadow Rotate — -3 to +3 deg */
         .loop-praise-line-big-shadow-micro-rotate .lyric-wrapper {
             animation: plBigRot 4.5s ease-in-out infinite alternate;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plBigRot {
@@ -4159,7 +4221,7 @@
         /* 6. Outline Drift */
         .loop-praise-line-outline-drift .lyric-wrapper {
             animation: plOutDrift 3.5s ease-in-out infinite alternate;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plOutDrift {
@@ -4177,7 +4239,7 @@
         /* 7. Rotate -3 to +3 deg */
         .loop-praise-line-micro-rotate .lyric-wrapper {
             animation: plMicroRot 4.5s ease-in-out infinite alternate;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plMicroRot {
@@ -4193,7 +4255,7 @@
         /* 8. Zoom Tilt */
         .loop-praise-line-zoom-tilt .lyric-wrapper {
             animation: plZoomTilt 2.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite alternate;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plZoomTilt {
@@ -4211,7 +4273,7 @@
         /* 9. Handheld Camera */
         .loop-praise-line-handheld-float .lyric-wrapper {
             animation: plHandheld 6s ease-in-out infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plHandheld {
@@ -4241,7 +4303,7 @@
         /* 10. Soft Glitch */
         .loop-praise-line-soft-glitch .lyric-wrapper {
             animation: plSoftGlitch 3.5s infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plSoftGlitch {
@@ -4272,7 +4334,7 @@
         /* 11. VHS Drift */
         .loop-praise-line-premium-vhs .lyric-wrapper {
             animation: plVHSDrift 0.1s infinite;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plVHSDrift {
@@ -4291,7 +4353,7 @@
         /* 12. Panorama Drift */
         .loop-praise-line-shadow-panorama .lyric-wrapper {
             animation: plPanorama 6s linear infinite alternate;
-            animation-delay: var(--fade-speed);
+            animation-delay: 0s;
         }
 
         @keyframes plPanorama {

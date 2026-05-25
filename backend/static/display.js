@@ -1,4 +1,272 @@
 
+// === UNIFIED MOTION LOOP HANDOFF ENGINE ===
+const blendStyle = document.createElement('style');
+blendStyle.textContent = `
+    [class*='loop-']:not(.loop-ready) .lyric-wrapper,
+    [class*='loop-']:not(.loop-ready) .lyric-text,
+    [class*='loop-']:not(.loop-ready) .word,
+    [class*='loop-']:not(.loop-ready) .char {
+        animation-play-state: paused !important;
+    }
+
+    [class*='loop-'].loop-ready .lyric-wrapper,
+    [class*='loop-'].loop-ready .lyric-text,
+    [class*='loop-'].loop-ready .word,
+    [class*='loop-'].loop-ready .char {
+        animation-play-state: running !important;
+    }
+`;
+document.head.appendChild(blendStyle);
+
+let handoffTimer = null;
+let transitionTimer = null;
+let transitionAnimEndWrapper = null;
+let transitionAnimEndHandler = null;
+let transitionGeneration = 0;
+
+function getHandoffDurationMs() {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--loop-handoff-ms').trim();
+    if (raw.endsWith('ms')) return parseFloat(raw) || 800;
+    if (raw.endsWith('s')) return (parseFloat(raw) || 0.8) * 1000;
+    return 800;
+}
+
+function getLoopHandoffTargets(layer, wrapper, txt, motionLoop) {
+    if (!motionLoop || motionLoop === 'none') return [];
+    if (motionLoop === 'cyber-glitch') return txt ? [txt] : [];
+    if (motionLoop.startsWith('worship-line-') || motionLoop.startsWith('praise-line-')) {
+        return wrapper ? [wrapper] : [];
+    }
+    if (motionLoop.startsWith('worship-word-') || motionLoop.startsWith('praise-word-')) {
+        if (!txt) return [];
+        const words = txt.querySelectorAll('.word');
+        return words.length ? Array.from(words) : [txt];
+    }
+    const textOnlyLoops = ['breathe', 'float-slow', 'pulse-glow', 'shimmer', 'levitate', 'handheld', 'hypnotic', 'sonar', 'glitch-rgb', 'vertigo'];
+    if (textOnlyLoops.includes(motionLoop)) return txt ? [txt] : [];
+    const wrapperLoops = ['lazy', 'jingle', 'grunge', 'strobe', 'pulse-neon', 'earthquake'];
+    if (wrapperLoops.includes(motionLoop)) return wrapper ? [wrapper] : (txt ? [txt] : []);
+    return txt ? [txt] : (wrapper ? [wrapper] : []);
+}
+
+function captureHandoffSnapshot(elements) {
+    const snapshots = [];
+    elements.forEach(el => {
+        if (!el) return;
+        const cs = getComputedStyle(el);
+        snapshots.push({
+            el,
+            transform: cs.transform,
+            filter: cs.filter,
+            opacity: cs.opacity
+        });
+    });
+    return snapshots;
+}
+
+function applyHandoffSnapshot(snapshots) {
+    snapshots.forEach(({ el, transform, filter, opacity }) => {
+        el.style.transform = transform;
+        el.style.filter = filter;
+        el.style.opacity = opacity;
+    });
+}
+
+function clearHandoffInline(snapshots) {
+    snapshots.forEach(({ el }) => {
+        el.style.transform = '';
+        el.style.filter = '';
+        el.style.opacity = '';
+    });
+}
+
+function clearLoopHandoffClasses(layer) {
+    if (!layer) return;
+    layer.classList.remove('loop-init', 'loop-handoff', 'loop-handoff-active', 'loop-settled');
+}
+
+function stripFxFromElements(layer, wrapper, txt) {
+    [layer, wrapper, txt].forEach(el => {
+        if (!el) return;
+        const toRemove = [];
+        el.classList.forEach(c => {
+            if (c.startsWith('fx-')) toRemove.push(c);
+        });
+        toRemove.forEach(c => el.classList.remove(c));
+    });
+}
+
+function setCompositingActive(layer, active) {
+    if (!layer) return;
+    [layer, layer.querySelector('.lyric-text'), layer.querySelector('.lyric-ghost')].filter(Boolean).forEach(el => {
+        if (active) el.classList.add('compositing-active');
+        else el.classList.remove('compositing-active');
+    });
+}
+
+function cancelPendingHandoffs() {
+    transitionGeneration++;
+    if (handoffTimer) {
+        clearTimeout(handoffTimer);
+        handoffTimer = null;
+    }
+    if (transitionTimer) {
+        clearTimeout(transitionTimer);
+        transitionTimer = null;
+    }
+    if (transitionAnimEndHandler && transitionAnimEndWrapper) {
+        transitionAnimEndWrapper.removeEventListener('animationend', transitionAnimEndHandler);
+        transitionAnimEndHandler = null;
+        transitionAnimEndWrapper = null;
+    }
+}
+
+function deactivateLyricLayer(layer) {
+    if (!layer) return;
+    const wrapper = layer.querySelector('.lyric-wrapper');
+    const txt = layer.querySelector('.lyric-text');
+    clearLoopHandoffClasses(layer);
+    layer.classList.remove('loop-ready', 'compositing-active');
+    clearFxClasses(layer);
+    if (wrapper) clearFxClasses(wrapper);
+    if (txt) clearFxClasses(txt);
+    layer.classList.add('lyric-dormant');
+    layer.querySelectorAll('.word, .char').forEach(el => {
+        el.style.animationDelay = '';
+        el.style.transform = '';
+        el.style.filter = '';
+        el.style.opacity = '';
+    });
+}
+
+function activateLyricLayer(layer) {
+    if (!layer) return;
+    layer.classList.remove('lyric-dormant');
+}
+
+function startMotionLoopHandoff(layer, wrapper, txt, motionLoop, generation) {
+    const duration = getHandoffDurationMs();
+    clearLoopHandoffClasses(layer);
+    layer.classList.remove('loop-ready');
+
+    const targets = getLoopHandoffTargets(layer, wrapper, txt, motionLoop);
+    const snapshots = captureHandoffSnapshot(targets);
+
+    stripFxFromElements(layer, wrapper, txt);
+    applyMotionLoop(motionLoop, layer, wrapper, txt);
+    layer.classList.add('loop-handoff');
+    applyHandoffSnapshot(snapshots);
+    setCompositingActive(layer, true);
+
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            if (generation !== transitionGeneration) return;
+            layer.classList.add('loop-handoff-active');
+            clearHandoffInline(snapshots);
+
+            handoffTimer = setTimeout(() => {
+                handoffTimer = null;
+                if (generation !== transitionGeneration) return;
+                triggerLoopReady(layer);
+                layer.classList.remove('loop-handoff', 'loop-handoff-active');
+                layer.classList.add('loop-settled');
+                clearHandoffInline(snapshots);
+                setCompositingActive(layer, false);
+            }, duration);
+        });
+    });
+}
+
+function finishTransition(layer, wrapper, nextTxt, gstEl, motionLoop, generation) {
+    if (generation !== transitionGeneration) return;
+
+    nextTxt.querySelectorAll('.word, .char').forEach(el => {
+        el.style.animationDelay = '';
+    });
+    gstEl.querySelectorAll('.word, .char').forEach(el => {
+        el.style.animationDelay = '';
+    });
+
+    if (motionLoop !== 'none') {
+        startMotionLoopHandoff(layer, wrapper, nextTxt, motionLoop, generation);
+    } else {
+        stripFxFromElements(layer, wrapper, nextTxt);
+        setCompositingActive(layer, false);
+    }
+}
+
+function computeMaxStaggerDelay(s, fxClass, motionLoop, textEl) {
+    const wordFx = ['fx-bloom', 'fx-smoke', 'fx-light', 'fx-softfocus', 'fx-float', 'fx-dust', 'fx-lens', 'fx-wipe', 'fx-abyss', 'fx-aurora'];
+    const deepWordFx = ['fx-smoke-deep', 'fx-liquid', 'fx-zoom-deep', 'fx-glitch-deep', 'fx-fisheye', 'fx-radial-blur', 'fx-chromatic', 'fx-motion-blur', 'fx-veil-lift', 'fx-particle'];
+    const centerWordFx = ['fx-holy-breathe', 'fx-sanctify', 'fx-ascend', 'fx-mist-form', 'fx-rapture'];
+    const charFx = ['fx-stagger', 'fx-spin', 'fx-wave', 'fx-gauss', 'fx-glitch', 'fx-punch', 'fx-elastic', 'fx-flashpop', 'fx-whip', 'fx-gdrop', 'fx-rgb', 'fx-shake', 'fx-smash', 'fx-slash', 'fx-terminal', 'fx-voltage', 'fx-riot'];
+    const reverseCharFx = ['fx-shockwave', 'fx-overdrive', 'fx-nuke'];
+
+    const isWordFx = wordFx.includes(fxClass);
+    const isDeepWordFx = deepWordFx.includes(fxClass);
+    const isCenterWordFx = centerWordFx.includes(fxClass);
+    const isReverseCharFx = reverseCharFx.includes(fxClass);
+    const isCharFx = charFx.includes(fxClass);
+    const isWordMotionLoop = motionLoop !== 'none' && (
+        motionLoop.startsWith('worship-word-') || motionLoop.startsWith('praise-word-')
+    );
+    const useSplitCharFx = isWordMotionLoop || isWordFx || isCharFx || isDeepWordFx || isCenterWordFx || isReverseCharFx;
+
+    if (!useSplitCharFx || !textEl) return 0;
+
+    let delayBase = 50;
+    if (s.speed === '15s') delayBase = 20;
+    if (s.speed === '60s') delayBase = 80;
+
+    if (isDeepWordFx) return delayBase * 3;
+    if (isCenterWordFx) {
+        const wordsCount = textEl.querySelectorAll('.word').length;
+        return Math.floor(wordsCount / 2) * delayBase * 2;
+    }
+    if (isReverseCharFx) {
+        const charsCount = textEl.querySelectorAll('.char').length;
+        return Math.max(0, charsCount - 1) * delayBase;
+    }
+    if (isWordFx) {
+        const wordsCount = textEl.querySelectorAll('.word').length;
+        return Math.max(0, wordsCount - 1) * delayBase * 2;
+    }
+    const charsCount = textEl.querySelectorAll('.char').length;
+    return Math.max(0, charsCount - 1) * delayBase;
+}
+
+function scheduleTransitionComplete(layer, wrapper, nextTxt, gstEl, motionLoop, fadeMs, maxStaggerDelay) {
+    const generation = transitionGeneration;
+    let completed = false;
+
+    const runComplete = () => {
+        if (completed || generation !== transitionGeneration) return;
+        completed = true;
+        if (transitionAnimEndHandler && transitionAnimEndWrapper) {
+            transitionAnimEndWrapper.removeEventListener('animationend', transitionAnimEndHandler);
+            transitionAnimEndHandler = null;
+            transitionAnimEndWrapper = null;
+        }
+        if (transitionTimer) {
+            clearTimeout(transitionTimer);
+            transitionTimer = null;
+        }
+        finishTransition(layer, wrapper, nextTxt, gstEl, motionLoop, generation);
+    };
+
+    const fallbackMs = fadeMs + maxStaggerDelay + 200;
+    transitionTimer = setTimeout(runComplete, fallbackMs);
+
+    if (wrapper) {
+        transitionAnimEndWrapper = wrapper;
+        transitionAnimEndHandler = (e) => {
+            if (e.target !== wrapper) return;
+            runComplete();
+        };
+        wrapper.addEventListener('animationend', transitionAnimEndHandler);
+    }
+}
+
 let globalSubColor = "#ffc107";
 let globalSubSize = 0.6;
 
@@ -75,20 +343,26 @@ function applyMotionLoop(motionLoop, layer, wrapper, txt) {
     const isWordLoop = motionLoop.startsWith('worship-word-') || motionLoop.startsWith('praise-word-');
     // Standard pro loops (breathe, float, etc.) animate .lyric-text directly — apply on layer
     const isTextLoop = ['breathe', 'float-slow', 'pulse-glow', 'shimmer', 'levitate', 'handheld', 'hypnotic', 'sonar', 'glitch-rgb', 'vertigo'].includes(motionLoop);
-    // Worship/Praise LINE loops animate .lyric-wrapper — apply on wrapper directly
+    // Worship/Praise LINE loops animate .lyric-wrapper — apply on layer (CSS parent selector)
+    // These will be held PAUSED until FX IN ends (via .loop-ready class added by JS)
     const isWrapperLoop = motionLoop.startsWith('worship-line-') || motionLoop.startsWith('praise-line-');
 
-    if (isWrapperLoop) {
-        // Put class on WRAPPER so the CSS `.loop-X .lyric-wrapper` becomes `.lyric-wrapper.loop-X`
-        // But CSS is written as `.loop-X .lyric-wrapper { ... }` (parent selector)
-        // So we keep it on LAYER for CSS match, but also tag wrapper for clarity
-        layer.classList.add('loop-' + motionLoop);
-    } else if (isWordLoop) {
-        layer.classList.add('loop-' + motionLoop);
-    } else {
-        // Standard pro loops target .lyric-text — put on layer
-        layer.classList.add('loop-' + motionLoop);
-    }
+    // All loops: add class to layer (CSS handles proper targeting via descendant selectors)
+    layer.classList.add('loop-' + motionLoop);
+
+    // For wrapper loops: they start PAUSED (CSS: animation-play-state: paused by default)
+    // The .loop-ready class is added by triggerLoopReady() after FX IN animationend
+    // For non-wrapper loops: they are always running (no paused state in CSS)
+}
+
+// Called after FX IN animation on wrapper completes — unlocks wrapper motion loops
+function triggerLoopReady(layer) {
+    // Small RAF delay to ensure smooth transition from FX-end to loop-start
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            layer.classList.add('loop-ready');
+        });
+    });
 }
 
 function enhanceThemeTextShadow(rawShadow, glowVal) {
@@ -198,13 +472,49 @@ function processBilingual(rawText, splitCharFx = false) {
 }
 
 // ==========================================
-// --- AUTO-RECONNECT WEBSOCKET ENGINE ---
+// --- CONSOLE.LOG INTERCEPTOR (once at load) ---
 // ==========================================
 let ws;
+const pageSource = window.location.pathname.replace('/', '') || 'index';
+
+function sendLogToServer(level, args) {
+    try {
+        const msg = Array.from(args).map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ');
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                action: "frontend_log",
+                payload: { source: pageSource, level: level, message: msg }
+            }));
+        }
+    } catch (e) { }
+}
+
+function setupConsoleInterceptor() {
+    if (setupConsoleInterceptor._installed) return;
+    setupConsoleInterceptor._installed = true;
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    console.log = function () {
+        originalLog.apply(console, arguments);
+        sendLogToServer("INFO", arguments);
+    };
+    console.warn = function () {
+        originalWarn.apply(console, arguments);
+        sendLogToServer("WARN", arguments);
+    };
+    console.error = function () {
+        originalError.apply(console, arguments);
+        sendLogToServer("ERROR", arguments);
+    };
+}
+setupConsoleInterceptor();
+
+// ==========================================
+// --- AUTO-RECONNECT WEBSOCKET ENGINE ---
+// ==========================================
 let reconnectTimer;
 let isWebSocketConnected = false;
-
-
 
 function connectWebSocket() {
     // Bikin koneksi baru
@@ -530,9 +840,14 @@ function connectWebSocket() {
                 if (activeWrapper) clearFxClasses(activeWrapper);
                 clearFxClasses(txt);
 
+                // Clear any inline animation delays
+                activeLayer.querySelectorAll('.word, .char').forEach(el => {
+                    el.style.animationDelay = '';
+                });
+
                 const motionLoop = s.motion || "none";
                 if (motionLoop !== "none") {
-                    applyMotionLoop(motionLoop, activeLayer, activeWrapper, txt);
+                    startMotionLoopHandoff(activeLayer, activeWrapper, txt, motionLoop, transitionGeneration);
                 }
             }
 
@@ -547,24 +862,38 @@ function connectWebSocket() {
                     const curLoop = activeLayer.dataset.currentMotionLoop || "none";
                     const newLoop = s.motion || "none";
                     if (curLoop !== newLoop) {
+                        cancelPendingHandoffs();
                         clearFxClasses(activeLayer);
                         const alWrapper = activeLayer.querySelector('.lyric-wrapper');
+                        const alTxt = activeLayer.querySelector('.lyric-text');
                         if (alWrapper) clearFxClasses(alWrapper);
-                        clearFxClasses(activeLayer.querySelector('.lyric-text'));
-                        if (newLoop !== "none") {
-                            applyMotionLoop(newLoop, activeLayer, alWrapper, activeLayer.querySelector('.lyric-text'));
-                        }
+                        if (alTxt) clearFxClasses(alTxt);
+
+                        activeLayer.querySelectorAll('.word, .char').forEach(el => {
+                            el.style.animationDelay = '';
+                        });
+
                         activeLayer.dataset.currentMotionLoop = newLoop;
+                        if (newLoop !== "none") {
+                            startMotionLoopHandoff(activeLayer, alWrapper, alTxt, newLoop, transitionGeneration);
+                        } else {
+                            activeLayer.classList.remove('loop-ready');
+                            clearLoopHandoffClasses(activeLayer);
+                        }
                     }
                     return;
                 }
                 nextLayer = (activeLayer === layerA) ? layerB : layerA;
             }
 
+            cancelPendingHandoffs();
+
             const wrapper = nextLayer.querySelector(".lyric-wrapper");
             const nextTxt = wrapper.querySelector(".lyric-text");
             const gstEl = wrapper.querySelector(".lyric-ghost");
 
+            activateLyricLayer(nextLayer);
+            clearLoopHandoffClasses(nextLayer);
             clearFxClasses(nextLayer);
             clearFxClasses(wrapper);
             clearFxClasses(nextTxt);
@@ -612,13 +941,16 @@ function connectWebSocket() {
             if (praiseExtremeAnims.includes(s.trans)) fxClass = 'fx-' + s.trans;
 
             const motionLoop = s.motion || "none";
-            if (motionLoop !== "none") {
-                applyMotionLoop(motionLoop, nextLayer, wrapper, nextTxt);
-            }
+            nextLayer.classList.remove('loop-ready');
             nextLayer.dataset.currentMotionLoop = motionLoop;
 
             void nextLayer.offsetWidth; // Reflow
             nextLayer.classList.add(fxClass);
+            setCompositingActive(nextLayer, true);
+
+            const fadeMs = parseFloat(
+                getComputedStyle(document.body).getPropertyValue('--fade-speed') || '0.8'
+            ) * 1000;
 
             if (rawNewText) {
                 // Bedakan mana animasi per Kata, mana per Huruf
@@ -863,13 +1195,10 @@ function connectWebSocket() {
                             });
                         });
                     } else if (isReverseCharFx) {
-                        // PRAISE EXTREME: REVERSE CASCADE (last char first, backward)
-                        [nextTxt, gstEl].forEach(container => {
-                            const chars = Array.from(container.querySelectorAll('.char'));
-                            const total = chars.length;
-                            chars.forEach((c, i) => {
-                                c.style.animationDelay = ((total - 1 - i) * delayBase) + 'ms';
-                            });
+                        const chars = Array.from(nextTxt.querySelectorAll('.char'));
+                        const total = chars.length;
+                        chars.forEach((c, i) => {
+                            c.style.animationDelay = ((total - 1 - i) * delayBase) + 'ms';
                         });
                     } else if (isWordFx) {
                         // SEQUENTIAL WORD STAGGER
@@ -879,18 +1208,29 @@ function connectWebSocket() {
                         wIndex = 0;
                         gstEl.querySelectorAll('.word').forEach((w) => { w.style.animationDelay = (wIndex * wordDelay) + "ms"; wIndex++; });
                     } else {
-                        // SEQUENTIAL CHAR STAGGER
                         let cIndex = 0;
-                        nextTxt.querySelectorAll('.char').forEach((c) => { c.style.animationDelay = (cIndex * delayBase) + "ms"; cIndex++; });
-                        cIndex = 0;
-                        gstEl.querySelectorAll('.char').forEach((c) => { c.style.animationDelay = (cIndex * delayBase) + "ms"; cIndex++; });
+                        nextTxt.querySelectorAll('.char').forEach((c) => {
+                            c.style.animationDelay = (cIndex * delayBase) + "ms";
+                            cIndex++;
+                        });
                     }
                 }
 
+                const maxStaggerDelay = computeMaxStaggerDelay(s, fxClass, motionLoop, nextTxt);
+                scheduleTransitionComplete(nextLayer, wrapper, nextTxt, gstEl, motionLoop, fadeMs, maxStaggerDelay);
+
                 nextLayer.classList.add("active");
-                if (activeLayer) activeLayer.classList.remove("active");
+                if (activeLayer) {
+                    deactivateLyricLayer(activeLayer);
+                    activeLayer.classList.remove("active");
+                }
             } else {
-                if (activeLayer) activeLayer.classList.remove("active");
+                if (activeLayer) {
+                    deactivateLyricLayer(activeLayer);
+                    activeLayer.classList.remove("active");
+                }
+                stripFxFromElements(nextLayer, wrapper, nextTxt);
+                setCompositingActive(nextLayer, false);
             }
             activeLayer = nextLayer;
         }
@@ -940,46 +1280,9 @@ function connectWebSocket() {
 
 
     };
-
-    // ==========================================
-    // --- CONSOLE.LOG INTERCEPTOR (PENYADAP) ---
-    // ==========================================
-    const originalLog = console.log;
-    const originalWarn = console.warn;
-    const originalError = console.error;
-
-    // Ambil nama file saat ini biar tau log-nya dari mana (misal: "resolume" atau "display")
-    const pageSource = window.location.pathname.replace('/', '') || 'index';
-
-    function sendLogToServer(level, args) {
-        try {
-            // Ubah object/array jadi string biar bisa dikirim
-            const msg = Array.from(args).map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ');
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    action: "frontend_log",
-                    payload: { source: pageSource, level: level, message: msg }
-                }));
-            }
-        } catch (e) { } // Abaikan kalau gagal ngirim (biar ga error loop)
-    }
-
-    console.log = function () {
-        originalLog.apply(console, arguments);
-        sendLogToServer("INFO", arguments);
-    };
-    console.warn = function () {
-        originalWarn.apply(console, arguments);
-        sendLogToServer("WARN", arguments);
-    };
-    console.error = function () {
-        originalError.apply(console, arguments);
-        sendLogToServer("ERROR", arguments);
-    };
-    // ==========================================
 }
 // Jalankan koneksi pertama kali saat layar dibuka
 connectWebSocket();
 window.addEventListener('beforeunload', function () {
-    clearWatermark();
+    cancelPendingHandoffs();
 });
