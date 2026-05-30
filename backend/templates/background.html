@@ -28,51 +28,111 @@
             background-color: transparent;
             transform: translateZ(0);
             backface-visibility: hidden;
-            /* will-change dihapus dari CSS default; hanya aktif saat transisi via JS */
+            /* will-change diatur via JS; aktif hanya saat transisi */
         }
     </style>
 </head>
 
 <body>
-    <video id="vid1" class="bg-player" muted loop playsinline preload="auto" disablepictureinpicture></video>
-    <video id="vid2" class="bg-player" muted loop playsinline preload="auto" disablepictureinpicture></video>
+    <!--
+        preload="metadata" → hemat memori & bandwidth saat idle.
+        Akan di-upgrade ke "auto" secara JS tepat sebelum transisi dimulai.
+    -->
+    <video id="vid1" class="bg-player" muted loop playsinline preload="metadata" disablepictureinpicture></video>
+    <video id="vid2" class="bg-player" muted loop playsinline preload="metadata" disablepictureinpicture></video>
 
     <script>
-        /* ========== KONFIGURASI STABILITAS ========== */
-        const SYNC_THRESHOLD_HARD = 1.2;      // Seek paksa hanya jika drift > 1.2s
-        const SYNC_THRESHOLD_IGNORE = 0.4;    // Abaikan drift di bawah 0.4s
-        const SYNC_DEBOUNCE_MS = 180;         // Debounce antar command sync
-        const SYNC_COOLDOWN_MS = 800;         // Cooldown global antar seek
-        const LOAD_WATCHDOG_MS = 8000;        // Lebih toleran dari 5 detik sebelumnya
-        const TRANSITION_MIN_GAP_MS = 250;    // Anti-spam transisi
+        /* ============================================================
+         * SHOWLYRICS — Background Video Engine v2.1 (Optimized)
+         *
+         * Perubahan dari v2.0:
+         *  - 3-Tier adaptive sync (micro-ignore / soft-catchup / masked-seek)
+         *  - Masked Hard Seek dengan event-driven restoration (seeked event)
+         *  - BroadcastChannel API mengganti localStorage (zero disk I/O)
+         *  - Adaptive crossfade berdasarkan kapasitas device
+         *  - Smart preload: default metadata → upgrade ke auto sebelum transisi
+         *  - 3-Stage reconnect recovery (delay sebelum sync)
+         *  - Fallback polling interval diperlebar ke 20 detik
+         * ============================================================ */
+
+        /* ========== DETEKSI KAPASITAS PERANGKAT ========== */
+        (function detectDevice() {
+            const cores   = navigator.hardwareConcurrency || 4;
+            const mem     = navigator.deviceMemory || 4; // GB, bisa undefined
+            const isLow   = cores <= 4 || mem <= 4;
+            const isMid   = !isLow && (cores <= 8 || mem <= 8);
+            window._bgDeviceTier = isLow ? "low" : (isMid ? "mid" : "high");
+        })();
+
+        /* ========== KONFIGURASI ========== */
+        // Adaptive crossfade berdasarkan tier perangkat
+        const CROSSFADE_BY_TIER = { low: 150, mid: 300, high: 500 };
+        let crossfadeTime = CROSSFADE_BY_TIER[window._bgDeviceTier] || 500;
+
+        // Sync thresholds — 3-tier
+        const SYNC_MICRO_IGNORE    = 0.4;   // < 0.4s: abaikan sepenuhnya
+        const SYNC_MEDIUM_LIMIT    = 2.0;   // 0.4s – 2.0s: soft catch-up via playbackRate
+        const SYNC_CATCHUP_RATE    = 1.15;  // kecepatan mengejar ketertinggalan
+        const SYNC_SLOWDOWN_RATE   = 0.85;  // kecepatan memperlambat jika terlalu cepat
+        const SYNC_RATE_RESTORE_AT = 0.35;  // kembalikan ke 1.0 jika drift < nilai ini
+
+        // Hard seek controls
+        const SYNC_HARD_COOLDOWN_MS  = 2500; // cooldown global antar hard seek (dari 800ms)
+        const SYNC_DEBOUNCE_MS       = 180;  // debounce antar command sync_time
+        const SEEK_MASK_OPACITY      = 0.3;  // opacity saat masking hard seek
+
+        // Lainnya
+        const LOAD_WATCHDOG_MS      = 8000; // timeout watchdog saat video load
+        const TRANSITION_MIN_GAP_MS = 250;  // anti-spam transisi
+        const RECONNECT_SYNC_DELAY  = 1000; // tunggu decoder stabil sebelum sync pasca-reconnect
+        const FALLBACK_POLL_MS      = 20000; // polling fallback (dari 5000ms)
+
+        const BC_CHANNEL_NAME = "showlyrics_sync_channel"; // BroadcastChannel name
 
         /* ========== STATE ========== */
-        let activeVid = 1;
-        let globalVolume = 1.0;
-        let globalMuted = false;
-        let bgRequestId = 0;
-        let isTransitioning = false;
+        let activeVid        = 1;
+        let bgRequestId      = 0;
+        let isTransitioning  = false;
         let lastTransitionAt = 0;
-        let lastSyncAt = 0;
-        let crossfadeTime = 500;
-        let lastBgSignature = "";
-        let videoErrorCount = 0;
+        let lastSyncAt       = 0;      // timestamp hard seek terakhir (ms)
+        let lastBgSignature  = "";
+        let videoErrorCount  = 0;
         const MAX_VIDEO_ERRORS = 3;
-        const SYNC_SNAPSHOT_KEY = "showlyrics_video_timeline_snapshot";
 
-        let ws = null;
-        let reconnectTimer = null;
-        let fadeTimeout = null;
-        let loadWatchdogTimeout = null;
-        let syncDebounceTimer = null;
+        // BroadcastChannel snapshot state (mengganti localStorage)
+        let lastSnapshot     = null;   // { videoUrl, playbackStartedAt, pausedAt, playing, generationId }
+
+        let ws                   = null;
+        let reconnectTimer       = null;
+        let fadeTimeout          = null;
+        let loadWatchdogTimeout  = null;
+        let syncDebounceTimer    = null;
         let nextVidCanPlayHandler = null;
+        let softCatchupTimer     = null; // interval untuk monitor soft catch-up
+        let seekMaskTimer        = null; // timeout fallback jika event seeked terlambat
 
         const v1 = document.getElementById("vid1");
         const v2 = document.getElementById("vid2");
 
+        /* ========== BROADCAST CHANNEL (ganti localStorage) ========== */
+        let bc = null;
+        try {
+            bc = new BroadcastChannel(BC_CHANNEL_NAME);
+            bc.onmessage = (event) => {
+                const snap = event.data;
+                if (snap && snap.videoUrl) {
+                    lastSnapshot = snap;
+                    // Jangan langsung sync — hanya perbarui snapshot
+                    // Sync hanya dipicu saat reconnect / polling fallback
+                }
+            };
+        } catch (e) {
+            console.warn("[BG] BroadcastChannel tidak tersedia:", e);
+        }
+
         /* ========== HELPERS ========== */
         function getCurrentVideo() { return activeVid === 1 ? v1 : v2; }
-        function getNextVideo() { return activeVid === 1 ? v2 : v1; }
+        function getNextVideo()    { return activeVid === 1 ? v2 : v1; }
 
         function normalizeUrl(url) {
             if (!url) return "";
@@ -81,15 +141,15 @@
 
         function forceMuted(video) {
             if (!video) return;
-            video.muted = true;
+            video.muted  = true;
             video.volume = 0;
             video.setAttribute("muted", "");
         }
 
         function applyVolumeState(video) {
+            // Background.html selalu mute — audio dikelola oleh audio.html
             if (!video) return;
-            // Force background.html to be fully muted to prevent audio looping or double-triggering
-            video.muted = true;
+            video.muted  = true;
             video.volume = 0;
             video.setAttribute("muted", "");
         }
@@ -101,21 +161,113 @@
                 video.removeAttribute("src");
                 video.src = "";
                 video.load();
-                video.style.opacity = "0";
+                video.style.opacity   = "0";
                 video.style.willChange = "auto";
                 video.dataset.behavior = "";
+                video.playbackRate    = 1.0;
             } catch (e) {
                 console.warn("Cleanup video error:", e);
             }
         }
 
         function clearTimers() {
-            if (fadeTimeout) { clearTimeout(fadeTimeout); fadeTimeout = null; }
-            if (loadWatchdogTimeout) { clearTimeout(loadWatchdogTimeout); loadWatchdogTimeout = null; }
-            if (syncDebounceTimer) { clearTimeout(syncDebounceTimer); syncDebounceTimer = null; }
+            if (fadeTimeout)        { clearTimeout(fadeTimeout);        fadeTimeout        = null; }
+            if (loadWatchdogTimeout){ clearTimeout(loadWatchdogTimeout); loadWatchdogTimeout = null; }
+            if (syncDebounceTimer)  { clearTimeout(syncDebounceTimer);  syncDebounceTimer  = null; }
+            if (softCatchupTimer)   { clearInterval(softCatchupTimer);  softCatchupTimer   = null; }
+            if (seekMaskTimer)      { clearTimeout(seekMaskTimer);      seekMaskTimer      = null; }
         }
 
-        /* ========== TIMELINE & SYNC (STABIL) ========== */
+        function updateCssTransition(durationMs) {
+            const s = `${durationMs / 1000}s`;
+            v1.style.transition = `opacity ${s} ease-in-out`;
+            v2.style.transition = `opacity ${s} ease-in-out`;
+        }
+
+        /* ========== SOFT CATCH-UP (MEDIUM DRIFT) ========== */
+        function stopSoftCatchup() {
+            if (softCatchupTimer) {
+                clearInterval(softCatchupTimer);
+                softCatchupTimer = null;
+            }
+            const curr = getCurrentVideo();
+            if (curr) curr.playbackRate = 1.0;
+        }
+
+        function startSoftCatchup(targetTime) {
+            stopSoftCatchup(); // reset dulu
+
+            softCatchupTimer = setInterval(() => {
+                const curr = getCurrentVideo();
+                if (!curr || !curr.src || isTransitioning) {
+                    stopSoftCatchup();
+                    return;
+                }
+
+                // Hitung ulang target berdasarkan snapshot terakhir (kompensasi waktu berjalan)
+                const snap = lastSnapshot;
+                let liveTarget = targetTime;
+                if (snap && snap.playing && snap.playbackStartedAt) {
+                    const elapsed = (Date.now() - snap.playbackStartedAt) / 1000;
+                    liveTarget = (snap.pausedAt || 0) + elapsed;
+                }
+
+                const drift = curr.currentTime - liveTarget;
+
+                if (Math.abs(drift) < SYNC_RATE_RESTORE_AT) {
+                    // Sudah cukup sinkron — kembalikan ke normal
+                    curr.playbackRate = 1.0;
+                    stopSoftCatchup();
+                    return;
+                }
+
+                if (drift < 0) {
+                    // Video tertinggal — percepat
+                    curr.playbackRate = SYNC_CATCHUP_RATE;
+                } else {
+                    // Video terlalu cepat — perlambat
+                    curr.playbackRate = SYNC_SLOWDOWN_RATE;
+                }
+            }, 500);
+        }
+
+        /* ========== MASKED HARD SEEK ========== */
+        function maskedHardSeek(video, targetTime) {
+            if (!video || !video.src) return;
+
+            const now = performance.now();
+            if (now - lastSyncAt < SYNC_HARD_COOLDOWN_MS) return; // throttle
+            lastSyncAt = now;
+
+            stopSoftCatchup();
+
+            // Pre-seek masking — sembunyikan artefak decoder
+            video.style.opacity = String(SEEK_MASK_OPACITY);
+
+            // Pastikan playbackRate normal sebelum seek
+            video.playbackRate = 1.0;
+            video.currentTime  = targetTime;
+
+            // Restore via event seeked (event-driven, bukan setTimeout)
+            const onSeeked = () => {
+                if (seekMaskTimer) { clearTimeout(seekMaskTimer); seekMaskTimer = null; }
+                // Fade in kembali dengan transisi halus 150ms
+                video.style.transition = `opacity 150ms ease-in-out, ${video.style.transition || ""}`;
+                video.style.opacity    = video === getCurrentVideo() ? "1" : "0";
+                // Kembalikan transition ke nilai crossfade normal setelah restore
+                setTimeout(() => updateCssTransition(crossfadeTime), 160);
+            };
+
+            video.addEventListener("seeked", onSeeked, { once: true });
+
+            // Fallback safety jika event seeked tidak terpicu dalam 1.5s
+            seekMaskTimer = setTimeout(() => {
+                video.removeEventListener("seeked", onSeeked);
+                video.style.opacity = video === getCurrentVideo() ? "1" : "0";
+            }, 1500);
+        }
+
+        /* ========== 3-TIER TIMELINE SYNC ========== */
         function applySyncTime(rawValue, options = {}) {
             const curr = getCurrentVideo();
             if (!curr || !curr.src) return;
@@ -126,17 +278,20 @@
             // Jangan ganggu frame awal yang sedang decode
             if (!options.force && curr.currentTime < 0.5) return;
 
-            const diff = Math.abs(curr.currentTime - t);
-            if (diff < (options.force ? 0.08 : SYNC_THRESHOLD_IGNORE)) return; // Abaikan drift kecil
+            const drift = curr.currentTime - t;
+            const absDrift = Math.abs(drift);
 
-            const now = performance.now();
-            if (!options.force && now - lastSyncAt < SYNC_COOLDOWN_MS) return; // Throttle global
+            /* TIER 1 — Micro drift: abaikan */
+            if (absDrift < SYNC_MICRO_IGNORE && !options.force) return;
 
-            // Hanya hard seek jika drift besar. Micro-seek dihapus untuk stabilitas decoder.
-            if (options.force || diff > SYNC_THRESHOLD_HARD) {
-                curr.currentTime = t;
-                lastSyncAt = now;
+            /* TIER 2 — Medium drift: soft catch-up via playbackRate */
+            if (absDrift <= SYNC_MEDIUM_LIMIT && !options.force) {
+                startSoftCatchup(t);
+                return;
             }
+
+            /* TIER 3 — Hard drift: masked hard seek */
+            maskedHardSeek(curr, t);
         }
 
         function scheduleSync(rawValue, options = {}) {
@@ -151,36 +306,39 @@
             }, SYNC_DEBOUNCE_MS);
         }
 
-        function applySnapshotTimeline() {
-            try {
-                const raw = localStorage.getItem(SYNC_SNAPSHOT_KEY);
-                if (!raw) return;
-                const snap = JSON.parse(raw);
-                if (!snap || !snap.activeVideoUrl) return;
+        /* ========== SNAPSHOT TIMELINE RECONSTRUCTION ========== */
+        function reconstructTimeline() {
+            const snap = lastSnapshot;
+            if (!snap || !snap.videoUrl) return;
 
-                const curr = getCurrentVideo();
-                const currUrl = normalizeUrl(curr.currentSrc || curr.src);
-                const snapUrl = normalizeUrl(snap.activeVideoUrl);
-                if (!currUrl || currUrl !== snapUrl) return;
+            const curr = getCurrentVideo();
+            const currUrl = normalizeUrl(curr.currentSrc || curr.src);
+            const snapUrl = normalizeUrl(snap.videoUrl);
+            if (!currUrl || currUrl !== snapUrl) return;
 
-                const elapsed = Math.max(0, (Date.now() - Number(snap.sentAt || Date.now())) / 1000);
-                const target = Number(snap.currentTime || 0) + (snap.isPlaying ? elapsed : 0);
+            // Jika video sedang berputar, hitung posisi yang seharusnya sekarang
+            let target;
+            if (snap.playing && snap.playbackStartedAt) {
+                const elapsed = Math.max(0, (Date.now() - snap.playbackStartedAt) / 1000);
+                target = (snap.pausedAt || 0) + elapsed;
+            } else {
+                target = snap.pausedAt || 0;
+            }
 
-                scheduleSync(target);
-            } catch (_) { }
+            scheduleSync(target);
         }
 
         /* ========== VIDEO INIT ========== */
         function initializeVideoElement(video) {
             if (!video) return;
-            video.preload = "auto";
-            video.playsInline = true;
+            video.preload              = "metadata"; // default hemat
+            video.playsInline          = true;
             video.disablePictureInPicture = true;
             video.setAttribute("playsinline", "");
-            video.setAttribute("preload", "auto");
-            video.style.transform = "translateZ(0)";
+            video.setAttribute("preload", "metadata");
+            video.style.transform      = "translateZ(0)";
             video.style.backfaceVisibility = "hidden";
-            video.style.willChange = "auto"; // Default tenang, aktifkan hanya saat fade
+            video.style.willChange     = "auto";
             forceMuted(video);
 
             video.addEventListener("error", () => {
@@ -198,11 +356,9 @@
                 }
             });
 
-            // Handler stalled yang brutal DIHAPUS. Biarkan browser menangani buffering native.
-
             video.addEventListener("ended", () => {
                 if (video.dataset.behavior === "once_clear") {
-                    video.style.opacity = 0;
+                    video.style.opacity = "0";
                     setTimeout(() => cleanupVideo(video), crossfadeTime);
                 }
             });
@@ -210,21 +366,19 @@
 
         /* ========== BACKGROUND MANAGER (RACE-SAFE) ========== */
         function setBackground(payload = {}) {
-            const url = payload.url || "";
-            const behavior = payload.behavior || "loop";
+            const url        = payload.url || "";
+            const behavior   = payload.behavior || "loop";
             const forceReplay = payload.forceReplay === true;
-            const signature = `${url}|${behavior}`;
+            const signature  = `${url}|${behavior}`;
 
-            // Dedup: jika parameter sama dan masih ada url, jangan restart
+            // Dedup: parameter sama & tidak di-force-replay → skip
             if (signature === lastBgSignature && url && !forceReplay) {
-                applySnapshotTimeline();
+                reconstructTimeline();
                 return;
             }
 
             // Anti-spam transisi visual
             if (performance.now() - lastTransitionAt < TRANSITION_MIN_GAP_MS && url && !forceReplay) {
-                // Masih proses transisi terlalu cepat -> abaikan atau bisa di-queue. 
-                // Di sini kita abaikan untuk mencegah chaos.
                 return;
             }
 
@@ -234,7 +388,7 @@
 
             clearTimers();
 
-            // Bersihkan listener lama di nextVid agar tidak fire dari request sebelumnya
+            // Bersihkan listener lama agar tidak fire dari request sebelumnya
             const nextVid = getNextVideo();
             if (nextVidCanPlayHandler) {
                 nextVid.removeEventListener("canplay", nextVidCanPlayHandler);
@@ -243,11 +397,12 @@
 
             const currVid = getCurrentVideo();
 
+            // --- URL KOSONG: fade out video aktif ---
             if (!url) {
                 isTransitioning = true;
                 lastTransitionAt = performance.now();
                 currVid.style.willChange = "opacity, transform";
-                currVid.style.opacity = 0;
+                currVid.style.opacity    = "0";
                 fadeTimeout = setTimeout(() => {
                     if (requestId !== bgRequestId) return;
                     cleanupVideo(currVid);
@@ -257,7 +412,9 @@
             }
 
             const incomingUrl = normalizeUrl(url);
-            const currUrl = normalizeUrl(currVid.currentSrc || currVid.src);
+            const currUrl     = normalizeUrl(currVid.currentSrc || currVid.src);
+
+            // URL sama (tidak force replay): hanya perbarui timeline
             if (currUrl === incomingUrl) {
                 if (forceReplay) {
                     currVid.dataset.behavior = behavior;
@@ -265,15 +422,17 @@
                     try { currVid.currentTime = 0; } catch (_) { }
                     currVid.play().catch(() => { });
                 } else {
-                    applySnapshotTimeline();
+                    reconstructTimeline();
                 }
                 return;
             }
 
-            // Persiapkan video berikutnya dengan keadaan bersih
+            // --- URL BARU: siapkan next video ---
             cleanupVideo(nextVid);
             nextVid.dataset.behavior = behavior;
-            nextVid.loop = (behavior === "loop" || behavior === undefined);
+            nextVid.loop   = (behavior === "loop" || behavior === undefined);
+            nextVid.preload = "auto"; // upgrade preload hanya saat transisi
+            nextVid.setAttribute("preload", "auto");
             forceMuted(nextVid);
             nextVid.src = url;
             nextVid.load();
@@ -292,24 +451,30 @@
                     activeVid = activeVid === 1 ? 2 : 1;
                     applyVolumeState(nextVid);
                     forceMuted(currVid);
-                    isTransitioning = true;
+
+                    isTransitioning  = true;
                     lastTransitionAt = performance.now();
 
-                    // Aktifkan hardware acceleration hanya saat transisi
+                    // Aktifkan GPU acceleration hanya saat transisi
                     nextVid.style.willChange = "opacity, transform";
                     currVid.style.willChange = "opacity, transform";
 
-                    nextVid.style.opacity = 1;
-                    currVid.style.opacity = 0;
+                    nextVid.style.opacity = "1";
+                    currVid.style.opacity = "0";
 
-                    // Beri jeda 400ms agar decoder baru tidak langsung disuruh seek
-                    setTimeout(() => applySnapshotTimeline(), 400);
-
+                    // Setelah fade selesai: bersihkan old video & reset willChange
                     fadeTimeout = setTimeout(() => {
                         if (requestId !== bgRequestId) return;
                         cleanupVideo(currVid);
+                        // Downgrade preload next video (yang kini aktif) ke metadata setelah selesai
+                        // Biarkan "auto" karena video sudah loaded penuh; hanya reset willChange
+                        nextVid.style.willChange = "auto";
                         isTransitioning = false;
+
+                        // Rekonstruksi timeline setelah decoder stabil (400ms setelah fade)
+                        setTimeout(() => reconstructTimeline(), 400);
                     }, crossfadeTime);
+
                 }).catch((err) => {
                     console.warn("Autoplay prevented or playback error:", err);
                     playbackStarted = false;
@@ -318,7 +483,7 @@
 
             nextVid.addEventListener("canplay", nextVidCanPlayHandler, { once: true });
 
-            // Watchdog: hanya reload jika benar-benar tidak ada data sama sekali (readyState < 2)
+            // Watchdog: reload jika data benar-benar tidak ada setelah LOAD_WATCHDOG_MS
             loadWatchdogTimeout = setTimeout(() => {
                 if (requestId !== bgRequestId) return;
                 if (nextVid.readyState < 2 && nextVid.src) {
@@ -328,7 +493,7 @@
             }, LOAD_WATCHDOG_MS);
         }
 
-        /* ========== WEBSOCKET (DENGAN THROTTLING & DEDUP) ========== */
+        /* ========== WEBSOCKET ========== */
         function connectWebSocket() {
             if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
@@ -343,21 +508,24 @@
             ws.onopen = () => {
                 console.log("WebSocket tersambung");
                 if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-                setTimeout(() => applySnapshotTimeline(), 500);
+
+                // 3-Stage Reconnect Recovery:
+                // Stage 1 (saat ini): koneksi baru berhasil, JANGAN langsung sync
+                // Stage 2: tunggu RECONNECT_SYNC_DELAY agar decoder stabil
+                // Stage 3: baru rekonstruksi timeline
+                setTimeout(() => reconstructTimeline(), RECONNECT_SYNC_DELAY);
             };
 
             ws.onmessage = (event) => {
                 try {
-                    const data = JSON.parse(event.data);
+                    const data   = JSON.parse(event.data);
                     const action = data.action || data.type;
                     const payload = data.payload || {};
 
                     if (action === "update_bg_config") {
                         if (payload.transition) {
                             crossfadeTime = Math.max(0, payload.transition * 1000);
-                            const cssDuration = `${payload.transition}s`;
-                            v1.style.transition = `opacity ${cssDuration} ease-in-out`;
-                            v2.style.transition = `opacity ${cssDuration} ease-in-out`;
+                            updateCssTransition(crossfadeTime);
                         }
                         if (payload.fit) {
                             v1.style.objectFit = payload.fit;
@@ -366,41 +534,42 @@
                     }
 
                     if (action === "update_background") {
-                        // Dedup dilakukan juga di dalam setBackground, tapi double-check di sini
                         setBackground(payload);
                     }
 
                     if (action === "bg_control" && payload.target === "video") {
                         const currVid = getCurrentVideo();
-                        const cmd = payload.command;
-
-
+                        const cmd     = payload.command;
 
                         if (cmd === "play") {
                             currVid.play().catch(() => { });
+
                         } else if (cmd === "pause") {
                             currVid.pause();
+                            stopSoftCatchup();
+
                         } else if (cmd === "replay") {
                             const expectedUrl = payload.url ? normalizeUrl(payload.url) : "";
-                            const currentUrl = normalizeUrl(currVid.currentSrc || currVid.src);
+                            const currentUrl  = normalizeUrl(currVid.currentSrc || currVid.src);
                             if (!expectedUrl || currentUrl === expectedUrl) {
                                 currVid.currentTime = 0;
                                 currVid.play().catch(() => { });
                             }
+
                         } else if (cmd === "loop") {
                             currVid.loop = (payload.value === "loop" || payload.value === true);
+
                         } else if (cmd === "volume") {
-                            let val = parseFloat(payload.value);
-                            if (isNaN(val)) val = 1.0;
-                            if (val > 1.0) val = val / 100.0;
-                            globalVolume = Math.max(0, Math.min(1, val));
+                            // Background.html selalu mute — volume diabaikan
                             applyVolumeState(currVid);
+
                         } else if (cmd === "mute") {
-                            globalMuted = !!payload.value;
+                            // Background.html selalu mute
                             applyVolumeState(currVid);
+
                         } else if (cmd === "sync_time") {
-                            // Tidak langsung seek — masukkan antrian debounce
                             scheduleSync(payload.value, { force: payload.force === true });
+
                         } else if (cmd === "update_behavior") {
                             currVid.dataset.behavior = payload.value;
                             currVid.loop = (payload.value === "loop" || payload.value === undefined);
@@ -440,39 +609,44 @@
         /* ========== INIT ========== */
         initializeVideoElement(v1);
         initializeVideoElement(v2);
+        updateCssTransition(crossfadeTime);
         connectWebSocket();
 
         /* ========== EVENT LISTENERS GLOBAL ========== */
+
+        // Visibilitychange: jaga mute & reconnect saat tab kembali aktif
         document.addEventListener("visibilitychange", () => {
             if (document.visibilityState === "visible") {
                 forceMuted(v1);
                 forceMuted(v2);
                 reconnectWebSocket();
-                // Jangan langsung sync saat kembali; biarkan decoder stabil dulu
-                setTimeout(() => applySnapshotTimeline(), 600);
+                // Decoder perlu waktu stabil setelah wake dari latar belakang
+                setTimeout(() => reconstructTimeline(), RECONNECT_SYNC_DELAY);
             }
         });
 
-        window.addEventListener("storage", (e) => {
-            if (e.key === SYNC_SNAPSHOT_KEY) {
-                applySnapshotTimeline();
-            }
-        });
+        // BroadcastChannel: terima update snapshot dari halaman lain
+        // (sudah di-handle di inisialisasi bc.onmessage di atas)
 
+        // Cleanup saat halaman ditutup
         window.addEventListener("beforeunload", () => {
-            if (ws) {
-                try { ws.close(); } catch (_) { }
-            }
+            if (ws) { try { ws.close(); } catch (_) { } }
+            if (bc) { try { bc.close(); } catch (_) { } }
             clearTimers();
             if (reconnectTimer) clearTimeout(reconnectTimer);
         });
 
-        // Polling ringan untuk menjaga timeline agar tidak terlalu drift jika WS tidak aktif
+        /*
+         * Fallback polling — diperlebar dari 5 detik ke 20 detik.
+         * Hanya sebagai jaring pengaman jika BroadcastChannel tidak terpicu.
+         * Tidak berjalan saat sedang transisi atau tab tidak visible.
+         */
         setInterval(() => {
             if (!isTransitioning && document.visibilityState === "visible") {
-                applySnapshotTimeline();
+                reconstructTimeline();
             }
-        }, 5000);
+        }, FALLBACK_POLL_MS);
+
     </script>
 </body>
 

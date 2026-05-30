@@ -138,8 +138,7 @@
                                     title="Undo (Ctrl+Z)">↩ UNDO</button>
                                 <div class="se-divider"></div>
                                 <select class="se-case-select"
-                                    onchange="transformText('edit', this.value); this.value=''"
-                                    style="font-size: 0.8em; font-weight: bold; padding: 2px 6px;">
+                                    onchange="transformText('edit', this.value); this.value=''">
                                     <option value="" disabled selected>Aa</option>
                                     <option value="upper">AA</option>
                                     <option value="lower">aa</option>
@@ -228,7 +227,8 @@
                                 </div>
                             </div>
                             <div id="bg-sender-list" class="bg-folder-list">
-                                <div style="padding:15px; color:#666; font-size:0.75em; text-align:center;">Click refresh to scan network...</div>
+                                <div style="padding:15px; color:#666; font-size:0.75em; text-align:center;">Click
+                                    refresh to scan network...</div>
                             </div>
                         </div>
                     </div>
@@ -904,18 +904,19 @@
                     <div class="config-row"><span>🎤 Stage</span><select id="disp-fb" class="config-select"></select>
                     </div>
                     <!-- 🎯 TOMBOL TES DISPLAY -->
-                    <button onclick="testDisplays()"
-                        class="btn-display-check">
+                    <button onclick="testDisplays()" class="btn-display-check">
                         👁️ DISPLAY CHECK
+                    </button>
+                    <button onclick="openAdvancedOutputModal()" class="btn-display-check btn-adv-output"
+                        title="Custom Resolution & QR Codes">
+                        📡 ADVANCED OUTPUT
                     </button>
                 </div>
             </div>
 
             <div class="preview-container">
 
-                <div id="preview-wrapper" class="preview-wrapper">
-                    <iframe src="/display" id="preview-frame" class="preview-frame" scrolling="no"></iframe>
-                </div>
+                <div id="preview-wrapper" class="preview-wrapper"></div>
             </div>
 
             <div class="clear-btn-container">
@@ -1047,9 +1048,7 @@
                 separate languages. (Example: Father You Are Good)</small>
         </div>
 
-        <div class="legend"><strong>SHORTCUTS:</strong><br><span class="key">Right Click</span> = Quick Edit<br><span
-                class="key">Shift + V/C/B</span> = Assign<br><span class="key">V/C</span> = Jump Live<br><span
-                class="key">Arrows</span> = Next/Prev</div>
+
     </div>
 
     <div id="alert-modal" class="modal-overlay">
@@ -1416,8 +1415,7 @@
                             <button onclick="undoEditorState('add')" class="se-btn se-btn-ghost" title="Undo (Ctrl+Z)">↩
                                 UNDO</button>
                             <div class="se-divider"></div>
-                            <select class="se-case-select" onchange="transformText('add', this.value); this.value=''"
-                                style="font-size: 0.8em; font-weight: bold; padding: 2px 6px;">
+                            <select class="se-case-select" onchange="transformText('add', this.value); this.value=''">
                                 <option value="" disabled selected>Aa</option>
                                 <option value="upper">AA</option>
                                 <option value="lower">aa</option>
@@ -1494,10 +1492,7 @@
                 <div class="te-panel-left">
                     <div class="te-preview-container">
                         <label class="te-label te-cyan">PREVIEW</label>
-                        <div class="te-preview-box" id="modal-preview-wrapper">
-                            <iframe src="/display" id="modal-preview-frame" class="te-preview-frame"
-                                scrolling="no"></iframe>
-                        </div>
+                        <div class="te-preview-box" id="modal-preview-wrapper"></div>
                     </div>
 
                     <div class="te-alert-nav-sec">
@@ -2055,6 +2050,16 @@
                 </div>
             </div>
 
+            <div class="control-group" style="margin-top: 15px;">
+                <label style="color: #aaa; font-weight: bold; margin-bottom: 5px; display: block;">🎹 KEYBOARD
+                    SHORTCUTS</label>
+                <button class="btn-action"
+                    style="background: #8b5cf6; border-color: #8b5cf6; color: white; padding: 8px 12px;"
+                    onclick="openShortcutEditorModal()">✏️ EDIT SHORTCUTS</button>
+                <small style="color: #888; font-size: 0.65em; display: block; margin-top: 5px;">Customize emergency
+                    blackout hotkeys, lyrics tagging keys, and live jump triggers.</small>
+            </div>
+
             <div class="control-group">
                 <label class="settings-output-label">🔗 OUTPUT LINKS</label>
                 <div id="output-links-container" class="settings-output-links">
@@ -2080,6 +2085,41 @@
 
                     <button class="btn-action btn-activate" onclick="activateShowLyrics()">ACTIVATE DEVICE</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="shortcut-editor-modal" class="modal-overlay" style="z-index: 10005; display: none;">
+        <div class="modal-box"
+            style="width: min(720px, 95vw); max-height: 90vh; background: #101114; border: 1px solid #444; display: flex; flex-direction: column; padding: 0;">
+            <div class="modal-header"
+                style="padding: 12px 16px; background: #15161a; margin: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px 10px 0 0;">
+                <span class="modal-title"
+                    style="color: #8b5cf6; font-size: 0.95em; font-weight: bold; letter-spacing: 0.8px;">🎹 KEYBOARD
+                    SHORTCUT EDITOR</span>
+                <button class="close-btn" onclick="closeShortcutEditorModal()">✖</button>
+            </div>
+
+            <div style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+                <div
+                    style="background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.2); padding: 10px; border-radius: 6px; font-size: 0.75em; color: #c084fc; line-height: 1.4;">
+                    💡 <b>How to Edit:</b> Click the <b>"Record Key"</b> button next to any action, then press your
+                    desired key combination on your keyboard. Max 2 modifier keys (Ctrl/Shift/Alt) and exactly 1
+                    letter/digit/symbol/arrow key are allowed.
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 8px;" id="shortcut-list-container">
+                    <!-- Will be populated dynamically by JS -->
+                </div>
+            </div>
+
+            <div class="modal-sticky-footer"
+                style="background: #15161a; padding: 12px 16px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); border-radius: 0 0 10px 10px; z-index: 10;">
+                <button class="modal-footer-btn modal-footer-cancel"
+                    onclick="closeShortcutEditorModal()">CANCEL</button>
+                <button class="modal-footer-btn modal-footer-save" onclick="saveEditedShortcuts()"
+                    style="background: #8b5cf6 !important; border-color: #8b5cf6 !important; color: white !important;">💾
+                    SAVE CHANGES</button>
             </div>
         </div>
     </div>
@@ -2121,12 +2161,12 @@
 
                     <div class="scr-mini-monitor">
                         <span class="scr-monitor-label" style="color:#00e5ff;">DISPLAY (MAIN)</span>
-                        <iframe src="/scripture" class="scr-mini-iframe" id="scr-mini-display"></iframe>
+                        <div id="scr-mini-display-mount" class="scr-mini-iframe-mount"></div>
                     </div>
 
                     <div class="scr-mini-monitor" style="border-color:#f59e0b;">
                         <span class="scr-monitor-label" style="color:#f59e0b;">LOWERTHIRD</span>
-                        <iframe src="/scripture-lt" class="scr-mini-iframe" id="scr-mini-lt"></iframe>
+                        <div id="scr-mini-lt-mount" class="scr-mini-iframe-mount"></div>
                     </div>
 
                     <div class="scr-setting-card" style="margin-top:auto;">
@@ -2410,6 +2450,156 @@
     </script>
     <script src="static/bg.js?v={{ VERSION }}"></script>
     <script src="static/script.js?v={{ VERSION }}"></script>
+
+    <!-- ADVANCED OUTPUT MODAL -->
+    <div id="advanced-output-modal" class="modal-overlay" style="display:none; z-index:10000;">
+        <div class="modal-box adv-output-box">
+            <div class="modal-header">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:1.4em;">&#128225;</span>
+                    <div>
+                        <div class="modal-title" style="color:#00e5ff;">ADVANCED OUTPUT</div>
+                        <div style="font-size:0.7em; color:#888; margin-top:2px;">Custom Resolution &amp; Network QR
+                            Codes</div>
+                    </div>
+                </div>
+                <button class="close-btn" onclick="safeCloseModal('advanced-output-modal')">&#x2716;</button>
+            </div>
+
+            <div class="adv-output-grid">
+                <!-- MAIN OUTPUT -->
+                <div class="adv-output-col">
+                    <div class="adv-out-label" style="color:#00e5ff;">&#x1F5A5;&#xFE0F; MAIN</div>
+                    <div class="adv-out-qr-wrap">
+                        <div id="qr-main" class="adv-out-qr-container"></div>
+                        <div id="qr-url-main" class="adv-out-url">Loading...</div>
+                    </div>
+                    <div class="adv-out-res-box">
+                        <div class="adv-out-res-label">&#x1F4D0; RESOLUTION</div>
+                        <div class="adv-out-mode-toggle">
+                            <button id="res-btn-default-main" class="adv-res-mode-btn active"
+                                onclick="setResMode('main','default')">DEFAULT</button>
+                            <button id="res-btn-custom-main" class="adv-res-mode-btn"
+                                onclick="setResMode('main','custom')">CUSTOM</button>
+                        </div>
+                        <div id="res-custom-inputs-main" class="adv-res-custom-row" style="display:none;">
+                            <div class="adv-res-input-group"><label>W</label><input type="number" id="res-w-main"
+                                    class="adv-res-input" value="1920" min="640" max="7680"></div>
+                            <span class="adv-res-x">x</span>
+                            <div class="adv-res-input-group"><label>H</label><input type="number" id="res-h-main"
+                                    class="adv-res-input" value="1080" min="360" max="4320"></div>
+                        </div>
+                        <div id="res-presets-main" class="adv-res-presets" style="display:none;">
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('main',1920,1080)">1920x1080</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('main',2560,1080)">2560x1080</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('main',3440,1440)">3440x1440</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('main',3840,1080)">3840x1080</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('main',1280,720)">1280x720</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('main',3840,2160)">3840x2160</button>
+                        </div>
+                        <button class="adv-out-apply-btn" onclick="applyOutputResolution('main')">&#x26A1;
+                            APPLY</button>
+                        <div id="res-status-main" class="adv-out-res-status"></div>
+                    </div>
+                </div>
+                <!-- AUDIENCE OUTPUT -->
+                <div class="adv-output-col">
+                    <div class="adv-out-label" style="color:#a855f7;">&#x1F4FA; AUDIENCE</div>
+                    <div class="adv-out-qr-wrap">
+                        <div id="qr-lt" class="adv-out-qr-container"></div>
+                        <div id="qr-url-lt" class="adv-out-url">Loading...</div>
+                    </div>
+                    <div class="adv-out-res-box">
+                        <div class="adv-out-res-label">&#x1F4D0; RESOLUTION</div>
+                        <div class="adv-out-mode-toggle">
+                            <button id="res-btn-default-lt" class="adv-res-mode-btn active"
+                                onclick="setResMode('lt','default')">DEFAULT</button>
+                            <button id="res-btn-custom-lt" class="adv-res-mode-btn"
+                                onclick="setResMode('lt','custom')">CUSTOM</button>
+                        </div>
+                        <div id="res-custom-inputs-lt" class="adv-res-custom-row" style="display:none;">
+                            <div class="adv-res-input-group"><label>W</label><input type="number" id="res-w-lt"
+                                    class="adv-res-input" value="1920" min="640" max="7680"></div>
+                            <span class="adv-res-x">x</span>
+                            <div class="adv-res-input-group"><label>H</label><input type="number" id="res-h-lt"
+                                    class="adv-res-input" value="1080" min="360" max="4320"></div>
+                        </div>
+                        <div id="res-presets-lt" class="adv-res-presets" style="display:none;">
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('lt',1920,1080)">1920x1080</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('lt',2560,1080)">2560x1080</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('lt',3440,1440)">3440x1440</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('lt',3840,1080)">3840x1080</button>
+                            <button class="adv-res-preset-btn" onclick="applyResPreset('lt',1280,720)">1280x720</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('lt',3840,2160)">3840x2160</button>
+                        </div>
+                        <button class="adv-out-apply-btn" onclick="applyOutputResolution('lt')">&#x26A1; APPLY</button>
+                        <div id="res-status-lt" class="adv-out-res-status"></div>
+                    </div>
+                </div>
+                <!-- STAGE OUTPUT -->
+                <div class="adv-output-col">
+                    <div class="adv-out-label" style="color:#f59e0b;">&#x1F3A4; STAGE</div>
+                    <div class="adv-out-qr-wrap">
+                        <div id="qr-fb" class="adv-out-qr-container"></div>
+                        <div id="qr-url-fb" class="adv-out-url">Loading...</div>
+                    </div>
+                    <div class="adv-out-res-box">
+                        <div class="adv-out-res-label">&#x1F4D0; RESOLUTION</div>
+                        <div class="adv-out-mode-toggle">
+                            <button id="res-btn-default-fb" class="adv-res-mode-btn active"
+                                onclick="setResMode('fb','default')">DEFAULT</button>
+                            <button id="res-btn-custom-fb" class="adv-res-mode-btn"
+                                onclick="setResMode('fb','custom')">CUSTOM</button>
+                        </div>
+                        <div id="res-custom-inputs-fb" class="adv-res-custom-row" style="display:none;">
+                            <div class="adv-res-input-group"><label>W</label><input type="number" id="res-w-fb"
+                                    class="adv-res-input" value="1920" min="640" max="7680"></div>
+                            <span class="adv-res-x">x</span>
+                            <div class="adv-res-input-group"><label>H</label><input type="number" id="res-h-fb"
+                                    class="adv-res-input" value="1080" min="360" max="4320"></div>
+                        </div>
+                        <div id="res-presets-fb" class="adv-res-presets" style="display:none;">
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('fb',1920,1080)">1920x1080</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('fb',2560,1080)">2560x1080</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('fb',3440,1440)">3440x1440</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('fb',3840,1080)">3840x1080</button>
+                            <button class="adv-res-preset-btn" onclick="applyResPreset('fb',1280,720)">1280x720</button>
+                            <button class="adv-res-preset-btn"
+                                onclick="applyResPreset('fb',3840,2160)">3840x2160</button>
+                        </div>
+                        <button class="adv-out-apply-btn" onclick="applyOutputResolution('fb')">&#x26A1; APPLY</button>
+                        <div id="res-status-fb" class="adv-out-res-status"></div>
+                    </div>
+                </div>
+            </div><!-- /adv-output-grid -->
+
+            <div class="adv-out-footer">
+                <span style="color:#666; font-size:0.7em; flex:1;">Custom mode scales output to fit display. Ideal for
+                    21:9 videowalls read as 16:9 by Windows.</span>
+                <button class="btn-song-action btn-song-cancel" onclick="safeCloseModal('advanced-output-modal')"
+                    style="padding:8px 20px;">CLOSE</button>
+            </div>
+        </div>
+    </div>
+    <!-- /ADVANCED OUTPUT MODAL -->
+
+    <!-- QR Code Generator (pure JS) -->
+    <script src="static/qrcode.min.js?v={{ VERSION }}"></script>
 </body>
 
 </html>

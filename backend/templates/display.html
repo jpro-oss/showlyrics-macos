@@ -11,8 +11,8 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100vw !important;
-            height: 100vh !important;
+            width: 100% !important;
+            height: 100% !important;
             border: none;
             z-index: 9999;
             pointer-events: none;
@@ -23,8 +23,8 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100vw;
-            height: 100vh;
+            width: 100%;
+            height: 100%;
             border: none;
             z-index: 1;
             pointer-events: none;
@@ -121,12 +121,17 @@
             justify-content: center;
             opacity: 0;
             pointer-events: none;
-            transition: opacity 0.5s ease;
+            transition: opacity var(--fade-speed, 0.5s) ease;
             box-sizing: border-box;
         }
 
         .lyric-group.active {
             opacity: 1;
+        }
+
+        .lyric-group.lyric-exiting {
+            opacity: 0;
+            transition: opacity var(--lyric-exit-ms, 0.5s) ease !important;
         }
 
         .lyric-group:not(.active) {
@@ -4940,8 +4945,8 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100vw;
-            height: 100vh;
+            width: 100%;
+            height: 100%;
             border: none;
         }
 

@@ -10,6 +10,21 @@ const crypto = require('crypto');
 const secretToken = crypto.randomBytes(16).toString('hex');
 process.env.SHOWLYRICS_SECRET = secretToken;
 
+// Write token to WorshipEngineData/.session_token for fallback/manual backend launch
+const userDocs = path.join(os.homedir(), 'Documents');
+const appFolder = path.join(userDocs, 'WorshipEngineData');
+const tokenFile = path.join(appFolder, '.session_token');
+
+try {
+  if (!fs.existsSync(appFolder)) {
+    fs.mkdirSync(appFolder, { recursive: true });
+  }
+  fs.writeFileSync(tokenFile, secretToken, 'utf8');
+  console.log("Secure session token stored at:", tokenFile);
+} catch (err) {
+  console.error("Failed to write session token:", err.message);
+}
+
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
@@ -48,7 +63,13 @@ const createPyProc = () => {
   console.log("Starting Python Backend from:", script);
 
   // TAMBAHIN ARRAY KOSONG [] DAN { windowsHide: true } DI SINI 👇
-  pyProc = spawn(script, [], { windowsHide: true });
+  pyProc = spawn(script, [], {
+    windowsHide: true,
+    env: {
+      ...process.env,
+      SHOWLYRICS_SECRET: secretToken
+    }
+  });
 
   pyProc.stdout.on('data', (data) => {
     console.log(`Python: ${data}`);
@@ -61,6 +82,13 @@ const createPyProc = () => {
 
 // --- FUNGSI MATIKAN PYTHON ---
 const exitPyProc = () => {
+  try {
+    if (fs.existsSync(tokenFile)) {
+      fs.unlinkSync(tokenFile);
+      console.log("Secure session token deleted.");
+    }
+  } catch (err) {}
+
   if (pyProc) {
     console.log("Membunuh Python Backend...");
     if (os.platform() === 'win32') {
@@ -132,7 +160,14 @@ function checkBackendAndLoad() {
 // --- STARTUP ELECTRON ---
 app.whenReady().then(() => {
   // Register header interceptor to secure Python backend pages
-  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+  const filter = {
+    urls: [
+      'http://localhost/*',
+      'http://127.0.0.1/*'
+    ]
+  };
+
+  session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     if (details.url.startsWith('http://localhost:18888') || details.url.startsWith('http://127.0.0.1:18888')) {
       details.requestHeaders['X-ShowLyrics-Secret'] = secretToken;
     }
@@ -338,6 +373,86 @@ ipcMain.on('test-displays', () => {
   });
 });
 
+// --- SET OUTPUT RESOLUTION HELPERS ---
+function setWindowResolution(type, mode, width, height) {
+  const win = projectorWindows[type];
+  if (!win || win.isDestroyed()) return;
+
+  if (mode === 'custom' && width && height) {
+    const winBounds = win.getBounds();
+    const scaleX = winBounds.width / width;
+    const scaleY = winBounds.height / height;
+
+    win.webContents.insertCSS(`
+      html {
+        width: ${width}px !important;
+        height: ${height}px !important;
+        transform-origin: top left !important;
+        transform: scale(${scaleX}, ${scaleY}) !important;
+        overflow: hidden !important;
+      }
+      body {
+        width: ${width}px !important;
+        height: ${height}px !important;
+        overflow: hidden !important;
+      }
+    `);
+    console.log(`[RESOLUTION] ${type} set to custom ${width}x${height} (scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)})`);
+  } else {
+    win.webContents.insertCSS(`
+      html {
+        width: 100% !important;
+        height: 100% !important;
+        transform: none !important;
+        overflow: hidden !important;
+      }
+      body {
+        width: 100% !important;
+        height: 100% !important;
+        overflow: hidden !important;
+      }
+    `);
+    console.log(`[RESOLUTION] ${type} reset to default`);
+  }
+}
+
+function applySavedResolutionForType(type) {
+  const win = projectorWindows[type];
+  if (!win || win.isDestroyed()) return;
+
+  const options = {
+    hostname: '127.0.0.1',
+    port: 18888,
+    path: '/api/output_resolution',
+    method: 'GET',
+    headers: {
+      'X-ShowLyrics-Secret': secretToken
+    }
+  };
+
+  const req = http.request(options, (res) => {
+    let data = '';
+    res.on('data', (chunk) => { data += chunk; });
+    res.on('end', () => {
+      try {
+        const saved = JSON.parse(data);
+        const cfg = saved[type];
+        if (cfg) {
+          setWindowResolution(type, cfg.mode, cfg.width, cfg.height);
+        }
+      } catch (err) {
+        console.error(`[RESOLUTION] Error parsing saved resolution for ${type}:`, err);
+      }
+    });
+  });
+
+  req.on('error', (err) => {
+    console.error(`[RESOLUTION] Error fetching resolution for ${type}:`, err);
+  });
+
+  req.end();
+}
+
 ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
   if (action === 'stop') {
     if (projectorWindows[type]) {
@@ -400,6 +515,8 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
           user-select: none !important;
         }
       `);
+      // Auto-apply saved custom resolution when loading finishes
+      applySavedResolutionForType(type);
     });
 
     win.loadURL(url);
@@ -425,3 +542,10 @@ ipcMain.on('open-external', (_event, url) => {
     shell.openExternal(url);
   }
 });
+
+// --- SET OUTPUT RESOLUTION (Custom Scale Transform) ---
+// Ketika output window dibuka dengan custom resolution, inject CSS scale
+// agar konten di-render pada resolusi target lalu di-stretch ke layar fisik.
+ipcMain.on('set-output-resolution', (_event, { type, mode, width, height }) => {
+  setWindowResolution(type, mode, width, height);
+});

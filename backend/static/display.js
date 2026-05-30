@@ -1,3 +1,55 @@
+// === UNIFIED MOTION LOOP HANDOFF ENGINE ===
+// === GLOBAL CONSTANTS (konsolidasi untuk performa & maintenance) ===
+
+// Gradient Theme Map - Single source of truth untuk semua gradient themes
+const GRADIENT_THEME_MAP = {
+    // Original
+    'gold': 'linear-gradient(135deg, #f6d365, #fda085)',
+    'sunset': 'linear-gradient(135deg, #f093fb, #f5576c)',
+    'nature': 'linear-gradient(135deg, #43e97b, #38f9d7)',
+    'metal': 'linear-gradient(135deg, #868f96, #596164)',
+    'goldleaf': 'linear-gradient(135deg, #f7971e, #ffd200)',
+    // New Worship
+    'covenant': 'linear-gradient(135deg, #7c3aed 0%, #9f1239 50%, #d97706 100%)',
+    // New Praise
+    'wildfire': 'linear-gradient(180deg, #fff 0%, #ffdb4a 20%, #ff8c00 55%, #ff2200 80%, #8b0000 100%)',
+    'celebration': 'linear-gradient(90deg, #ff0080, #ff6600, #ffdd00, #00ff88, #00d4ff, #8000ff)',
+    // New Creative Art
+    'duotone': 'linear-gradient(135deg, #ff6b35 0%, #f7b267 40%, #c71585 65%, #4b0082 100%)',
+    'aurora-art': 'linear-gradient(90deg, #00ff88, #00e5ff, #8000ff, #ff0088, #ff8800, #00ff88)',
+    'solarpunk': 'linear-gradient(135deg, #22c55e, #84cc16, #eab308, #f59e0b)',
+};
+
+// Fixed Themes Set - O(1) lookup performance
+const FIXED_THEMES = new Set([
+    // Original fixed themes
+    'gold', 'sunset', 'retro', 'hologram', 'nature', 'metal',
+    'comic', 'arcade', 'firework', 'spirit', 'rainbow', 'goldleaf', 'blueprint',
+    // New Worship (gradient)
+    'covenant',
+    // New Praise (gradient)
+    'wildfire', 'celebration',
+    // New Creative Art (gradient)
+    'duotone', 'aurora-art', 'solarpunk',
+    // Deep effect themes
+    'chromatic', 'veil-lift',
+]);
+
+// Text-only motion loops (animate .lyric-text directly)
+const TEXT_ONLY_LOOPS = new Set([
+    'breathe', 'float-slow', 'pulse-glow', 'shimmer', 'levitate', 'handheld', 'hypnotic', 'sonar', 'glitch-rgb', 'vertigo',
+    'lazy', 'jingle', 'grunge', 'strobe', 'pulse-neon', 'earthquake'
+]);
+
+// Wrapper motion loops (animate .lyric-wrapper)
+const WRAPPER_LOOPS = new Set([]);
+
+// FX classification sets for performance
+const WORD_FX = new Set(['fx-bloom', 'fx-smoke', 'fx-light', 'fx-softfocus', 'fx-float', 'fx-dust', 'fx-lens', 'fx-wipe', 'fx-abyss', 'fx-aurora']);
+const DEEP_WORD_FX = new Set(['fx-smoke-deep', 'fx-liquid', 'fx-zoom-deep', 'fx-glitch-deep', 'fx-fisheye', 'fx-radial-blur', 'fx-chromatic', 'fx-motion-blur', 'fx-veil-lift', 'fx-particle']);
+const CENTER_WORD_FX = new Set(['fx-holy-breathe', 'fx-sanctify', 'fx-ascend', 'fx-mist-form', 'fx-rapture']);
+const CHAR_FX = new Set(['fx-stagger', 'fx-spin', 'fx-wave', 'fx-gauss', 'fx-glitch', 'fx-punch', 'fx-elastic', 'fx-flashpop', 'fx-whip', 'fx-gdrop', 'fx-rgb', 'fx-shake', 'fx-smash', 'fx-slash', 'fx-terminal', 'fx-voltage', 'fx-riot']);
+const REVERSE_CHAR_FX = new Set(['fx-shockwave', 'fx-overdrive', 'fx-nuke']);
 
 // === UNIFIED MOTION LOOP HANDOFF ENGINE ===
 const blendStyle = document.createElement('style');
@@ -23,6 +75,10 @@ let transitionTimer = null;
 let transitionAnimEndWrapper = null;
 let transitionAnimEndHandler = null;
 let transitionGeneration = 0;
+let activeHandoffCleanup = null;
+let outgoingLayer = null;
+let outgoingTimer = null;
+let outgoingTransitionEndHandler = null;
 
 function getHandoffDurationMs() {
     const raw = getComputedStyle(document.documentElement).getPropertyValue('--loop-handoff-ms').trim();
@@ -42,10 +98,9 @@ function getLoopHandoffTargets(layer, wrapper, txt, motionLoop) {
         const words = txt.querySelectorAll('.word');
         return words.length ? Array.from(words) : [txt];
     }
-    const textOnlyLoops = ['breathe', 'float-slow', 'pulse-glow', 'shimmer', 'levitate', 'handheld', 'hypnotic', 'sonar', 'glitch-rgb', 'vertigo'];
-    if (textOnlyLoops.includes(motionLoop)) return txt ? [txt] : [];
-    const wrapperLoops = ['lazy', 'jingle', 'grunge', 'strobe', 'pulse-neon', 'earthquake'];
-    if (wrapperLoops.includes(motionLoop)) return wrapper ? [wrapper] : (txt ? [txt] : []);
+    // Gunakan global constants untuk performa O(1) lookup
+    if (TEXT_ONLY_LOOPS.has(motionLoop)) return txt ? [txt] : [];
+    if (WRAPPER_LOOPS.has(motionLoop)) return wrapper ? [wrapper] : (txt ? [txt] : []);
     return txt ? [txt] : (wrapper ? [wrapper] : []);
 }
 
@@ -58,17 +113,33 @@ function captureHandoffSnapshot(elements) {
             el,
             transform: cs.transform,
             filter: cs.filter,
-            opacity: cs.opacity
+            opacity: cs.opacity,
+            textShadow: cs.textShadow
         });
     });
     return snapshots;
 }
 
+function normalizeCssValue(value, fallback) {
+    return (!value || value === 'none') ? fallback : value;
+}
+
+function buildCenteredStarterSnapshot(snapshots) {
+    return snapshots.map(({ el, filter, opacity, textShadow }) => ({
+        el,
+        transform: 'translate3d(0, 0, 0) scale(1) rotate(0deg) skew(0deg, 0deg)',
+        filter: normalizeCssValue(filter, 'none'),
+        opacity: opacity || '1',
+        textShadow: normalizeCssValue(textShadow, 'none')
+    }));
+}
+
 function applyHandoffSnapshot(snapshots) {
-    snapshots.forEach(({ el, transform, filter, opacity }) => {
-        el.style.transform = transform;
-        el.style.filter = filter;
+    snapshots.forEach(({ el, transform, filter, opacity, textShadow }) => {
+        el.style.transform = normalizeCssValue(transform, 'none');
+        el.style.filter = normalizeCssValue(filter, 'none');
         el.style.opacity = opacity;
+        el.style.textShadow = normalizeCssValue(textShadow, 'none');
     });
 }
 
@@ -77,6 +148,35 @@ function clearHandoffInline(snapshots) {
         el.style.transform = '';
         el.style.filter = '';
         el.style.opacity = '';
+        el.style.textShadow = '';
+    });
+}
+
+function holdLoopAnimations(elements, hold) {
+    elements.forEach(el => {
+        if (!el) return;
+        if (hold) {
+            if (el.dataset.loopHandoffAnimation === undefined) {
+                el.dataset.loopHandoffAnimation = el.style.animation || '';
+            }
+            if (el.dataset.loopHandoffTransition === undefined) {
+                el.dataset.loopHandoffTransition = el.style.transition || '';
+            }
+            el.style.animation = 'none';
+        } else {
+            if (el.dataset.loopHandoffAnimation !== undefined) {
+                el.style.animation = el.dataset.loopHandoffAnimation;
+                delete el.dataset.loopHandoffAnimation;
+            } else {
+                el.style.animation = '';
+            }
+            if (el.dataset.loopHandoffTransition !== undefined) {
+                el.style.transition = el.dataset.loopHandoffTransition;
+                delete el.dataset.loopHandoffTransition;
+            } else {
+                el.style.transition = '';
+            }
+        }
     });
 }
 
@@ -106,6 +206,10 @@ function setCompositingActive(layer, active) {
 
 function cancelPendingHandoffs() {
     transitionGeneration++;
+    if (activeHandoffCleanup) {
+        activeHandoffCleanup();
+        activeHandoffCleanup = null;
+    }
     if (handoffTimer) {
         clearTimeout(handoffTimer);
         handoffTimer = null;
@@ -121,6 +225,22 @@ function cancelPendingHandoffs() {
     }
 }
 
+function cancelOutgoingLayer() {
+    if (outgoingTimer) {
+        clearTimeout(outgoingTimer);
+        outgoingTimer = null;
+    }
+    if (outgoingLayer) {
+        if (outgoingTransitionEndHandler) {
+            outgoingLayer.removeEventListener('transitionend', outgoingTransitionEndHandler);
+        }
+        outgoingLayer.classList.remove('lyric-exiting');
+        outgoingLayer.style.removeProperty('--lyric-exit-ms');
+        outgoingLayer = null;
+    }
+    outgoingTransitionEndHandler = null;
+}
+
 function deactivateLyricLayer(layer) {
     if (!layer) return;
     const wrapper = layer.querySelector('.lyric-wrapper');
@@ -130,18 +250,73 @@ function deactivateLyricLayer(layer) {
     clearFxClasses(layer);
     if (wrapper) clearFxClasses(wrapper);
     if (txt) clearFxClasses(txt);
+    if (outgoingLayer === layer && outgoingTransitionEndHandler) {
+        layer.removeEventListener('transitionend', outgoingTransitionEndHandler);
+        outgoingTransitionEndHandler = null;
+    }
+    layer.classList.remove('active', 'lyric-exiting');
+    layer.style.removeProperty('--lyric-exit-ms');
     layer.classList.add('lyric-dormant');
     layer.querySelectorAll('.word, .char').forEach(el => {
         el.style.animationDelay = '';
         el.style.transform = '';
         el.style.filter = '';
         el.style.opacity = '';
+        el.style.textShadow = '';
+        el.style.animation = '';
+        el.style.transition = '';
+        delete el.dataset.loopHandoffAnimation;
+        delete el.dataset.loopHandoffTransition;
     });
 }
 
 function activateLyricLayer(layer) {
     if (!layer) return;
-    layer.classList.remove('lyric-dormant');
+    if (layer === outgoingLayer) cancelOutgoingLayer();
+    layer.classList.remove('lyric-dormant', 'lyric-exiting');
+    layer.style.removeProperty('--lyric-exit-ms');
+}
+
+function beginLayerExit(layer, fadeMs, maxStaggerDelay) {
+    if (!layer) return;
+    if (layer === outgoingLayer) cancelOutgoingLayer();
+
+    const exitMs = Math.max(220, fadeMs);
+    layer.style.setProperty('--lyric-exit-ms', `${exitMs}ms`);
+
+    // Commit the current visible state before switching to the exit state.
+    // This keeps the browser from coalescing class changes into an instant hide.
+    void layer.offsetWidth;
+    layer.classList.add('lyric-exiting');
+    layer.classList.remove('active');
+
+    outgoingLayer = layer;
+    let completed = false;
+    const finishExit = () => {
+        if (completed || outgoingLayer !== layer) return;
+        completed = true;
+        if (outgoingTransitionEndHandler) {
+            layer.removeEventListener('transitionend', outgoingTransitionEndHandler);
+            outgoingTransitionEndHandler = null;
+        }
+        if (outgoingTimer) {
+            clearTimeout(outgoingTimer);
+            outgoingTimer = null;
+        }
+        deactivateLyricLayer(layer);
+        if (outgoingLayer === layer) outgoingLayer = null;
+    };
+
+    outgoingTransitionEndHandler = (e) => {
+        if (e.target !== layer || e.propertyName !== 'opacity') return;
+        finishExit();
+    };
+    layer.addEventListener('transitionend', outgoingTransitionEndHandler);
+
+    outgoingTimer = setTimeout(() => {
+        if (outgoingLayer !== layer) return;
+        finishExit();
+    }, exitMs + 120);
 }
 
 function startMotionLoopHandoff(layer, wrapper, txt, motionLoop, generation) {
@@ -150,28 +325,41 @@ function startMotionLoopHandoff(layer, wrapper, txt, motionLoop, generation) {
     layer.classList.remove('loop-ready');
 
     const targets = getLoopHandoffTargets(layer, wrapper, txt, motionLoop);
-    const snapshots = captureHandoffSnapshot(targets);
+    const transitionEndSnapshots = captureHandoffSnapshot(targets);
+    const starterSnapshots = buildCenteredStarterSnapshot(transitionEndSnapshots);
 
     stripFxFromElements(layer, wrapper, txt);
     applyMotionLoop(motionLoop, layer, wrapper, txt);
+    const loopStartSnapshots = captureHandoffSnapshot(targets);
+    holdLoopAnimations(targets, true);
     layer.classList.add('loop-handoff');
-    applyHandoffSnapshot(snapshots);
+    applyHandoffSnapshot(starterSnapshots);
     setCompositingActive(layer, true);
+
+    activeHandoffCleanup = () => {
+        clearHandoffInline(starterSnapshots);
+        holdLoopAnimations(targets, false);
+        clearLoopHandoffClasses(layer);
+        setCompositingActive(layer, false);
+        activeHandoffCleanup = null;
+    };
 
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             if (generation !== transitionGeneration) return;
             layer.classList.add('loop-handoff-active');
-            clearHandoffInline(snapshots);
+            applyHandoffSnapshot(loopStartSnapshots);
 
             handoffTimer = setTimeout(() => {
                 handoffTimer = null;
                 if (generation !== transitionGeneration) return;
-                triggerLoopReady(layer);
+                layer.classList.add('loop-ready');
+                holdLoopAnimations(targets, false);
                 layer.classList.remove('loop-handoff', 'loop-handoff-active');
                 layer.classList.add('loop-settled');
-                clearHandoffInline(snapshots);
+                clearHandoffInline(loopStartSnapshots);
                 setCompositingActive(layer, false);
+                activeHandoffCleanup = null;
             }, duration);
         });
     });
@@ -196,17 +384,12 @@ function finishTransition(layer, wrapper, nextTxt, gstEl, motionLoop, generation
 }
 
 function computeMaxStaggerDelay(s, fxClass, motionLoop, textEl) {
-    const wordFx = ['fx-bloom', 'fx-smoke', 'fx-light', 'fx-softfocus', 'fx-float', 'fx-dust', 'fx-lens', 'fx-wipe', 'fx-abyss', 'fx-aurora'];
-    const deepWordFx = ['fx-smoke-deep', 'fx-liquid', 'fx-zoom-deep', 'fx-glitch-deep', 'fx-fisheye', 'fx-radial-blur', 'fx-chromatic', 'fx-motion-blur', 'fx-veil-lift', 'fx-particle'];
-    const centerWordFx = ['fx-holy-breathe', 'fx-sanctify', 'fx-ascend', 'fx-mist-form', 'fx-rapture'];
-    const charFx = ['fx-stagger', 'fx-spin', 'fx-wave', 'fx-gauss', 'fx-glitch', 'fx-punch', 'fx-elastic', 'fx-flashpop', 'fx-whip', 'fx-gdrop', 'fx-rgb', 'fx-shake', 'fx-smash', 'fx-slash', 'fx-terminal', 'fx-voltage', 'fx-riot'];
-    const reverseCharFx = ['fx-shockwave', 'fx-overdrive', 'fx-nuke'];
-
-    const isWordFx = wordFx.includes(fxClass);
-    const isDeepWordFx = deepWordFx.includes(fxClass);
-    const isCenterWordFx = centerWordFx.includes(fxClass);
-    const isReverseCharFx = reverseCharFx.includes(fxClass);
-    const isCharFx = charFx.includes(fxClass);
+    // Gunakan global constants untuk performa O(1) lookup
+    const isWordFx = WORD_FX.has(fxClass);
+    const isDeepWordFx = DEEP_WORD_FX.has(fxClass);
+    const isCenterWordFx = CENTER_WORD_FX.has(fxClass);
+    const isReverseCharFx = REVERSE_CHAR_FX.has(fxClass);
+    const isCharFx = CHAR_FX.has(fxClass);
     const isWordMotionLoop = motionLoop !== 'none' && (
         motionLoop.startsWith('worship-word-') || motionLoop.startsWith('praise-word-')
     );
@@ -587,22 +770,9 @@ function connectWebSocket() {
             else if (s.zoom === 'out') scene.classList.add('move-out');
             else scene.classList.add('move-stay');
 
-            const fixedThemes = [
-                // --- ORIGINAL FIXED THEMES ---
-                'gold', 'sunset', 'retro', 'hologram', 'nature', 'metal',
-                'comic', 'arcade', 'firework', 'spirit', 'rainbow', 'goldleaf', 'blueprint',
-                // --- NEW WORSHIP (gradient) ---
-                'covenant',
-                // --- NEW PRAISE (gradient) ---
-                'wildfire', 'celebration',
-                // --- NEW CREATIVE ART (gradient) ---
-                'duotone', 'aurora-art', 'solarpunk',
-                // --- DEEP EFFECT THEMES (gradient / text-fill) ---
-                'chromatic', 'veil-lift'
-            ];
-            const useManualColor = (s.color !== "#ffffff" && !fixedThemes.includes(s.theme));
+            const useManualColor = (s.color !== "#ffffff" && !FIXED_THEMES.has(s.theme));
             const themeClass = "theme-" + (s.theme || "default");
-            const isFixedTheme = fixedThemes.includes(s.theme);
+            const isFixedTheme = FIXED_THEMES.has(s.theme);
 
             if (activeLayer) {
                 const wrapper = activeLayer.querySelector(".lyric-wrapper");
@@ -1219,15 +1389,14 @@ function connectWebSocket() {
                 const maxStaggerDelay = computeMaxStaggerDelay(s, fxClass, motionLoop, nextTxt);
                 scheduleTransitionComplete(nextLayer, wrapper, nextTxt, gstEl, motionLoop, fadeMs, maxStaggerDelay);
 
+                const previousLayer = activeLayer;
                 nextLayer.classList.add("active");
-                if (activeLayer) {
-                    deactivateLyricLayer(activeLayer);
-                    activeLayer.classList.remove("active");
+                if (previousLayer) {
+                    beginLayerExit(previousLayer, fadeMs / 1.3, maxStaggerDelay);
                 }
             } else {
-                if (activeLayer) {
-                    deactivateLyricLayer(activeLayer);
-                    activeLayer.classList.remove("active");
+                if (activeLayer && activeLayer.classList.contains('active')) {
+                    beginLayerExit(activeLayer, fadeMs / 1.3, 0);
                 }
                 stripFxFromElements(nextLayer, wrapper, nextTxt);
                 setCompositingActive(nextLayer, false);

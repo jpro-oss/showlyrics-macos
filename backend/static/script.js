@@ -515,6 +515,85 @@ function getSafeMotionValue(value) {
     const allowed = new Set(Array.from(motionInput.options).map((opt) => opt.value));
     return allowed.has(value) ? value : 'none';
 }
+let appShortcuts = {
+    clear_lyrics: { ctrlKey: true, shiftKey: false, altKey: false, key: 'C', display: 'CTRL + C' },
+    clear_video: { ctrlKey: true, shiftKey: false, altKey: false, key: 'V', display: 'CTRL + V' },
+    clear_audio: { ctrlKey: true, shiftKey: false, altKey: false, key: 'A', display: 'CTRL + A' },
+    clear_presentation: { ctrlKey: true, shiftKey: false, altKey: false, key: 'P', display: 'CTRL + P' },
+    clear_photo: { ctrlKey: true, shiftKey: false, altKey: false, key: 'I', display: 'CTRL + I' },
+    
+    jump_verse: { ctrlKey: false, shiftKey: false, altKey: false, key: 'V', display: 'V' },
+    jump_verse2: { ctrlKey: false, shiftKey: false, altKey: false, key: 'I', display: 'I' },
+    jump_pre: { ctrlKey: false, shiftKey: false, altKey: false, key: 'P', display: 'P' },
+    jump_chorus: { ctrlKey: false, shiftKey: false, altKey: false, key: 'C', display: 'C' },
+    jump_chorus2: { ctrlKey: false, shiftKey: false, altKey: false, key: 'X', display: 'X' },
+    jump_bridge: { ctrlKey: false, shiftKey: false, altKey: false, key: 'B', display: 'B' },
+    jump_tag: { ctrlKey: false, shiftKey: false, altKey: false, key: 'T', display: 'T' },
+    
+    assign_verse: { ctrlKey: false, shiftKey: true, altKey: false, key: 'V', display: 'SHIFT + V' },
+    assign_verse2: { ctrlKey: false, shiftKey: true, altKey: false, key: 'I', display: 'SHIFT + I' },
+    assign_pre: { ctrlKey: false, shiftKey: true, altKey: false, key: 'P', display: 'SHIFT + P' },
+    assign_chorus: { ctrlKey: false, shiftKey: true, altKey: false, key: 'C', display: 'SHIFT + C' },
+    assign_chorus2: { ctrlKey: false, shiftKey: true, altKey: false, key: 'X', display: 'SHIFT + X' },
+    assign_bridge: { ctrlKey: false, shiftKey: true, altKey: false, key: 'B', display: 'SHIFT + B' },
+    assign_tag: { ctrlKey: false, shiftKey: true, altKey: false, key: 'T', display: 'SHIFT + T' },
+    assign_unassign: { ctrlKey: false, shiftKey: true, altKey: false, key: 'D', display: 'SHIFT + D' }
+};
+
+const shortcutActionLabels = {
+    clear_lyrics: "Emergency: Hide/Show Lyrics",
+    clear_video: "Emergency: Hide/Show Video",
+    clear_audio: "Emergency: Hide/Show Audio",
+    clear_presentation: "Emergency: Hide/Show Presentation",
+    clear_photo: "Emergency: Hide/Show Image",
+    
+    jump_verse: "Jump Live: Verse 1",
+    jump_verse2: "Jump Live: Verse 2",
+    jump_pre: "Jump Live: Pre-Chorus",
+    jump_chorus: "Jump Live: Chorus 1",
+    jump_chorus2: "Jump Live: Chorus 2",
+    jump_bridge: "Jump Live: Bridge",
+    jump_tag: "Jump Live: Tag",
+    
+    assign_verse: "Tag Lyric Grid: Verse 1",
+    assign_verse2: "Tag Lyric Grid: Verse 2",
+    assign_pre: "Tag Lyric Grid: Pre-Chorus",
+    assign_chorus: "Tag Lyric Grid: Chorus 1",
+    assign_chorus2: "Tag Lyric Grid: Chorus 2",
+    assign_bridge: "Tag Lyric Grid: Bridge",
+    assign_tag: "Tag Lyric Grid: Tag",
+    assign_unassign: "Tag Lyric Grid: Default / Unassign"
+};
+
+function matchShortcut(e, action) {
+    const s = appShortcuts[action];
+    if (!s) return false;
+    
+    let eventKey = e.key.toUpperCase();
+    if (e.code === "Space") eventKey = " ";
+    
+    let shortcutKey = s.key.toUpperCase();
+    
+    return eventKey === shortcutKey &&
+           !!e.ctrlKey === !!s.ctrlKey &&
+           !!e.shiftKey === !!s.shiftKey &&
+           !!e.altKey === !!s.altKey;
+}
+
+async function loadAppShortcutsFromServer() {
+    try {
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+            const settings = await res.json();
+            if (settings.shortcuts) {
+                appShortcuts = { ...appShortcuts, ...settings.shortcuts };
+            }
+        }
+    } catch (err) {
+        console.warn("Failed to load shortcuts from server:", err);
+    }
+}
+
 // 🎯 FIX 1: Ubah isShowing menjadi true
 let lyricsData = []; let currentIndex = -1; let isShowing = true; let currentSongTitle = "";
 let allSongs = []; let scheduleList = []; let savedSchedules = {};
@@ -522,6 +601,7 @@ let dispPresetsData = {};
 let globalDefaultDisplayConfig = null;
 
 window.onload = async function () {
+    await loadAppShortcutsFromServer();
     // 🎯 FIX: Pastikan langsung masuk tab library waktu baru refresh biar tidak tabrakan
     switchTab('library');
     setupPlaylistResizer();
@@ -689,6 +769,12 @@ async function fetchLibrary() {
     const res = await fetch('/api/songs');
     allSongs = await res.json();
 
+    // --- CACHE CLEANED SEARCH FIELDS FOR 100x SPEEDUP ---
+    allSongs.forEach(song => {
+        song.cleanTitle = cleanText(song.title);
+        song.cleanLyrics = song.data ? song.data.map(slide => cleanText(slide.text)).join(" ") : "";
+    });
+
     // --- ALGORITMA SORTING A-Z ---
     allSongs.sort((a, b) => a.title.localeCompare(b.title));
 
@@ -758,11 +844,18 @@ function startLibrarySongDrag(event, title) {
     }));
 }
 
-// Pasang sensor scroll (Kalo VJ scroll mentok bawah, render lagi 100 lagu)
+// Pasang sensor scroll (Kalo VJ scroll mentok bawah, render lagi 100 lagu) - THROTTLED WITH requestAnimationFrame
+let isScrollThrottled = false;
 document.getElementById("library-list").addEventListener('scroll', function () {
-    // Kalau jarak scroll udah mendekati dasar kotak (sisa 100px)
-    if (this.scrollTop + this.clientHeight >= this.scrollHeight - 100) {
-        renderNextChunk();
+    if (!isScrollThrottled) {
+        window.requestAnimationFrame(() => {
+            // Kalau jarak scroll udah mendekati dasar kotak (sisa 100px)
+            if (this.scrollTop + this.clientHeight >= this.scrollHeight - 100) {
+                renderNextChunk();
+            }
+            isScrollThrottled = false;
+        });
+        isScrollThrottled = true;
     }
 });
 // ==========================================
@@ -831,35 +924,25 @@ function filterLibrary() {
         return;
     }
 
-    // 🚀 OPTIMASI 3: ALGORITMA SEARCH HIGH-SPEED
-    const titleMatches = [];
-    const lyricMatches = [];
+    // 🚀 OPTIMASI HIGH-SPEED O(N) SEARCH MENGGUNAKAN PRE-CACHED MEMORY
+    const filtered = [];
 
-    // Pake for-loop murni (100x lebih cepat dari .forEach / .map untuk 3000 array)
+    // Pake for-loop murni (100x lebih cepat dari .forEach / .map)
     for (let i = 0; i < allSongs.length; i++) {
         const s = allSongs[i];
-        const titleClean = cleanText(s.title);
-
-        // Prioritas 1: Cari dari Judul dulu
-        if (titleClean.includes(query)) {
-            titleMatches.push(s);
-            continue; // Kalo judul udah cocok, STOP nyari liriknya biar CPU istirahat!
+        
+        // Prioritas 1: Cari dari Judul (Pre-cached!)
+        if (s.cleanTitle && s.cleanTitle.includes(query)) {
+            filtered.push(s);
+            continue; // Kalo judul cocok, stop & skip cari lirik biar hemat CPU!
         }
 
-        // Prioritas 2: Cari dari dalam lirik (Cuma kalau panjang ketikan >= 4 huruf)
-        if (query.length >= 4 && s.data) {
-            let lyricFound = false;
-            for (let j = 0; j < s.data.length; j++) {
-                if (cleanText(s.data[j].text).includes(query)) {
-                    lyricFound = true;
-                    break; // Begitu nemu 1 bait yg cocok, langsung stop!
-                }
-            }
-            if (lyricFound) lyricMatches.push(s);
+        // Prioritas 2: Cari dari Lirik (Pre-cached, cuma kalau panjang query >= 4)
+        if (query.length >= 4 && s.cleanLyrics && s.cleanLyrics.includes(query)) {
+            filtered.push(s);
         }
     }
 
-    const filtered = [...titleMatches, ...lyricMatches];
     renderLibrary(filtered);
 }
 let dragStartIndex = -1;
@@ -1054,6 +1137,8 @@ async function saveCurrentGrid() {
         if (idx !== -1) {
             allSongs[idx].data = lyricsData;
             allSongs[idx].settings = currentSettings;
+            // Update cached clean lyrics
+            allSongs[idx].cleanLyrics = lyricsData ? lyricsData.map(slide => cleanText(slide.text)).join(" ") : "";
         }
 
         // 🚀 UBAH JADI SUCCESS (Auto ilang 2 detik)
@@ -1227,9 +1312,12 @@ function renderGrid() {
         else if (item.type === 'photo') { typeClass = "tag-photo"; typeLabel = "📷 PHT"; }
         else if (item.type === 'scripture') { typeClass = "tag-scripture"; typeLabel = `AYAT ${item.verse}`; } // 🎯 TAMBAH INI
         else if (item.type === 'verse') { typeClass = "tag-verse"; typeLabel = "VERSE"; }
+        else if (item.type === 'verse2') { typeClass = "tag-verse2"; typeLabel = "VERSE 2"; }
         else if (item.type === 'chorus') { typeClass = "tag-chorus"; typeLabel = "CHORUS"; }
+        else if (item.type === 'chorus2') { typeClass = "tag-chorus2"; typeLabel = "CHORUS 2"; }
         else if (item.type === 'pre') { typeClass = "tag-pre"; typeLabel = "PRE-CH"; }
         else if (item.type === 'bridge') { typeClass = "tag-bridge"; typeLabel = "BRIDGE"; }
+        else if (item.type === 'tag') { typeClass = "tag-tag"; typeLabel = "TAG"; }
         else if (item.type === 'presentation_slide') { typeClass = "tag-photo"; typeLabel = "📊 PPT"; }
         else if (item.type === 'remote_ppt_slide') { typeClass = "tag-photo"; typeLabel = "🌐 REMOTE"; }
 
@@ -1850,31 +1938,64 @@ function sendUpdate(textOverride) {
     }
     ws.send(JSON.stringify({ action: "update_display", payload: payload }));
 }
-// TANGKAP SHORTCUT KEYBOARD BARU
+// TANGKAP SHORTCUT KEYBOARD BARU (DYNAMIC CONFIG)
 document.addEventListener('keydown', (e) => {
     const activeTag = document.activeElement.tagName;
     if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
 
-    // 🎯 FIX 1: DEFINISIKAN VARIABLE KEY BIAR GAK ERROR!
-    const key = e.key.toUpperCase();
-    const keyLower = key.toLowerCase();
+    // 1. Emergency Clears
+    if (matchShortcut(e, 'clear_lyrics')) { e.preventDefault(); clearLayer('lyrics'); return; }
+    if (matchShortcut(e, 'clear_video')) { e.preventDefault(); clearLayer('video'); return; }
+    if (matchShortcut(e, 'clear_audio')) { e.preventDefault(); clearLayer('audio'); return; }
+    if (matchShortcut(e, 'clear_photo')) { e.preventDefault(); clearLayer('photo'); return; }
+    if (matchShortcut(e, 'clear_presentation')) { e.preventDefault(); clearLayer('presentation'); return; }
 
-    if (e.ctrlKey && !e.shiftKey) {
-        if (keyLower === 'c') { e.preventDefault(); clearLayer('lyrics'); }
-        if (keyLower === 'v') { e.preventDefault(); clearLayer('video'); }
-        if (keyLower === 'a') { e.preventDefault(); clearLayer('audio'); }
-        if (keyLower === 'i') { e.preventDefault(); clearLayer('photo'); }
-        if (keyLower === 'p') { e.preventDefault(); clearLayer('presentation'); }
+    // 2. Jump Live Shortcuts
+    if (matchShortcut(e, 'jump_verse')) { e.preventDefault(); jumpToType('verse'); return; }
+    if (matchShortcut(e, 'jump_verse2')) { e.preventDefault(); jumpToType('verse2'); return; }
+    if (matchShortcut(e, 'jump_pre')) { e.preventDefault(); jumpToType('pre'); return; }
+    if (matchShortcut(e, 'jump_chorus')) { e.preventDefault(); jumpToType('chorus'); return; }
+    if (matchShortcut(e, 'jump_chorus2')) { e.preventDefault(); jumpToType('chorus2'); return; }
+    if (matchShortcut(e, 'jump_bridge')) { e.preventDefault(); jumpToType('bridge'); return; }
+    if (matchShortcut(e, 'jump_tag')) { e.preventDefault(); jumpToType('tag'); return; }
+
+    // 3. Assign Label Shortcuts (Gak ngaruh ke layar)
+    if (currentIndex >= 0 && lyricsData[currentIndex]) {
+        // CEGAH JIKA INI MEDIA SLIDE, PPT, ATAU SCRIPTURE
+        const isMedia = ['video', 'audio', 'photo', 'presentation_slide', 'scripture'].includes(lyricsData[currentIndex].type);
+        
+        let targetType = null;
+        let isAssignAction = false;
+        
+        if (matchShortcut(e, 'assign_verse')) { targetType = 'verse'; isAssignAction = true; }
+        else if (matchShortcut(e, 'assign_verse2')) { targetType = 'verse2'; isAssignAction = true; }
+        else if (matchShortcut(e, 'assign_pre')) { targetType = 'pre'; isAssignAction = true; }
+        else if (matchShortcut(e, 'assign_chorus')) { targetType = 'chorus'; isAssignAction = true; }
+        else if (matchShortcut(e, 'assign_chorus2')) { targetType = 'chorus2'; isAssignAction = true; }
+        else if (matchShortcut(e, 'assign_bridge')) { targetType = 'bridge'; isAssignAction = true; }
+        else if (matchShortcut(e, 'assign_tag')) { targetType = 'tag'; isAssignAction = true; }
+        else if (matchShortcut(e, 'assign_unassign')) { targetType = 'normal'; isAssignAction = true; }
+        
+        if (isAssignAction) {
+            e.preventDefault();
+            if (isMedia) {
+                showToast("Media slides/PPT/Scripture cannot be labeled!", "error", 2000);
+                return;
+            }
+            if (targetType === 'normal') {
+                delete lyricsData[currentIndex].type;
+            } else {
+                lyricsData[currentIndex].type = targetType;
+            }
+            renderGrid();
+            markSongUnsaved();
+            return;
+        }
     }
 
-
-    if (!e.shiftKey && !e.ctrlKey) {
-        // A. JUMP SHORTCUTS -> FORCE SHOW = TRUE (Darurat)
-        if (key === 'V') jumpToType('verse');
-        if (key === 'C') jumpToType('chorus');
-        if (key === 'P') jumpToType('pre');
-        if (key === 'B') jumpToType('bridge');
-
+    // 4. Default Navigation & Numbers
+    if (!e.shiftKey && !e.ctrlKey && !e.altKey) {
+        const key = e.key.toUpperCase();
         // B. NUMBER SHORTCUTS -> FORCE SHOW = TRUE (Darurat)
         if (key >= '1' && key <= '9') {
             const idx = parseInt(key) - 1;
@@ -1891,34 +2012,17 @@ document.addEventListener('keydown', (e) => {
             if (currentIndex > 0) fireLyric(currentIndex - 1, false); // Gak maksa nyala
         }
     }
-
-    // 2. Assign Label (Shift + Key) -> Gak ngaruh ke layar
-    if (e.shiftKey && currentIndex >= 0) {
-        // CEGAH VPCB JIKA INI PPT ATAU SCRIPTURE
-        if (lyricsData[currentIndex]) {
-            // 🎯 FIX: Tambahkan 'scripture' ke dalam daftar yang dilarang diedit
-            const isMedia = ['video', 'audio', 'photo', 'presentation_slide', 'scripture'].includes(lyricsData[currentIndex].type);
-            if (isMedia && ['V', 'C', 'P', 'B', 'D'].includes(key.toUpperCase())) {
-                e.preventDefault();
-                showToast("Media slides/PPT/Scripture cannot be labeled!", "error", 2000);
-                return;
-            }
-        }
-        if (key.toUpperCase() === 'V') assignLabel(currentIndex, 'verse');
-        else if (key.toUpperCase() === 'C') assignLabel(currentIndex, 'chorus');
-        else if (key.toUpperCase() === 'P') assignLabel(currentIndex, 'pre');
-        else if (key.toUpperCase() === 'B') assignLabel(currentIndex, 'bridge');
-        else if (key.toUpperCase() === 'D') { delete lyricsData[currentIndex].type; renderGrid(); markSongUnsaved(); }
-    }
 });
 // --- TEXT FORMATTER ---
 function openAddSongModal() {
     document.getElementById("new-song-title").value = "";
     editorSlides = [{ text: "", type: "normal" }];
-    editorHistory = []; // Reset memori
+    editorHistory = [];
     renderEditor("add");
-    document.getElementById("add-song-modal").style.display = "flex";
-    setTimeout(() => { const el = document.getElementById("add-input-0"); if (el) el.focus(); }, 100);
+    enterModalIframeMode('add-song-modal', () => {
+        document.getElementById("add-song-modal").style.display = "flex";
+        setTimeout(() => { const el = document.getElementById("add-input-0"); if (el) el.focus(); }, 100);
+    });
 }
 
 function formatNewSongText() {
@@ -1978,6 +2082,9 @@ async function saveAndLoadNewSong() {
         lyricsData = newData;
         renderGrid();
 
+        // Cache cleaned search fields for the newly added song
+        payload.cleanTitle = cleanText(payload.title);
+        payload.cleanLyrics = payload.data ? payload.data.map(slide => cleanText(slide.text)).join(" ") : "";
         allSongs.push(payload);
         allSongs.sort((a, b) => a.title.localeCompare(b.title));
         renderLibrary(allSongs);
@@ -1993,31 +2100,151 @@ async function saveAndLoadNewSong() {
 }
 
 
+// ==========================================
+// --- IFRAME LIFECYCLE (control preview vs modal) ---
+// ==========================================
+const IFRAME_MANAGED_MODALS = new Set([
+    'text-edit-modal',
+    'alert-modal',
+    'lt-modal',
+    'fb-modal',
+    'scripture-settings-modal',
+    'add-song-modal',
+    'full-edit-modal'
+]);
+
+const MODAL_OUTPUT_PREVIEW_IDS = new Set(['alert-modal', 'lt-modal', 'fb-modal']);
+
+let activeIframeModalId = null;
+
+function destroyIframeEl(iframe) {
+    if (!iframe) return;
+    try {
+        iframe.contentWindow?.stop?.();
+    } catch (e) { /* cross-origin */ }
+    iframe.src = 'about:blank';
+    iframe.remove();
+}
+
+function clearIframeContainer(container) {
+    if (!container) return;
+    container.querySelectorAll('iframe').forEach(destroyIframeEl);
+    container.innerHTML = '';
+}
+
+function createControlIframe(src, id, className) {
+    const iframe = document.createElement('iframe');
+    if (id) iframe.id = id;
+    if (className) iframe.className = className;
+    iframe.setAttribute('scrolling', 'no');
+    const sep = src.includes('?') ? '&' : '?';
+    iframe.src = `${src}${sep}_t=${Date.now()}`;
+    return iframe;
+}
+
+function suspendMainPreview() {
+    const wrapper = document.getElementById('preview-wrapper');
+    if (!wrapper) return;
+    destroyIframeEl(document.getElementById('preview-frame'));
+    clearIframeContainer(wrapper);
+    wrapper.classList.add('preview-suspended');
+}
+
+function restoreMainPreview() {
+    if (activeIframeModalId) return;
+    const wrapper = document.getElementById('preview-wrapper');
+    if (!wrapper || document.getElementById('preview-frame')) return;
+    wrapper.classList.remove('preview-suspended');
+    const iframe = createControlIframe('/display', 'preview-frame', 'preview-frame');
+    wrapper.appendChild(iframe);
+    requestAnimationFrame(() => resizePreview());
+}
+
+function releaseModalIframeResources(modalId) {
+    if (MODAL_OUTPUT_PREVIEW_IDS.has(modalId)) {
+        destroyModalOutputPreview(modalId);
+    }
+    if (modalId === 'text-edit-modal') {
+        destroyTextEditPreview();
+    }
+    if (modalId === 'scripture-settings-modal') {
+        destroyScriptureMiniIframes();
+    }
+}
+
+function exitModalIframeMode(modalId, onDestroy) {
+    if (activeIframeModalId && activeIframeModalId !== modalId) {
+        if (typeof onDestroy === 'function') onDestroy();
+        return;
+    }
+    if (typeof onDestroy === 'function') onDestroy();
+    if (activeIframeModalId === modalId) {
+        activeIframeModalId = null;
+    }
+    requestAnimationFrame(() => restoreMainPreview());
+}
+
+function enterModalIframeMode(modalId, onMount) {
+    if (activeIframeModalId && activeIframeModalId !== modalId) {
+        releaseModalIframeResources(activeIframeModalId);
+        activeIframeModalId = null;
+    }
+    if (!activeIframeModalId) {
+        suspendMainPreview();
+    }
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            activeIframeModalId = modalId;
+            if (typeof onMount === 'function') onMount();
+        });
+    });
+}
+
+function mountTextEditPreview() {
+    const wrapper = document.getElementById('modal-preview-wrapper');
+    if (!wrapper || document.getElementById('modal-preview-frame')) return;
+    const iframe = createControlIframe('/display', 'modal-preview-frame', 'te-preview-frame');
+    wrapper.appendChild(iframe);
+    attachTextEditPreviewScaler();
+}
+
+function destroyTextEditPreview() {
+    detachTextEditPreviewScaler();
+    clearIframeContainer(document.getElementById('modal-preview-wrapper'));
+}
+
+function mountScriptureMiniIframes() {
+    const dispMount = document.getElementById('scr-mini-display-mount');
+    const ltMount = document.getElementById('scr-mini-lt-mount');
+    if (dispMount && !document.getElementById('scr-mini-display')) {
+        dispMount.appendChild(createControlIframe('/scripture', 'scr-mini-display', 'scr-mini-iframe'));
+    }
+    if (ltMount && !document.getElementById('scr-mini-lt')) {
+        ltMount.appendChild(createControlIframe('/scripture-lt', 'scr-mini-lt', 'scr-mini-iframe'));
+    }
+}
+
+function destroyScriptureMiniIframes() {
+    clearIframeContainer(document.getElementById('scr-mini-display-mount'));
+    clearIframeContainer(document.getElementById('scr-mini-lt-mount'));
+}
+
 // --- AUTO SCALE PREVIEW ---
-// Biar previewnya muat di kotak kecil tanpa kepotong
 function resizePreview() {
     const wrapper = document.getElementById("preview-wrapper");
+    if (!wrapper || wrapper.classList.contains('preview-suspended')) return;
     const frame = document.getElementById("preview-frame");
-
     if (!wrapper || !frame) return;
 
-    // Ambil lebar kotak preview di controller saat ini
     const wrapperWidth = wrapper.offsetWidth;
-
-    // Hitung rasio (Lebar kotak sekarang dibagi 1920)
     const scale = wrapperWidth / 1920;
-
-    // Terapkan scale visual tanpa ngerubah resolusi asli iframe-nya
     frame.style.transform = `scale(${scale})`;
 }
 
-// Panggil setiap kali browser di-resize atau tab di-switch
 window.addEventListener("resize", resizePreview);
-window.addEventListener("load", resizePreview);
-
-// Panggil paksa setiap 1 detik buat awal-awal biar nggak meleset
-setTimeout(resizePreview, 500);
-setTimeout(resizePreview, 2000);
+window.addEventListener("load", () => restoreMainPreview());
+setTimeout(() => { if (!activeIframeModalId) resizePreview(); }, 500);
+setTimeout(() => { if (!activeIframeModalId) resizePreview(); }, 2000);
 
 // --- MASS IMPORT FUNCTION ---
 // --- MASS IMPORT FUNCTION (BATCH UPLOAD ENGINE) ---
@@ -2079,14 +2306,15 @@ async function uploadFiles(input) {
 // --- LOWER THIRD CONFIG LOGIC ---
 
 function openLTConfig() {
-    document.getElementById('lt-modal').style.display = 'flex';
-    loadModalOutputPreview('lt-modal', '/lowerthird', 'LOWER THIRD OUTPUT', 'left');
-    captureOutputModalSnapshot('lt');
-    ensureOutputModalFooter('lt-modal', 'saveLTModal', 'cancelLTModal');
-    movePresetPanelToPreview('lt-modal', 'lt-preset-select');
-    wireOutputModalClose('lt-modal', 'cancelLTModal');
-    // Kirim config saat ini biar sync pas dibuka
-    sendLTConfig();
+    enterModalIframeMode('lt-modal', () => {
+        document.getElementById('lt-modal').style.display = 'flex';
+        loadModalOutputPreview('lt-modal', '/lowerthird', 'LOWER THIRD OUTPUT', 'left');
+        captureOutputModalSnapshot('lt');
+        ensureOutputModalFooter('lt-modal', 'saveLTModal', 'cancelLTModal');
+        movePresetPanelToPreview('lt-modal', 'lt-preset-select');
+        wireOutputModalClose('lt-modal', 'cancelLTModal');
+        sendLTConfig();
+    });
 }
 
 
@@ -2552,13 +2780,15 @@ function applyDisplayPresetToUI(config) {
 
 // --- FOLDBACK CONFIG LOGIC ---
 function openFBConfig() {
-    document.getElementById('fb-modal').style.display = 'flex';
-    loadModalOutputPreview('fb-modal', '/foldback', 'STAGE / FOLDBACK OUTPUT', 'left');
-    captureOutputModalSnapshot('fb');
-    ensureOutputModalFooter('fb-modal', 'saveFBModal', 'cancelFBModal');
-    movePresetPanelToPreview('fb-modal', 'fb-preset-select');
-    wireOutputModalClose('fb-modal', 'cancelFBModal');
-    sendFBConfig();
+    enterModalIframeMode('fb-modal', () => {
+        document.getElementById('fb-modal').style.display = 'flex';
+        loadModalOutputPreview('fb-modal', '/foldback', 'STAGE / FOLDBACK OUTPUT', 'left');
+        captureOutputModalSnapshot('fb');
+        ensureOutputModalFooter('fb-modal', 'saveFBModal', 'cancelFBModal');
+        movePresetPanelToPreview('fb-modal', 'fb-preset-select');
+        wireOutputModalClose('fb-modal', 'cancelFBModal');
+        sendFBConfig();
+    });
 }
 
 function setFBLayout(mode) {
@@ -2860,9 +3090,11 @@ function updateTimerDisplayUI() {
 }
 
 function openAlertModal() {
-    document.getElementById('alert-modal').style.display = 'flex';
-    loadModalOutputPreview('alert-modal', '/foldback', 'STAGE OUTPUT PREVIEW', 'right');
-    fetchAlertPresets();
+    enterModalIframeMode('alert-modal', () => {
+        document.getElementById('alert-modal').style.display = 'flex';
+        loadModalOutputPreview('alert-modal', '/foldback', 'STAGE OUTPUT PREVIEW', 'right');
+        fetchAlertPresets();
+    });
 }
 
 // --- ALERT PRESET LOGIC ---
@@ -3211,12 +3443,15 @@ async function safeCloseModal(modalId) {
     const modalEl = document.getElementById(modalId);
 
     if (modalEl) {
-        destroyModalOutputPreview(modalId);
-        // Efek fade out tipis sebelum display none
+        if (IFRAME_MANAGED_MODALS.has(modalId)) {
+            exitModalIframeMode(modalId, () => releaseModalIframeResources(modalId));
+        } else {
+            destroyModalOutputPreview(modalId);
+        }
         modalEl.style.opacity = "0";
         setTimeout(() => {
             modalEl.style.display = "none";
-            modalEl.style.opacity = "1"; // Reset buat next time dibuka
+            modalEl.style.opacity = "1";
         }, 200);
     }
 }
@@ -3465,15 +3700,16 @@ function destroyModalOutputPreview(modalId) {
     const preview = modal.querySelector('.modal-output-preview');
     if (!preview) return;
 
+    const shell = preview.querySelector('.modal-output-frame-shell');
     const iframe = preview.querySelector('iframe');
     if (window.modalOutputPreviewObservers && window.modalOutputPreviewObservers[modalId]) {
         window.modalOutputPreviewObservers[modalId].disconnect();
         delete window.modalOutputPreviewObservers[modalId];
     }
     if (iframe) {
-        iframe.src = 'about:blank';
-        iframe.remove();
+        destroyIframeEl(iframe);
     }
+    if (shell) shell.innerHTML = '';
     modal.classList.remove('has-output-preview');
 }
 
@@ -3499,9 +3735,11 @@ function openFullEditModal() {
     if (!currentSongTitle) return alert("Load a song first!");
     document.getElementById("edit-song-title").value = currentSongTitle;
     editorSlides = lyricsData.length > 0 ? JSON.parse(JSON.stringify(lyricsData)) : [{ text: "", type: "normal" }];
-    editorHistory = []; // Reset memori
+    editorHistory = [];
     renderEditor("edit");
-    document.getElementById("full-edit-modal").style.display = "flex";
+    enterModalIframeMode('full-edit-modal', () => {
+        document.getElementById("full-edit-modal").style.display = "flex";
+    });
 }
 
 function formatEditSongText() {
@@ -3602,107 +3840,334 @@ function openAddSongModal() {
 }
 
 // Mesin Render Row
+// Mesin Render Row
 function renderEditor(mode) {
     const container = document.getElementById(`${mode}-editor-rows`);
+    if (!container) return;
     container.innerHTML = "";
 
+    // 1. Group slides logically
+    let groups = [];
+    let currentGroup = null;
+
     editorSlides.forEach((slide, idx) => {
-        const row = document.createElement("div");
-        row.className = "slide-row";
-
         const isStandalone = ['video', 'audio', 'photo'].includes(slide.type);
-        let tagLabel = slide.type === 'normal' ? 'D' : (slide.type ? slide.type.charAt(0).toUpperCase() : 'U');
+        const prevSlide = idx > 0 ? editorSlides[idx - 1] : null;
+        const prevIsStandalone = prevSlide ? ['video', 'audio', 'photo'].includes(prevSlide.type) : false;
 
-        if (isStandalone) {
-            // 🎯 BERSIH DARI INLINE CSS, PAKE CLASS MURNI!
-            row.innerHTML = `
-                        <div class="slide-tag tag-${slide.type}" title="${slide.type.toUpperCase()} Slide">${tagLabel}</div>
-                        <textarea rows="1" class="slide-input input-disabled tag-text-${slide.type}" id="${mode}-input-${idx}" disabled>[ STANDALONE ${slide.type.toUpperCase()} SLIDE - NOT EDITABLE ]</textarea>
-                        <button class="slide-del" onclick="deleteEditorRow(${idx}, '${mode}')">✖</button>
-                    `;
-        } else {
-            // 🎯 Tampilan ketik lirik normal
-            row.innerHTML = `
-                        <div class="slide-tag ${slide.type}" title="Click to change tag" onclick="cycleTag(${idx}, '${mode}')">${tagLabel}</div>
-                        <textarea rows="3" class="slide-input" id="${mode}-input-${idx}" placeholder="Enter lyrics...">${slide.text}</textarea>
-                        <button class="slide-del" onclick="deleteEditorRow(${idx}, '${mode}')">✖</button>
-                    `;
+        // A new group starts if:
+        // - First slide
+        // - Non-normal slide type
+        // - Standalone slide
+        // - Previous slide was standalone
+        const isGroupStart = (
+            idx === 0 || 
+            (!isStandalone && slide.type !== 'normal') || 
+            isStandalone || 
+            prevIsStandalone
+        );
+
+        if (isGroupStart) {
+            currentGroup = {
+                type: slide.type,
+                isStandalone: isStandalone,
+                startIndex: idx,
+                slides: []
+            };
+            groups.push(currentGroup);
         }
-        container.appendChild(row);
 
-        // 🎯 EVENT LISTENER CUMA DIPASANG KE SLIDE LIRIK (Biar ga error pas standalone diklik)
-        if (!isStandalone) {
-            const textarea = row.querySelector("textarea");
+        currentGroup.slides.push({
+            slide: slide,
+            globalIndex: idx
+        });
+    });
 
-            textarea.addEventListener("focus", () => saveEditorState());
+    // 2. Render each group
+    groups.forEach((group) => {
+        const groupBox = document.createElement("div");
+        groupBox.className = "editor-group-box";
 
-            textarea.addEventListener("input", (e) => {
-                editorSlides[idx].text = e.target.value;
-                isFormDirty = true;
-            });
+        // Assign visual custom properties and accent transparent background
+        let groupColor = "#444";
+        let groupGlow = "rgba(255, 255, 255, 0.05)";
+        let groupTitleText = "NORMAL SLIDES";
+        let bgOpacity = "0.015";
 
-            textarea.addEventListener("keydown", (e) => {
-                // ↩️ TANGKAP CTRL+Z
-                if (e.ctrlKey && e.key.toLowerCase() === "z") {
-                    e.preventDefault();
-                    undoEditorState(mode);
-                    return;
-                }
+        if (group.isStandalone) {
+            if (group.type === 'video') { groupColor = "#00e5ff"; groupTitleText = "VIDEO STANDALONE SLIDE"; }
+            else if (group.type === 'audio') { groupColor = "#ffaa00"; groupTitleText = "AUDIO STANDALONE SLIDE"; }
+            else if (group.type === 'photo') { groupColor = "#ff00aa"; groupTitleText = "PHOTO STANDALONE SLIDE"; }
+            groupGlow = `rgba(${hexToRgb(groupColor)}, 0.2)`;
+            bgOpacity = "0.04";
+        } else {
+            if (group.type === 'verse') { groupColor = "var(--color-verse)"; groupTitleText = "VERSE 1 SECTION"; }
+            else if (group.type === 'verse2') { groupColor = "var(--color-verse2)"; groupTitleText = "VERSE 2 SECTION"; }
+            else if (group.type === 'pre') { groupColor = "var(--color-pre)"; groupTitleText = "PRE-CHORUS SECTION"; }
+            else if (group.type === 'chorus') { groupColor = "var(--color-chorus)"; groupTitleText = "CHORUS 1 SECTION"; }
+            else if (group.type === 'chorus2') { groupColor = "var(--color-chorus2)"; groupTitleText = "CHORUS 2 SECTION"; }
+            else if (group.type === 'bridge') { groupColor = "var(--color-bridge)"; groupTitleText = "BRIDGE SECTION"; }
+            else if (group.type === 'tag') { groupColor = "var(--color-tag)"; groupTitleText = "TAG SECTION"; }
+            
+            if (group.type !== 'normal') {
+                groupGlow = `rgba(${group.type === 'verse' ? '6,182,212' : group.type === 'verse2' ? '139,92,246' : group.type === 'pre' ? '245,158,11' : group.type === 'chorus' ? '239,68,68' : group.type === 'chorus2' ? '236,72,153' : group.type === 'bridge' ? '16,185,129' : '249,115,22'}, 0.2)`;
+                bgOpacity = "0.03";
+            }
+        }
 
-                // GANTI TAG (Shift+V dll)
-                if (e.shiftKey && !e.ctrlKey) {
-                    const key = e.key.toUpperCase();
-                    const tagMap = { 'V': 'verse', 'C': 'chorus', 'P': 'pre', 'B': 'bridge', 'D': 'normal' };
-                    if (tagMap[key]) {
+        groupBox.style.setProperty("--group-color", groupColor);
+        groupBox.style.setProperty("--group-glow", groupGlow);
+        groupBox.style.background = `rgba(${group.type === 'verse' ? '6,182,212' : group.type === 'verse2' ? '139,92,246' : group.type === 'pre' ? '245,158,11' : group.type === 'chorus' ? '239,68,68' : group.type === 'chorus2' ? '236,72,153' : group.type === 'bridge' ? '16,185,129' : group.type === 'tag' ? '249,115,22' : '255,255,255'}, ${bgOpacity})`;
+
+        // Group Header
+        const groupHeader = document.createElement("div");
+        groupHeader.className = "editor-group-header";
+        groupHeader.innerHTML = `
+            <div class="editor-group-title">
+                <span style="font-size: 1.1em;">📂</span> ${groupTitleText}
+            </div>
+            <div class="editor-group-badge">
+                ${group.slides.length} ${group.slides.length === 1 ? 'Slide' : 'Slides'}
+            </div>
+        `;
+        groupBox.appendChild(groupHeader);
+
+        // Group Slides Grid
+        group.slides.forEach((item) => {
+            const slide = item.slide;
+            const idx = item.globalIndex;
+
+            const row = document.createElement("div");
+            row.className = "slide-row";
+            row.style.setProperty("--group-color", groupColor);
+            row.style.setProperty("--group-glow", groupGlow);
+
+            const isStandalone = ['video', 'audio', 'photo'].includes(slide.type);
+            
+            // Get current tag visual metadata
+            let tagText = "NORMAL";
+            let tagColor = "#555";
+            let tagDot = "⚪";
+
+            if (slide.type === 'verse') { tagText = "VERSE 1"; tagColor = "var(--color-verse)"; tagDot = "🔵"; }
+            else if (slide.type === 'verse2') { tagText = "VERSE 2"; tagColor = "var(--color-verse2)"; tagDot = "🟣"; }
+            else if (slide.type === 'pre') { tagText = "PRE-CHORUS"; tagColor = "var(--color-pre)"; tagDot = "🟡"; }
+            else if (slide.type === 'chorus') { tagText = "CHORUS 1"; tagColor = "var(--color-chorus)"; tagDot = "🔴"; }
+            else if (slide.type === 'chorus2') { tagText = "CHORUS 2"; tagColor = "var(--color-chorus2)"; tagDot = "💗"; }
+            else if (slide.type === 'bridge') { tagText = "BRIDGE"; tagColor = "var(--color-bridge)"; tagDot = "🟢"; }
+            else if (slide.type === 'tag') { tagText = "TAG"; tagColor = "var(--color-tag)"; tagDot = "🟠"; }
+
+            if (isStandalone) {
+                let mediaLabel = slide.type.toUpperCase();
+                let mediaDot = "🎞️";
+                if (slide.type === 'audio') { mediaLabel = "AUDIO"; mediaDot = "🎵"; }
+                else if (slide.type === 'photo') { mediaLabel = "PHOTO"; mediaDot = "📷"; }
+
+                row.innerHTML = `
+                    <div class="slide-row-header">
+                        <div class="slide-tag-badge active-tag" style="--tag-badge-color: ${groupColor}; cursor: default;">
+                            <span>${mediaDot} ${mediaLabel}</span>
+                        </div>
+                        <span class="slide-row-index">SLIDE #${idx + 1}</span>
+                        <button class="slide-del-btn" onclick="deleteEditorRow(${idx}, '${mode}')">✖</button>
+                    </div>
+                    <textarea rows="1" class="slide-input input-disabled tag-text-${slide.type}" id="${mode}-input-${idx}" disabled>[ STANDALONE ${slide.type.toUpperCase()} SLIDE - NOT EDITABLE ]</textarea>
+                `;
+            } else {
+                row.innerHTML = `
+                    <div class="slide-row-header">
+                        <div class="slide-tag-badge active-tag" id="${mode}-tag-badge-${idx}" style="--tag-badge-color: ${tagColor};" onclick="toggleTagDropdown(${idx}, '${mode}', this)">
+                            <span>${tagDot} ${tagText}</span>
+                        </div>
+                        <span class="slide-row-index">SLIDE #${idx + 1}</span>
+                        <button class="slide-del-btn" onclick="deleteEditorRow(${idx}, '${mode}')">✖</button>
+                    </div>
+                    <textarea rows="3" class="slide-input" id="${mode}-input-${idx}" placeholder="Enter lyrics...">${slide.text}</textarea>
+                `;
+            }
+
+            groupBox.appendChild(row);
+
+            // Add Textarea Listeners
+            if (!isStandalone) {
+                const textarea = row.querySelector("textarea");
+
+                textarea.addEventListener("focus", () => saveEditorState());
+
+                textarea.addEventListener("input", (e) => {
+                    editorSlides[idx].text = e.target.value;
+                    isFormDirty = true;
+                });
+
+                textarea.addEventListener("keydown", (e) => {
+                    // ↩️ UNDO (CTRL+Z)
+                    if (e.ctrlKey && e.key.toLowerCase() === "z") {
+                        e.preventDefault();
+                        undoEditorState(mode);
+                        return;
+                    }
+
+                    // DYNAMIC SHORTCUTS TAG MATCHING
+                    const actionMap = {
+                        assign_verse: 'verse',
+                        assign_verse2: 'verse2',
+                        assign_pre: 'pre',
+                        assign_chorus: 'chorus',
+                        assign_chorus2: 'chorus2',
+                        assign_bridge: 'bridge',
+                        assign_tag: 'tag',
+                        assign_unassign: 'normal'
+                    };
+
+                    let matchedType = null;
+                    for (const action in actionMap) {
+                        if (matchShortcut(e, action)) {
+                            matchedType = actionMap[action];
+                            break;
+                        }
+                    }
+
+                    if (matchedType) {
                         e.preventDefault();
                         saveEditorState();
-                        editorSlides[idx].type = tagMap[key];
+                        editorSlides[idx].type = matchedType;
                         renderEditor(mode);
-                        setTimeout(() => document.getElementById(`${mode}-input-${idx}`).focus(), 10);
+                        setTimeout(() => {
+                            const el = document.getElementById(`${mode}-input-${idx}`);
+                            if (el) el.focus();
+                        }, 10);
                     }
-                }
 
-                // SPLIT CURSOR (CTRL + ENTER)
-                if (e.ctrlKey && e.key === "Enter") {
-                    e.preventDefault();
-                    saveEditorState();
-                    const cursorPos = textarea.selectionStart;
-                    const textBefore = textarea.value.substring(0, cursorPos).trim();
-                    const textAfter = textarea.value.substring(cursorPos).trim();
+                    // SPLIT CURSOR (CTRL + ENTER)
+                    if (e.ctrlKey && e.key === "Enter") {
+                        e.preventDefault();
+                        saveEditorState();
+                        const cursorPos = textarea.selectionStart;
+                        const textBefore = textarea.value.substring(0, cursorPos).trim();
+                        const textAfter = textarea.value.substring(cursorPos).trim();
 
-                    editorSlides[idx].text = textBefore;
-                    editorSlides.splice(idx + 1, 0, { text: textAfter, type: slide.type });
-                    renderEditor(mode);
-                    setTimeout(() => {
-                        const nextInput = document.getElementById(`${mode}-input-${idx + 1}`);
-                        if (nextInput) {
-                            nextInput.focus();
-                            nextInput.setSelectionRange(0, 0);
-                        }
-                    }, 10);
-                }
+                        editorSlides[idx].text = textBefore;
+                        editorSlides.splice(idx + 1, 0, { text: textAfter, type: 'normal' });
+                        renderEditor(mode);
+                        setTimeout(() => {
+                            const nextInput = document.getElementById(`${mode}-input-${idx + 1}`);
+                            if (nextInput) {
+                                nextInput.focus();
+                                nextInput.setSelectionRange(0, 0);
+                            }
+                        }, 10);
+                    }
 
-                // BACKSPACE KOSONG (HAPUS ROW)
-                if (e.key === "Backspace" && e.target.value === "" && editorSlides.length > 1) {
-                    e.preventDefault();
-                    saveEditorState();
-                    deleteEditorRow(idx, mode);
-                    const prevIdx = idx > 0 ? idx - 1 : 0;
-                    setTimeout(() => {
-                        const prevInput = document.getElementById(`${mode}-input-${prevIdx}`);
-                        if (prevInput) prevInput.focus();
-                    }, 10);
-                }
-            });
-        }
+                    // BACKSPACE DELETION
+                    if (e.key === "Backspace" && e.target.value === "" && editorSlides.length > 1) {
+                        e.preventDefault();
+                        saveEditorState();
+                        deleteEditorRow(idx, mode);
+                        const prevIdx = idx > 0 ? idx - 1 : 0;
+                        setTimeout(() => {
+                            const prevInput = document.getElementById(`${mode}-input-${prevIdx}`);
+                            if (prevInput) prevInput.focus();
+                        }, 10);
+                    }
+                });
+            }
+        });
+
+        container.appendChild(groupBox);
     });
+}
+
+function toggleTagDropdown(idx, mode, badgeEl) {
+    // Remove other dropdowns first
+    document.querySelectorAll('.slide-tag-dropdown').forEach(el => el.remove());
+    
+    // Check if we are already showing it
+    if (badgeEl.dataset.dropdownOpen === 'true') {
+        badgeEl.dataset.dropdownOpen = 'false';
+        return;
+    }
+    
+    // Mark as open
+    badgeEl.dataset.dropdownOpen = 'true';
+    
+    // Create the dropdown menu
+    const dropdown = document.createElement('div');
+    dropdown.className = 'slide-tag-dropdown';
+    
+    const types = [
+        { type: 'normal', name: 'NORMAL', label: 'Default (D)', color: '#555' },
+        { type: 'verse', name: 'VERSE 1', label: 'Verse 1 (V)', color: 'var(--color-verse)' },
+        { type: 'verse2', name: 'VERSE 2', label: 'Verse 2 (I)', color: 'var(--color-verse2)' },
+        { type: 'pre', name: 'PRE-CHORUS', label: 'Pre-Chorus (P)', color: 'var(--color-pre)' },
+        { type: 'chorus', name: 'CHORUS 1', label: 'Chorus 1 (C)', color: 'var(--color-chorus)' },
+        { type: 'chorus2', name: 'CHORUS 2', label: 'Chorus 2 (X)', color: 'var(--color-chorus2)' },
+        { type: 'bridge', name: 'BRIDGE', label: 'Bridge (B)', color: 'var(--color-bridge)' },
+        { type: 'tag', name: 'TAG', label: 'Tag (T)', color: 'var(--color-tag)' }
+    ];
+    
+    types.forEach(opt => {
+        const item = document.createElement('div');
+        item.className = 'dropdown-item';
+        item.innerHTML = `
+            <span class="dropdown-item-dot" style="background: ${opt.color}"></span>
+            <span>${opt.label}</span>
+        `;
+        item.onclick = (e) => {
+            e.stopPropagation();
+            saveEditorState();
+            editorSlides[idx].type = opt.type;
+            renderEditor(mode);
+            isFormDirty = true;
+            setTimeout(() => {
+                const el = document.getElementById(`${mode}-input-${idx}`);
+                if (el) el.focus();
+            }, 10);
+        };
+        dropdown.appendChild(item);
+    });
+    
+    badgeEl.parentElement.appendChild(dropdown);
+    
+    const outsideClickListener = (e) => {
+        if (!badgeEl.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.remove();
+            badgeEl.dataset.dropdownOpen = 'false';
+            document.removeEventListener('click', outsideClickListener);
+        }
+    };
+    
+    setTimeout(() => {
+        document.addEventListener('click', outsideClickListener);
+    }, 10);
+}
+
+function hexToRgb(hex) {
+    if (hex.startsWith('var(')) {
+        if (hex.includes('color-verse2')) return '139,92,246';
+        if (hex.includes('color-verse')) return '6,182,212';
+        if (hex.includes('color-pre')) return '245,158,11';
+        if (hex.includes('color-chorus2')) return '236,72,153';
+        if (hex.includes('color-chorus')) return '239,68,68';
+        if (hex.includes('color-bridge')) return '16,185,129';
+        if (hex.includes('color-tag')) return '249,115,22';
+    }
+    
+    let c = hex.substring(1);
+    if(c.length === 3){
+        c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+    }
+    let num = parseInt(c, 16);
+    return `${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}`;
 }
 
 function addEditorRow(mode) {
     saveEditorState(); // 📸 BACKUP
     editorSlides.push({ text: "", type: "normal" });
     renderEditor(mode);
-    setTimeout(() => document.getElementById(`${mode}-input-${editorSlides.length - 1}`).focus(), 10);
+    setTimeout(() => {
+        const el = document.getElementById(`${mode}-input-${editorSlides.length - 1}`);
+        if (el) el.focus();
+    }, 10);
 }
 
 function deleteEditorRow(idx, mode) {
@@ -3715,7 +4180,7 @@ function deleteEditorRow(idx, mode) {
 
 function cycleTag(idx, mode) {
     saveEditorState(); // 📸 BACKUP
-    const types = ['normal', 'verse', 'chorus', 'pre', 'bridge'];
+    const types = ['normal', 'verse', 'verse2', 'chorus', 'chorus2', 'pre', 'bridge', 'tag'];
     let current = types.indexOf(editorSlides[idx].type);
     editorSlides[idx].type = types[(current + 1) % types.length];
     renderEditor(mode);
@@ -4347,7 +4812,9 @@ function updateTextPreview(triggerLiveSync = true) {
 function scaleModalPreview() {
     const wrapper = document.getElementById("modal-preview-wrapper");
     const frame = document.getElementById("modal-preview-frame");
-    if (wrapper && frame) { frame.style.transform = `scale(${wrapper.offsetWidth / 1920})`; }
+    if (wrapper && frame && activeIframeModalId === 'text-edit-modal') {
+        frame.style.transform = `scale(${wrapper.offsetWidth / 1920})`;
+    }
 }
 window.addEventListener("resize", scaleModalPreview);
 
@@ -5228,15 +5695,14 @@ function editorPrevSlide() {
 // ==========================================
 // --- JS MAGIC: 1080p Iframe Compression (REAL-TIME ENGINE) ---
 // ==========================================
-let iframeScaleObserver = null; // Deklarasi di luar agar tidak terjadi duplikasi
+let iframeScaleObserver = null;
 
-function attachIframeScaler() {
+function attachTextEditPreviewScaler() {
+    detachTextEditPreviewScaler();
     const wrapper = document.getElementById('modal-preview-wrapper');
     const iframe = document.getElementById('modal-preview-frame');
-
     if (!wrapper || !iframe) return;
 
-    // 1. KUNCI FORMAT OUTPUT: Memaksa iframe membaca diri sebagai layar 1080p utuh.
     iframe.style.width = "1920px";
     iframe.style.height = "1080px";
     iframe.style.position = "absolute";
@@ -5245,22 +5711,23 @@ function attachIframeScaler() {
     iframe.style.transformOrigin = "top left";
     iframe.style.border = "none";
 
-    // 2. ENGINE PENGINTAI: Memantau ukuran wrapper secara real-time.
-    // Saat modal dibuka, browser otomatis mendeteksi lebar valid dan langsung mengecilkan iframe.
-    if (!iframeScaleObserver) {
-        iframeScaleObserver = new ResizeObserver(entries => {
-            const currentWidth = entries[0].contentRect.width;
-            if (currentWidth > 0) {
-                const scaleValue = currentWidth / 1920;
-                iframe.style.transform = `scale(${scaleValue})`;
-            }
-        });
-        iframeScaleObserver.observe(wrapper); // Hanya memantau kotak preview
-    }
+    iframeScaleObserver = new ResizeObserver(entries => {
+        const frame = document.getElementById('modal-preview-frame');
+        if (!frame) return;
+        const currentWidth = entries[0].contentRect.width;
+        if (currentWidth > 0) {
+            frame.style.transform = `scale(${currentWidth / 1920})`;
+        }
+    });
+    iframeScaleObserver.observe(wrapper);
 }
 
-// Aktifkan mesin pengintai satu kali saja saat halaman dimuat
-attachIframeScaler();
+function detachTextEditPreviewScaler() {
+    if (iframeScaleObserver) {
+        iframeScaleObserver.disconnect();
+        iframeScaleObserver = null;
+    }
+}
 
 
 // ==========================================
@@ -5322,8 +5789,11 @@ function openTextEditModal(mode = 'current') {
         applyDisplayPresetToUI(currentSongCustomSettings);
     }
 
-    if (modal) modal.classList.add('modal-active');
-    updateTextPreview(true);
+    enterModalIframeMode('text-edit-modal', () => {
+        mountTextEditPreview();
+        if (modal) modal.classList.add('modal-active');
+        updateTextPreview(true);
+    });
 }
 
 function closeTextEditModal(isCancel = false) {
@@ -5333,10 +5803,12 @@ function closeTextEditModal(isCancel = false) {
     }
 
     const modal = document.getElementById('text-edit-modal');
-    if (modal) {
-        modal.classList.remove('modal-active');
-        delete modal.dataset.activeMode; // Bersihkan tracker
-    }
+    exitModalIframeMode('text-edit-modal', () => {
+        if (modal) {
+            modal.classList.remove('modal-active');
+            delete modal.dataset.activeMode;
+        }
+    });
 }
 
 async function applyAndCloseEditor() {
@@ -5817,19 +6289,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function openScriptureSettings() {
     const modal = document.getElementById('scripture-settings-modal');
-    if (modal) {
-        modal.classList.add('modal-active');
-        modal.classList.remove('te-hidden');
-        updateScrLayoutUI();
-    }
+    enterModalIframeMode('scripture-settings-modal', () => {
+        mountScriptureMiniIframes();
+        if (modal) {
+            modal.classList.add('modal-active');
+            modal.classList.remove('te-hidden');
+            updateScrLayoutUI();
+        }
+    });
 }
 
 function closeScriptureSettings() {
     const modal = document.getElementById('scripture-settings-modal');
-    if (modal) {
-        modal.classList.remove('modal-active');
-        modal.classList.add('te-hidden');
-    }
+    exitModalIframeMode('scripture-settings-modal', () => {
+        if (modal) {
+            modal.classList.remove('modal-active');
+            modal.classList.add('te-hidden');
+        }
+    });
 }
 
 function toggleScrLayoutMode() {
@@ -6728,3 +7205,385 @@ function updateRemotePPTUI() {
         }
     }
 }
+
+// ==========================================
+// 🎹 KEYBOARD SHORTCUT EDITOR ENGINE (DYNAMIC CONFIG)
+// ==========================================
+let tempShortcuts = {};
+let recordingAction = null;
+let recordingListener = null;
+
+function openShortcutEditorModal() {
+    // Clone appShortcuts into tempShortcuts so changes are temporary until saved
+    tempShortcuts = JSON.parse(JSON.stringify(appShortcuts));
+    
+    // Hide settings modal to avoid visual clutter
+    safeCloseModal('settings-modal');
+    
+    // Populate list and open modal
+    renderShortcutList();
+    document.getElementById("shortcut-editor-modal").style.display = "flex";
+}
+
+function closeShortcutEditorModal() {
+    cancelRecording();
+    document.getElementById("shortcut-editor-modal").style.display = "none";
+}
+
+function renderShortcutList() {
+    const container = document.getElementById("shortcut-list-container");
+    if (!container) return;
+    container.innerHTML = "";
+    
+    for (const action in tempShortcuts) {
+        const label = shortcutActionLabels[action] || action;
+        const s = tempShortcuts[action];
+        
+        const row = document.createElement("div");
+        row.className = "shortcut-item-row";
+        row.innerHTML = `
+            <span class="shortcut-action-name">${label}</span>
+            <div class="shortcut-badge-container">
+                <span class="shortcut-key-badge" id="badge-${action}">${s.display || 'None'}</span>
+                <button class="shortcut-btn-record" id="btn-record-${action}" onclick="recordShortcutKey('${action}')">Record Key</button>
+            </div>
+        `;
+        container.appendChild(row);
+    }
+}
+
+function recordShortcutKey(action) {
+    if (recordingAction) {
+        cancelRecording();
+    }
+    
+    recordingAction = action;
+    const btn = document.getElementById(`btn-record-${action}`);
+    if (btn) {
+        btn.innerText = "Listening...";
+        btn.style.background = "#dc3545";
+        btn.style.color = "#fff";
+        btn.style.borderColor = "#dc3545";
+    }
+    
+    recordingListener = function (e) {
+        // Ignore standalone modifier key presses
+        if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
+            return;
+        }
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Count modifier keys
+        let modifiers = 0;
+        const ctrl = !!e.ctrlKey;
+        const shift = !!e.shiftKey;
+        const alt = !!e.altKey;
+        if (ctrl) modifiers++;
+        if (shift) modifiers++;
+        if (alt) modifiers++;
+        
+        if (modifiers > 2) {
+            showToast("Maksimal 2 modifier key (CTRL, SHIFT, ALT)!", "error", 2000);
+            return;
+        }
+        
+        // Capture character key
+        let key = e.key.toUpperCase();
+        
+        // Allow arrows, enter, escape, backspace, tab, space
+        const allowedSpecialKeys = ['ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT', 'ENTER', 'ESCAPE', 'BACKSPACE', 'TAB', 'SPACE'];
+        if (e.code === "Space") key = "SPACE";
+        
+        const isSpecialKey = allowedSpecialKeys.includes(key);
+        if (key.length > 1 && !isSpecialKey) {
+            // Ignore other standalone function keys
+            return;
+        }
+        
+        // Update temporary clone
+        tempShortcuts[action] = {
+            ctrlKey: ctrl,
+            shiftKey: shift,
+            altKey: alt,
+            key: key === "SPACE" ? " " : key,
+            display: (ctrl ? 'CTRL + ' : '') + (shift ? 'SHIFT + ' : '') + (alt ? 'ALT + ' : '') + key
+        };
+        
+        cancelRecording();
+        renderShortcutList();
+    };
+    
+    window.addEventListener('keydown', recordingListener, true);
+}
+
+function cancelRecording() {
+    if (recordingAction && recordingListener) {
+        window.removeEventListener('keydown', recordingListener, true);
+        const btn = document.getElementById(`btn-record-${recordingAction}`);
+        if (btn) {
+            btn.innerText = "Record Key";
+            btn.style.background = "#222";
+            btn.style.color = "#ccc";
+            btn.style.borderColor = "#444";
+        }
+        recordingAction = null;
+        recordingListener = null;
+    }
+}
+
+async function saveEditedShortcuts() {
+    // Apply temporary shortcuts globally
+    appShortcuts = JSON.parse(JSON.stringify(tempShortcuts));
+    
+    // Save to server app_settings.json
+    showToast("Saving shortcuts...", "loading");
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shortcuts: appShortcuts })
+        });
+        
+        if (res.ok) {
+            showToast("Shortcuts saved successfully!", "success", 2000);
+            closeShortcutEditorModal();
+        } else {
+            showToast("Failed to save shortcuts on server.", "error", 3000);
+        }
+    } catch (err) {
+        console.error("Save shortcuts error:", err);
+        showToast("Error connecting to server.", "error", 3000);
+    }
+}
+
+// Expose editor and shortcut functions to the window object so they are globally defined in obfuscated environments
+window.addEditorRow = addEditorRow;
+window.deleteEditorRow = deleteEditorRow;
+window.cycleTag = cycleTag;
+window.toggleTagDropdown = toggleTagDropdown;
+window.openShortcutEditorModal = openShortcutEditorModal;
+window.closeShortcutEditorModal = closeShortcutEditorModal;
+window.recordShortcutKey = recordShortcutKey;
+window.saveEditedShortcuts = saveEditedShortcuts;
+window.undoEditorState = undoEditorState;
+window.smartBulkPaste = smartBulkPaste;
+window.transformText = transformText;
+window.saveFullEdit = saveFullEdit;
+window.saveAndLoadNewSong = saveAndLoadNewSong;
+window.openFullEditModal = openFullEditModal;
+
+// ============================================================
+// ADVANCED OUTPUT: Custom Resolution & QR Code
+// ============================================================
+
+// Current resolution mode per output type
+const _advResModes = { main: 'default', lt: 'default', fb: 'default' };
+
+// Path mapping for each output type
+const _outputPathMap = { main: '/display', lt: '/lowerthird', fb: '/foldback' };
+
+/**
+ * Draw a QR code inside a container div using the qrcodejs library.
+ * The container's id is passed (replaces canvas elements).
+ * Falls back to a text message if the library is not available.
+ */
+function _drawQRCode(containerId, urlText) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Clear previous QR code
+    container.innerHTML = '';
+
+    if (typeof QRCode === 'undefined') {
+        container.innerHTML = '<div style="width:140px;height:140px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;border-radius:6px;color:#555;font-size:10px;text-align:center;padding:10px;">QR library<br>not loaded</div>';
+        return;
+    }
+
+    try {
+        new QRCode(container, {
+            text: urlText,
+            width: 120,
+            height: 120,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.H
+        });
+        // Style the generated canvas/img
+        const generated = container.querySelector('canvas, img');
+        if (generated) {
+            generated.style.borderRadius = '6px';
+            generated.style.display = 'block';
+        }
+    } catch(e) {
+        console.error('[QR Draw Error]', e);
+        container.innerHTML = '<div style="width:140px;height:140px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;border-radius:6px;color:#ef4444;font-size:10px;">QR Error</div>';
+    }
+}
+
+
+/**
+ * Open the Advanced Output modal, fetch local IP, draw QR codes,
+ * and load saved resolution settings.
+ */
+async function openAdvancedOutputModal() {
+    const modal = document.getElementById('advanced-output-modal');
+    if (!modal) return;
+
+    modal.style.display = 'flex';
+
+    // 1. Fetch local IP from backend
+    let localIP = '127.0.0.1';
+    try {
+        const res = await fetch('/api/local_ip');
+        if (res.ok) {
+            const data = await res.json();
+            localIP = data.ip || '127.0.0.1';
+        }
+    } catch(e) {
+        console.warn('[AdvOutput] Could not fetch local IP:', e);
+    }
+
+    const PORT = 18888;
+    const outputDefs = [
+        { key: 'main', canvasId: 'qr-main', urlElId: 'qr-url-main', path: '/display' },
+        { key: 'lt',   canvasId: 'qr-lt',   urlElId: 'qr-url-lt',   path: '/lowerthird' },
+        { key: 'fb',   canvasId: 'qr-fb',   urlElId: 'qr-url-fb',   path: '/foldback'  },
+    ];
+
+    // 2. Generate QR codes for each output
+    for (const def of outputDefs) {
+        const url = `http://${localIP}:${PORT}${def.path}`;
+        const urlEl = document.getElementById(def.urlElId);
+        if (urlEl) urlEl.textContent = url;
+        _drawQRCode(def.canvasId, url);
+    }
+
+    // 3. Load saved resolution settings
+    try {
+        const res = await fetch('/api/output_resolution');
+        if (res.ok) {
+            const saved = await res.json();
+            for (const key of ['main', 'lt', 'fb']) {
+                if (!saved[key]) continue;
+                const mode = saved[key].mode || 'default';
+                _advResModes[key] = mode;
+
+                // Update mode buttons
+                const defBtn = document.getElementById(`res-btn-default-${key}`);
+                const cusBtn = document.getElementById(`res-btn-custom-${key}`);
+                const inputRow = document.getElementById(`res-custom-inputs-${key}`);
+                const presetRow = document.getElementById(`res-presets-${key}`);
+                if (defBtn) defBtn.classList.toggle('active', mode === 'default');
+                if (cusBtn) cusBtn.classList.toggle('active', mode === 'custom');
+                if (inputRow) inputRow.style.display = mode === 'custom' ? 'flex' : 'none';
+                if (presetRow) presetRow.style.display = mode === 'custom' ? 'flex' : 'none';
+
+                if (mode === 'custom') {
+                    const wEl = document.getElementById(`res-w-${key}`);
+                    const hEl = document.getElementById(`res-h-${key}`);
+                    if (wEl) wEl.value = saved[key].width || 1920;
+                    if (hEl) hEl.value = saved[key].height || 1080;
+                }
+
+                // Show current status
+                const statusEl = document.getElementById(`res-status-${key}`);
+                if (statusEl) {
+                    if (mode === 'custom') {
+                        statusEl.textContent = `Active: ${saved[key].width}x${saved[key].height}`;
+                        statusEl.style.color = '#00e5ff';
+                    } else {
+                        statusEl.textContent = 'Active: Default (auto)';
+                        statusEl.style.color = '#666';
+                    }
+                }
+            }
+        }
+    } catch(e) {
+        console.warn('[AdvOutput] Could not load resolution settings:', e);
+    }
+}
+
+/**
+ * Toggle resolution mode between 'default' and 'custom' for a given output type.
+ */
+function setResMode(type, mode) {
+    _advResModes[type] = mode;
+
+    const defBtn = document.getElementById(`res-btn-default-${type}`);
+    const cusBtn = document.getElementById(`res-btn-custom-${type}`);
+    const inputRow = document.getElementById(`res-custom-inputs-${type}`);
+    const presetRow = document.getElementById(`res-presets-${type}`);
+
+    if (defBtn) defBtn.classList.toggle('active', mode === 'default');
+    if (cusBtn) cusBtn.classList.toggle('active', mode === 'custom');
+    if (inputRow) inputRow.style.display = mode === 'custom' ? 'flex' : 'none';
+    if (presetRow) presetRow.style.display = mode === 'custom' ? 'flex' : 'none';
+}
+
+/**
+ * Fill in width/height inputs from a common preset button.
+ */
+function applyResPreset(type, w, h) {
+    const wEl = document.getElementById(`res-w-${type}`);
+    const hEl = document.getElementById(`res-h-${type}`);
+    if (wEl) wEl.value = w;
+    if (hEl) hEl.value = h;
+}
+
+/**
+ * Apply resolution settings for an output: save to backend and send IPC to Electron.
+ */
+async function applyOutputResolution(type) {
+    const mode = _advResModes[type] || 'default';
+    const wEl = document.getElementById(`res-w-${type}`);
+    const hEl = document.getElementById(`res-h-${type}`);
+    const statusEl = document.getElementById(`res-status-${type}`);
+
+    const width = wEl ? parseInt(wEl.value) : 1920;
+    const height = hEl ? parseInt(hEl.value) : 1080;
+
+    if (mode === 'custom' && (isNaN(width) || isNaN(height) || width < 640 || height < 360)) {
+        if (statusEl) { statusEl.textContent = 'Invalid resolution!'; statusEl.style.color = '#ef4444'; }
+        return;
+    }
+
+    const payload = { [type]: { mode, width, height } };
+
+    // 1. Save to backend
+    try {
+        await fetch('/api/output_resolution', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    } catch(e) {
+        console.error('[AdvOutput] Failed to save resolution:', e);
+    }
+
+    // 2. Send to Electron IPC (only applies to already-open projector windows)
+    if (window.electronAPI && typeof window.electronAPI.setOutputResolution === 'function') {
+        window.electronAPI.setOutputResolution({ type, mode, width, height });
+    }
+
+    // 3. Update status display
+    if (statusEl) {
+        if (mode === 'custom') {
+            statusEl.textContent = `Applied: ${width}x${height}`;
+            statusEl.style.color = '#00e5ff';
+        } else {
+            statusEl.textContent = 'Applied: Default (auto)';
+            statusEl.style.color = '#888';
+        }
+    }
+
+
+}
+
+// Expose Advanced Output functions globally
+window.openAdvancedOutputModal = openAdvancedOutputModal;
+window.setResMode = setResMode;
+window.applyResPreset = applyResPreset;
+window.applyOutputResolution = applyOutputResolution;
+
