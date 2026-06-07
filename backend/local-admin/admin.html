@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShowLyrics ADMIN — Local Panel</title>
+    <style>
+        :root {
+            --bg: #050a14;
+            --surface: #0a1628;
+            --text: #e8eaf6;
+            --primary: #1a3a8f;
+            --accent: #e53935;
+            --green: #66bb6a;
+            --border: rgba(99, 143, 255, 0.12);
+        }
+
+        body {
+            font-family: sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 40px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .details {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .order-id {
+            font-weight: bold;
+            color: var(--primary);
+        }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .badge-pending {
+            background: #ffbd2e;
+            color: #000;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: opacity 0.2s;
+        }
+
+        .btn-approve {
+            background: var(--green);
+            color: #fff;
+        }
+
+        .btn:hover {
+            opacity: 0.8;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 40px;
+            opacity: 0.5;
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+        }
+
+        .warning {
+            background: #442222;
+            border: 1px solid red;
+            padding: 15px;
+            border-radius: 8px;
+            color: #ffaaaa;
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="warning">
+            <strong>⚠️ SECURITY WARNING</strong><br>
+            This file is for <strong>LOCAL USE ONLY</strong>. Never deploy this to Firebase Hosting or upload it to the
+            public internet.
+        </div>
+
+        <h1>ShowLyrics: Manual Approval Panel</h1>
+
+        <div id="admin-status" style="margin-bottom: 20px; font-size: 0.9rem;">Checking Authentication...</div>
+
+        <div id="pending-list">
+            <div class="empty">Loading pending transactions...</div>
+        </div>
+    </div>
+
+    <!-- CryptoJS & Firebase -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+    <!-- Project Config & Admin Logic -->
+    <script src="../js/firebase-config.js"></script>
+    <script src="js/sl-admin.js"></script>
+</body>
+
+</html>
+
+</html>

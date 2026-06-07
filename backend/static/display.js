@@ -18,6 +18,10 @@ const GRADIENT_THEME_MAP = {
     'duotone': 'linear-gradient(135deg, #ff6b35 0%, #f7b267 40%, #c71585 65%, #4b0082 100%)',
     'aurora-art': 'linear-gradient(90deg, #00ff88, #00e5ff, #8000ff, #ff0088, #ff8800, #00ff88)',
     'solarpunk': 'linear-gradient(135deg, #22c55e, #84cc16, #eab308, #f59e0b)',
+    'neo-prism': 'linear-gradient(110deg, #ffffff 0%, #8ff7ff 22%, #ff7ad9 50%, #ffe66d 76%, #ffffff 100%)',
+    'liquid-gold-box': 'linear-gradient(135deg, #fff7bd 0%, #f7c948 38%, #b7791f 72%, #fff0a3 100%)',
+    'aurora-glass-box': 'linear-gradient(120deg, #dffcff 0%, #8dd8ff 35%, #d0a2ff 70%, #ffffff 100%)',
+    'modern-kinetic': 'linear-gradient(90deg, #ffffff 0%, #00e5ff 40%, #ff2d75 68%, #ffffff 100%)',
 };
 
 // Fixed Themes Set - O(1) lookup performance
@@ -31,6 +35,9 @@ const FIXED_THEMES = new Set([
     'wildfire', 'celebration',
     // New Creative Art (gradient)
     'duotone', 'aurora-art', 'solarpunk',
+    // Advanced scenic/text-box presets
+    'cloud-halo', 'cinematic-caption', 'calligraphy-gold', 'neo-prism', 'liquid-gold-box',
+    'aurora-glass-box', 'ink-sermon', 'velvet-marquee', 'modern-kinetic', 'sacred-parchment',
     // Deep effect themes
     'chromatic', 'veil-lift',
 ]);
@@ -50,6 +57,19 @@ const DEEP_WORD_FX = new Set(['fx-smoke-deep', 'fx-liquid', 'fx-zoom-deep', 'fx-
 const CENTER_WORD_FX = new Set(['fx-holy-breathe', 'fx-sanctify', 'fx-ascend', 'fx-mist-form', 'fx-rapture']);
 const CHAR_FX = new Set(['fx-stagger', 'fx-spin', 'fx-wave', 'fx-gauss', 'fx-glitch', 'fx-punch', 'fx-elastic', 'fx-flashpop', 'fx-whip', 'fx-gdrop', 'fx-rgb', 'fx-shake', 'fx-smash', 'fx-slash', 'fx-terminal', 'fx-voltage', 'fx-riot']);
 const REVERSE_CHAR_FX = new Set(['fx-shockwave', 'fx-overdrive', 'fx-nuke']);
+const PRAISE_RANDOM_LETTER_FX = new Set([
+    'fx-praise-letter-zoom-spark', 'fx-praise-letter-strobe-pop', 'fx-praise-letter-prism-snap',
+    'fx-praise-letter-whip-grid', 'fx-praise-letter-flash-cut', 'fx-praise-letter-orbit-hit',
+    'fx-praise-letter-bass-drop', 'fx-praise-letter-chroma-burst', 'fx-praise-letter-tile-shatter',
+    'fx-praise-letter-speed-ramp'
+]);
+const WORSHIP_RANDOM_LETTER_FX = new Set([
+    'fx-worship-letter-candle-rise', 'fx-worship-letter-mist-bloom', 'fx-worship-letter-lens-prayer',
+    'fx-worship-letter-silk-drift', 'fx-worship-letter-soft-iris', 'fx-worship-letter-cloud-form',
+    'fx-worship-letter-golden-hour', 'fx-worship-letter-deep-focus', 'fx-worship-letter-veil-cascade',
+    'fx-worship-letter-cinematic-breathe'
+]);
+const RANDOM_LETTER_FX = new Set([...PRAISE_RANDOM_LETTER_FX, ...WORSHIP_RANDOM_LETTER_FX]);
 
 // === UNIFIED MOTION LOOP HANDOFF ENGINE ===
 const blendStyle = document.createElement('style');
@@ -390,10 +410,11 @@ function computeMaxStaggerDelay(s, fxClass, motionLoop, textEl) {
     const isCenterWordFx = CENTER_WORD_FX.has(fxClass);
     const isReverseCharFx = REVERSE_CHAR_FX.has(fxClass);
     const isCharFx = CHAR_FX.has(fxClass);
+    const isRandomLetterFx = RANDOM_LETTER_FX.has(fxClass);
     const isWordMotionLoop = motionLoop !== 'none' && (
         motionLoop.startsWith('worship-word-') || motionLoop.startsWith('praise-word-')
     );
-    const useSplitCharFx = isWordMotionLoop || isWordFx || isCharFx || isDeepWordFx || isCenterWordFx || isReverseCharFx;
+    const useSplitCharFx = isWordMotionLoop || isWordFx || isCharFx || isRandomLetterFx || isDeepWordFx || isCenterWordFx || isReverseCharFx;
 
     if (!useSplitCharFx || !textEl) return 0;
 
@@ -410,12 +431,21 @@ function computeMaxStaggerDelay(s, fxClass, motionLoop, textEl) {
         const charsCount = textEl.querySelectorAll('.char').length;
         return Math.max(0, charsCount - 1) * delayBase;
     }
+    if (isRandomLetterFx) {
+        return delayBase * (PRAISE_RANDOM_LETTER_FX.has(fxClass) ? 9 : 14);
+    }
     if (isWordFx) {
         const wordsCount = textEl.querySelectorAll('.word').length;
         return Math.max(0, wordsCount - 1) * delayBase * 2;
     }
     const charsCount = textEl.querySelectorAll('.char').length;
     return Math.max(0, charsCount - 1) * delayBase;
+}
+
+function getRandomLetterDelay(index, delayBase, fxClass) {
+    const spread = PRAISE_RANDOM_LETTER_FX.has(fxClass) ? 9 : 14;
+    const lane = ((index * 7) + ((index % 5) * 11) + ((index % 3) * 17)) % spread;
+    return lane * delayBase;
 }
 
 function scheduleTransitionComplete(layer, wrapper, nextTxt, gstEl, motionLoop, fadeMs, maxStaggerDelay) {
@@ -881,6 +911,10 @@ function connectWebSocket() {
                     'duotone': 'linear-gradient(135deg, #ff6b35 0%, #f7b267 40%, #c71585 65%, #4b0082 100%)',
                     'aurora-art': 'linear-gradient(90deg, #00ff88, #00e5ff, #8000ff, #ff0088, #ff8800, #00ff88)',
                     'solarpunk': 'linear-gradient(135deg, #22c55e, #84cc16, #eab308, #f59e0b)',
+                    'neo-prism': 'linear-gradient(110deg, #ffffff 0%, #8ff7ff 22%, #ff7ad9 50%, #ffe66d 76%, #ffffff 100%)',
+                    'liquid-gold-box': 'linear-gradient(135deg, #fff7bd 0%, #f7c948 38%, #b7791f 72%, #fff0a3 100%)',
+                    'aurora-glass-box': 'linear-gradient(120deg, #dffcff 0%, #8dd8ff 35%, #d0a2ff 70%, #ffffff 100%)',
+                    'modern-kinetic': 'linear-gradient(90deg, #ffffff 0%, #00e5ff 40%, #ff2d75 68%, #ffffff 100%)',
                 };
 
                 if (!isFixedTheme) {
@@ -1110,6 +1144,23 @@ function connectWebSocket() {
             const praiseExtremeAnims = ['shockwave', 'overdrive', 'nuke', 'voltage', 'riot'];
             if (praiseExtremeAnims.includes(s.trans)) fxClass = 'fx-' + s.trans;
 
+            // --- PRAISE/WORSHIP RANDOM LETTER TRANSITIONS ---
+            const praiseRandomLetterAnims = [
+                'praise-letter-zoom-spark', 'praise-letter-strobe-pop', 'praise-letter-prism-snap',
+                'praise-letter-whip-grid', 'praise-letter-flash-cut', 'praise-letter-orbit-hit',
+                'praise-letter-bass-drop', 'praise-letter-chroma-burst', 'praise-letter-tile-shatter',
+                'praise-letter-speed-ramp'
+            ];
+            const worshipRandomLetterAnims = [
+                'worship-letter-candle-rise', 'worship-letter-mist-bloom', 'worship-letter-lens-prayer',
+                'worship-letter-silk-drift', 'worship-letter-soft-iris', 'worship-letter-cloud-form',
+                'worship-letter-golden-hour', 'worship-letter-deep-focus', 'worship-letter-veil-cascade',
+                'worship-letter-cinematic-breathe'
+            ];
+            if (praiseRandomLetterAnims.includes(s.trans) || worshipRandomLetterAnims.includes(s.trans)) {
+                fxClass = 'fx-' + s.trans;
+            }
+
             const motionLoop = s.motion || "none";
             nextLayer.classList.remove('loop-ready');
             nextLayer.dataset.currentMotionLoop = motionLoop;
@@ -1130,11 +1181,12 @@ function connectWebSocket() {
                 const centerWordFx = ['fx-holy-breathe', 'fx-sanctify', 'fx-ascend', 'fx-mist-form', 'fx-rapture'];
                 const charFx = ['fx-stagger', 'fx-spin', 'fx-wave', 'fx-gauss', 'fx-glitch', 'fx-punch', 'fx-elastic', 'fx-flashpop', 'fx-whip', 'fx-gdrop', 'fx-rgb', 'fx-shake', 'fx-smash', 'fx-slash', 'fx-terminal', 'fx-voltage', 'fx-riot'];
                 const reverseCharFx = ['fx-shockwave', 'fx-overdrive', 'fx-nuke'];
+                const isRandomLetterFx = RANDOM_LETTER_FX.has(fxClass);
                 // Deteksi apakah motion loop yang aktif adalah jenis WORD (membutuhkan .word elements)
                 const isWordMotionLoop = motionLoop !== 'none' && (
                     motionLoop.startsWith('worship-word-') || motionLoop.startsWith('praise-word-')
                 );
-                const useSplitCharFx = isWordMotionLoop || wordFx.includes(fxClass) || charFx.includes(fxClass) || deepWordFx.includes(fxClass) || centerWordFx.includes(fxClass) || reverseCharFx.includes(fxClass);
+                const useSplitCharFx = isWordMotionLoop || wordFx.includes(fxClass) || charFx.includes(fxClass) || isRandomLetterFx || deepWordFx.includes(fxClass) || centerWordFx.includes(fxClass) || reverseCharFx.includes(fxClass);
                 const isWordFx = wordFx.includes(fxClass);
                 const isDeepWordFx = deepWordFx.includes(fxClass);
                 const isCenterWordFx = centerWordFx.includes(fxClass);
@@ -1227,6 +1279,10 @@ function connectWebSocket() {
                         'duotone': 'linear-gradient(135deg, #ff6b35 0%, #f7b267 40%, #c71585 65%, #4b0082 100%)',
                         'aurora-art': 'linear-gradient(90deg, #00ff88, #00e5ff, #8000ff, #ff0088, #ff8800, #00ff88)',
                         'solarpunk': 'linear-gradient(135deg, #22c55e, #84cc16, #eab308, #f59e0b)',
+                        'neo-prism': 'linear-gradient(110deg, #ffffff 0%, #8ff7ff 22%, #ff7ad9 50%, #ffe66d 76%, #ffffff 100%)',
+                        'liquid-gold-box': 'linear-gradient(135deg, #fff7bd 0%, #f7c948 38%, #b7791f 72%, #fff0a3 100%)',
+                        'aurora-glass-box': 'linear-gradient(120deg, #dffcff 0%, #8dd8ff 35%, #d0a2ff 70%, #ffffff 100%)',
+                        'modern-kinetic': 'linear-gradient(90deg, #ffffff 0%, #00e5ff 40%, #ff2d75 68%, #ffffff 100%)',
                     };
                     const themeKey2 = s.theme || 'default';
                     if (gradientThemeMap2[themeKey2]) {
@@ -1370,6 +1426,12 @@ function connectWebSocket() {
                         chars.forEach((c, i) => {
                             c.style.animationDelay = ((total - 1 - i) * delayBase) + 'ms';
                         });
+                    } else if (isRandomLetterFx) {
+                        [nextTxt, gstEl].forEach(container => {
+                            container.querySelectorAll('.char').forEach((c, i) => {
+                                c.style.animationDelay = getRandomLetterDelay(i, delayBase, fxClass) + 'ms';
+                            });
+                        });
                     } else if (isWordFx) {
                         // SEQUENTIAL WORD STAGGER
                         let wordDelay = delayBase * 2;
@@ -1392,11 +1454,11 @@ function connectWebSocket() {
                 const previousLayer = activeLayer;
                 nextLayer.classList.add("active");
                 if (previousLayer) {
-                    beginLayerExit(previousLayer, fadeMs / 1.3, maxStaggerDelay);
+                    beginLayerExit(previousLayer, fadeMs / 1.8, maxStaggerDelay);
                 }
             } else {
                 if (activeLayer && activeLayer.classList.contains('active')) {
-                    beginLayerExit(activeLayer, fadeMs / 1.3, 0);
+                    beginLayerExit(activeLayer, fadeMs / 1.8, 0);
                 }
                 stripFxFromElements(nextLayer, wrapper, nextTxt);
                 setCompositingActive(nextLayer, false);

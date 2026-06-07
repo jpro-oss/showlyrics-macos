@@ -21,7 +21,7 @@
                 onkeyup="onSearchInput()">
             <div id="library-list" class="scroll-area"></div>
             <div id="song-count-info"
-                style="font-size: 0.75em; color: #888; text-align: center; padding: 6px 0; border-top: 1px solid #333; background: #1a1a1a;">
+                style="font-size: 0.65em; color: #888; text-align: center; padding: 6px 0; border-top: 1px solid #333; background: #1a1a1a;">
                 Total: 0 Songs
             </div>
             <div class="panel-header">
@@ -66,6 +66,7 @@
         </div>
     </div>
 
+    <div id="sidebar-resizer" class="sidebar-resizer" title="Drag to resize sidebar"></div>
 
     <div class="col-main">
         <div class="main-toolbar">
@@ -100,13 +101,38 @@
 
         </div>
 
-        <div class="current-song-bar"
-            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; background: #1a1a1a; padding: 10px 15px; border-radius: 8px; border: 1px solid #333;">
-            <div style="color: #aaa;">CURRENT SONG: <span id="now-loaded-text" style="font-weight: bold; color: #fff;">-
-                    NO SONG LOADED -</span></div>
-            <button class="btn-mini"
-                style="background: #ffc107; color: #000; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer;"
-                onclick="openFullEditModal()">✏️ EDIT SONG</button>
+        <div class="current-song-bar">
+            <div class="current-song-info">
+                CURRENT SONG: <span id="now-loaded-text">- NO SONG LOADED -</span>
+            </div>
+            <div class="current-song-actions">
+                <!-- Custom Grid Mode Dropdown -->
+                <div class="custom-grid-dropdown">
+                    <button id="grid-dropdown-btn" class="btn-mini" onclick="toggleGridDropdown(event)">
+                        <span id="grid-dropdown-val">⊞ BOX</span>
+                        <span>▼</span>
+                    </button>
+                    <div id="grid-dropdown-menu" class="custom-dropdown-menu">
+                        <div class="grid-dropdown-item" id="item-grid-mode-box" onclick="selectGridMode('box', event)">
+                            <span>⊞ BOX</span>
+                            <div id="grid-dropdown-zoom" onclick="event.stopPropagation();">
+                                <button class="btn-mini" title="Zoom In" onclick="adjustGridBoxSize(1)">➕</button>
+                                <button class="btn-mini" title="Zoom Out" onclick="adjustGridBoxSize(-1)">➖</button>
+                            </div>
+                        </div>
+                        <div class="grid-dropdown-item" id="item-grid-mode-row" onclick="selectGridMode('row', event)">
+                            <span>☰ ROW</span>
+                        </div>
+                        <div class="dropdown-separator"></div>
+                        <div class="grid-dropdown-item" id="item-grid-grouping" onclick="toggleGridGrouping(event)">
+                            <span class="checkbox-label"><input type="checkbox" id="chk-grid-grouping"
+                                    class="chk-dropdown"> GROUPING</span>
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn-edit-song" onclick="openFullEditModal()">✏️ EDIT SONG</button>
+            </div>
         </div>
 
         <div id="full-edit-modal" class="modal-overlay">
@@ -173,6 +199,7 @@
         <div id="bg-library-wrapper" class="bg-library-wrapper">
 
             <div id="bg-toggle-bar" class="bg-toggle-bar">
+                <div id="bg-library-resizer" class="bg-library-resizer"></div>
                 <div class="bg-cat-group">
                     <button class="media-cat-btn active" onclick="switchMediaCategory(event, 'video')">🎞️
                         VIDEO</button>
@@ -195,6 +222,14 @@
 
                 <!-- PANEL MEDIA: video/audio/photo/presentation -->
                 <div id="bg-media-panel" class="bg-media-panel">
+                    <!-- DRAG & DROP OVERLAY -->
+                    <div id="bg-drag-overlay" class="bg-drag-overlay" style="display: none;">
+                        <div class="bg-drag-overlay-content">
+                            <span class="bg-drag-icon">📥</span>
+                            <div class="bg-drag-text">Drop Files/Folders Here</div>
+                            <div class="bg-drag-sub">Intelligently imports and organizes your media</div>
+                        </div>
+                    </div>
 
                     <div class="bg-folder-sidebar">
                         <!-- SIDEBAR TABS (Only shown for PPT) -->
@@ -235,8 +270,14 @@
 
                     <div class="bg-main-view">
                         <div class="bg-view-header">
-                            <span id="bg-active-folder-name" class="bg-active-name">📂 All Videos</span>
+                            <span id="bg-active-folder-name" class="bg-active-name" title="All Videos">📂 All Videos</span>
                             <div class="bg-view-hint">Right-Click = Preview | Drag & Drop = Apply</div>
+                            <select id="media-sort-select" class="media-sort-select" onchange="changeMediaSort(this.value)">
+                                <option value="name_asc">🔤 A-Z</option>
+                                <option value="name_desc">🔤 Z-A</option>
+                                <option value="date_desc">📅 Newest</option>
+                                <option value="date_asc">📅 Oldest</option>
+                            </select>
                         </div>
 
                         <div id="bg-grid-container" class="bg-grid-view"></div>
@@ -884,6 +925,8 @@
         </div>
     </div>
 
+    <div id="settings-resizer" class="settings-resizer" title="Drag to resize settings panel"></div>
+
     <div class="col-settings">
         <div class="sticky-top-panel">
 
@@ -1072,11 +1115,11 @@
                                 style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
                                 onchange="loadSelectedAlertPreset()"></select>
                             <button class="btn-preset-star" onclick="loadSelectedAlertPreset()" title="Load Preset"
-                                style="background: #28a745; border-color: #28a745; padding: 0 12px;">📂</button>
+                                style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂</button>
                             <button class="btn-preset-del" onclick="deleteAlertPreset()" title="Delete Preset"
-                                style="padding: 0 12px;">🗑️</button>
+                                style="padding: 0 12px; flex: none;">🗑️</button>
                         </div>
-                        <div class="preset-action-btn-group" style="margin-top: 4px;">
+                        <div class="preset-action-btn-group" style="margin-top: 6px;">
                             <button class="btn-preset-save" onclick="overwriteAlertPreset()"
                                 title="Update Preset Ini (Overwrite)">💾 SAVE</button>
                             <button class="btn-preset-saveas" onclick="saveAsAlertPreset()" title="Buat Preset Baru">➕
@@ -1187,17 +1230,16 @@
                             style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
                             onchange="loadSelectedLTPreset()"></select>
                         <button class="btn-preset-star" onclick="loadSelectedLTPreset()" title="Load Preset"
-                            style="background: #28a745; border-color: #28a745; padding: 0 12px;">📂</button>
+                            style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂</button>
                         <button class="btn-preset-del" onclick="deleteLTPreset()" title="Delete Preset"
-                            style="padding: 0 12px;">🗑️</button>
+                            style="padding: 0 12px; flex: none;">🗑️</button>
                     </div>
                     <div class="preset-action-btn-group" style="margin-top: 4px;">
                         <button class="btn-preset-save" onclick="overwriteLTPreset()"
                             title="Update Preset Ini (Overwrite)">💾 SAVE</button>
                         <button class="btn-preset-saveas" onclick="saveAsLTPreset()" title="Buat Preset Baru">➕ SAVE
                             AS</button>
-                        <button class="btn-preset-star" onclick="setLTDefault()" title="Set as Startup Default">⭐
-                            DFLT</button>
+                        <button class="btn-preset-star" onclick="setLTDefault()" title="Set as Startup Default" style="flex: 2;">⭐ SET AS</button>
                     </div>
                 </div>
 
@@ -1349,17 +1391,16 @@
                         style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
                         onchange="loadSelectedFBPreset()"></select>
                     <button class="btn-preset-star" onclick="loadSelectedFBPreset()" title="Load Preset"
-                        style="background: #28a745; border-color: #28a745; padding: 0 12px;">📂</button>
+                        style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂</button>
                     <button class="btn-preset-del" onclick="deleteFBPreset()" title="Delete Preset"
-                        style="padding: 0 12px;">🗑️</button>
+                        style="padding: 0 12px; flex: none;">🗑️</button>
                 </div>
-                <div class="preset-action-btn-group" style="margin-top: 4px;">
+                <div class="preset-action-btn-group" style="margin-top: 6px;">
                     <button class="btn-preset-save" onclick="overwriteFBPreset()"
                         title="Update Preset Ini (Overwrite)">💾 SAVE</button>
                     <button class="btn-preset-saveas" onclick="saveAsFBPreset()" title="Buat Preset Baru">➕ SAVE
                         AS</button>
-                    <button class="btn-preset-star" onclick="setDefaultFBPreset()" title="Set as Startup Default">⭐
-                        DFLT</button>
+                    <button class="btn-preset-star" onclick="setDefaultFBPreset()" title="Set as Startup Default" style="flex: 2;">⭐ SET AS</button>
                 </div>
             </div>
             <label>Layout Mode</label>
@@ -1440,7 +1481,7 @@
         </div>
     </div>
 
-    <div id="dialog-overlay" class="modal-overlay" style="z-index: 9999; display: none;">
+    <div id="dialog-overlay" class="modal-overlay" style="z-index: 10005; display: none;">
         <div class="modal-box" style="width: 400px; border: 2px solid #00e5ff; background: #1a1a1a;">
             <div class="modal-header">
                 <span class="modal-title" id="dialog-title" style="color: #00e5ff;">INFO</span>
@@ -1658,6 +1699,18 @@
 
                                         <option value="solarpunk">🌿 Solarpunk (Fixed)</option>
                                     </optgroup>
+                                    <optgroup label="Advanced Scenic Presets">
+                                        <option value="cloud-halo">Cloud Halo Caption</option>
+                                        <option value="cinematic-caption">Cinematic Text Box</option>
+                                        <option value="calligraphy-gold">Gold Calligraphy</option>
+                                        <option value="neo-prism">Neo Prism Modern</option>
+                                        <option value="liquid-gold-box">Liquid Gold Box</option>
+                                        <option value="aurora-glass-box">Aurora Glass Box</option>
+                                        <option value="ink-sermon">Ink Sermon Script</option>
+                                        <option value="velvet-marquee">Velvet Marquee</option>
+                                        <option value="modern-kinetic">Modern Kinetic Label</option>
+                                        <option value="sacred-parchment">Sacred Parchment</option>
+                                    </optgroup>
                                 </select>
                             </div>
                         </div>
@@ -1743,6 +1796,32 @@
 
                                         <option value="riot">Riot Spin</option>
 
+                                    </optgroup>
+
+                                    <optgroup label="Praise Random Letter Pro">
+                                        <option value="praise-letter-zoom-spark">Zoom Spark Letters</option>
+                                        <option value="praise-letter-strobe-pop">Strobe Pop Letters</option>
+                                        <option value="praise-letter-prism-snap">Prism Snap Letters</option>
+                                        <option value="praise-letter-whip-grid">Whip Grid Letters</option>
+                                        <option value="praise-letter-flash-cut">Flash Cut Letters</option>
+                                        <option value="praise-letter-orbit-hit">Orbit Hit Letters</option>
+                                        <option value="praise-letter-bass-drop">Bass Drop Letters</option>
+                                        <option value="praise-letter-chroma-burst">Chroma Burst Letters</option>
+                                        <option value="praise-letter-tile-shatter">Tile Shatter Letters</option>
+                                        <option value="praise-letter-speed-ramp">Speed Ramp Letters</option>
+                                    </optgroup>
+
+                                    <optgroup label="Worship Random Letter Cinematic">
+                                        <option value="worship-letter-candle-rise">Candle Rise Letters</option>
+                                        <option value="worship-letter-mist-bloom">Mist Bloom Letters</option>
+                                        <option value="worship-letter-lens-prayer">Lens Prayer Letters</option>
+                                        <option value="worship-letter-silk-drift">Silk Drift Letters</option>
+                                        <option value="worship-letter-soft-iris">Soft Iris Letters</option>
+                                        <option value="worship-letter-cloud-form">Cloud Form Letters</option>
+                                        <option value="worship-letter-golden-hour">Golden Hour Letters</option>
+                                        <option value="worship-letter-deep-focus">Deep Focus Letters</option>
+                                        <option value="worship-letter-veil-cascade">Veil Cascade Letters</option>
+                                        <option value="worship-letter-cinematic-breathe">Cinematic Breathe Letters</option>
                                     </optgroup>
 
                                     <optgroup label="Word Transition">

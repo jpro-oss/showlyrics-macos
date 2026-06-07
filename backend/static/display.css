@@ -1,0 +1,5351 @@
+/* 🎯 TAMBAHAN: LAYER IFRAME SCRIPTURE */
+        /* --- SCRIPTURE IFRAME DI DISPLAY.HTML --- */
+        .scripture-iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100% !important;
+            height: 100% !important;
+            border: none;
+            z-index: 9999;
+            pointer-events: none;
+            /* Klik tembus ke layar bawah */
+        }
+
+        .cam-output-iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+            z-index: 1;
+            pointer-events: none;
+            background: transparent;
+        }
+
+        :root {
+            --glow-color: rgba(255, 255, 255, 0.8);
+            --main-color: #ffffff;
+            --fade-speed: 0.8s;
+            --loop-handoff-ms: 800ms;
+            --loop-handoff-ease: cubic-bezier(0.16, 1, 0.3, 1);
+            --main-font: 'Montserrat', sans-serif;
+            --main-font-size: 5vw;
+            /* <--- INI TAMBAHANNYA */
+        }
+
+        html,
+        body {
+            background-color: transparent;
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            perspective: 1000px;
+        }
+
+        #scene-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            z-index: 10;
+            will-change: transform;
+        }
+
+        .move-in {
+            animation: moveZoomIn 20s linear infinite alternate;
+        }
+
+        .move-out {
+            animation: moveZoomOut 20s linear infinite alternate;
+        }
+
+        .move-stay {
+            animation: moveDrift 15s ease-in-out infinite alternate;
+        }
+
+        @keyframes moveZoomIn {
+            0% {
+                transform: scale(1);
+            }
+
+            100% {
+                transform: scale(1.15);
+            }
+        }
+
+        @keyframes moveZoomOut {
+            0% {
+                transform: scale(1.15);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        @keyframes moveDrift {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.05);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        /* ========================================== */
+        /* ARSITEKTUR BARU: WRAPPER KEMBAR SIAM       */
+        /* ========================================== */
+        .lyric-group {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity var(--fade-speed, 0.5s) ease;
+            box-sizing: border-box;
+        }
+
+        .lyric-group.active {
+            opacity: 1;
+        }
+
+        .lyric-group.lyric-exiting {
+            opacity: 0;
+            transition: opacity var(--lyric-exit-ms, 0.5s) ease !important;
+        }
+
+        .lyric-group:not(.active) {
+            animation-play-state: paused;
+        }
+
+        .lyric-group.lyric-dormant,
+        .lyric-group.lyric-dormant * {
+            animation-play-state: paused !important;
+        }
+
+        .lyric-group.lyric-dormant {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .compositing-active {
+            will-change: transform, opacity, filter;
+        }
+
+        .lyric-wrapper {
+            position: relative;
+            display: flex;
+            /* Bikin ngepres dengan text */
+            align-items: center;
+            overflow: visible;
+            min-height: 0;
+        }
+
+        .lyric-text,
+        .lyric-ghost {
+            font-family: var(--main-font);
+            font-size: var(--main-font-size);
+            line-height: 1;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            word-break: normal;
+        }
+
+        .lyric-layer {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transform: translateZ(0);
+        }
+
+        .lyric-text {
+            position: relative;
+            z-index: 2;
+            margin: 0;
+            line-height: 1;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            transform: translateZ(0);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+            padding: 0;
+        }
+
+        .lyric-ghost {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            pointer-events: none;
+            transform: translateZ(0);
+        }
+
+        @keyframes breathe {
+
+            0%,
+            100% {
+                opacity: 0.4;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.7;
+                transform: scale(1.02);
+            }
+        }
+
+        /* ============================== */
+        /* THEMES CSS                     */
+        /* ============================== */
+        .theme-default {
+            color: var(--main-color);
+            text-shadow: 0 0 25px rgba(255, 255, 255, 0.9), 0 0 50px var(--main-color), 0 0 100px var(--main-color), 0 0 150px var(--main-color);
+        }
+
+        .theme-box-black {
+            background-color: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(12px);
+            color: #fff;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 255, 255, 0.6);
+            padding: 25px 60px;
+            border-radius: 15px;
+            display: inline-block;
+            width: auto;
+            box-shadow: 0 15px 50px rgba(0, 0, 0, 0.5), 0 0 30px rgba(255, 255, 255, 0.2);
+        }
+
+        .theme-frosted {
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            color: #fff;
+            border-radius: 15px;
+            display: inline-block;
+            width: auto;
+            padding: 25px 60px;
+            text-shadow: 0 0 25px rgba(255, 255, 255, 0.9), 0 0 50px rgba(255, 255, 255, 0.7);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3), 0 0 40px rgba(255, 255, 255, 0.3);
+        }
+
+        .theme-clean {
+            color: #ffffff;
+            letter-spacing: 1px;
+            text-shadow: 0 0 30px rgba(255, 255, 255, 0.8), 0 0 60px rgba(255, 255, 255, 0.6), 0 0 90px rgba(255, 255, 255, 0.4);
+            font-weight: 700;
+        }
+
+        .theme-pure {
+            color: #ffffff;
+            text-shadow: 0 0 25px rgba(255, 255, 255, 0.9), 0 0 50px rgba(255, 255, 255, 0.7);
+            filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.6));
+        }
+
+        .theme-plain {
+            color: var(--main-color) !important;
+            text-shadow: none !important;
+            background: none !important;
+            filter: none !important;
+            -webkit-text-stroke: 0 !important;
+        }
+
+        .theme-thin {
+            font-weight: 300;
+            letter-spacing: 8px;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 255, 255, 0.6);
+        }
+
+        .theme-bold {
+            font-weight: 900;
+            letter-spacing: -2px;
+            text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4), 0 0 25px rgba(255, 255, 255, 0.8);
+            -webkit-text-stroke: 1px rgba(255, 255, 255, 0.6);
+        }
+
+        .theme-soft {
+            color: #fff;
+            text-shadow: 0 0 30px rgba(255, 255, 255, 0.8), 0 0 60px rgba(255, 255, 255, 0.6), 0 15px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .theme-heaven {
+            color: #fff;
+            text-shadow: 0 0 25px rgba(255, 255, 255, 0.9), 0 0 50px rgba(0, 150, 255, 0.8), 0 0 100px rgba(0, 150, 255, 0.6);
+        }
+
+        .theme-gold {
+            background: linear-gradient(to bottom, #fbf5b7 0%, #bf953f 50%, #b38728 51%, #fbf5b7 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.8)) drop-shadow(0 0 40px rgba(255, 180, 0, 0.6));
+            color: transparent !important;
+        }
+
+        .theme-mist {
+            color: rgba(255, 255, 255, 0.9);
+            filter: blur(0.5px);
+            text-shadow: 0 0 40px rgba(255, 255, 255, 0.8), 0 0 80px rgba(255, 255, 255, 0.6);
+        }
+
+        .theme-ocean {
+            color: #e0ffff;
+            text-shadow: 0 0 20px #00aaaa, 0 0 50px #00aaaa, 0 0 100px #004444;
+        }
+
+        .theme-sunset {
+            background: linear-gradient(180deg, #ffcc00 0%, #ff6666 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(0 0 25px rgba(255, 100, 0, 0.8)) drop-shadow(0 0 50px rgba(200, 50, 0, 0.6));
+            color: transparent !important;
+        }
+
+        .theme-majesty {
+            color: #f8f0ff;
+            text-shadow: 0 0 25px #bf00ff, 0 0 50px #bf00ff, 0 0 100px #4b0082;
+        }
+
+        .theme-nature {
+            background: linear-gradient(180deg, #a8ff78 0%, #78ffd6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(0 0 20px rgba(0, 255, 100, 0.8)) drop-shadow(0 0 40px rgba(0, 150, 50, 0.6));
+            color: transparent !important;
+        }
+
+        .theme-neon {
+            color: transparent;
+            -webkit-text-stroke: 2px #00ffcc;
+            filter: drop-shadow(0 0 15px #00ffcc) drop-shadow(0 0 30px #00ffcc) drop-shadow(0 0 60px #00ffcc);
+        }
+
+        .theme-fire {
+            color: #fff;
+            text-shadow: 0 -3px 10px #ffdd00, 0 -8px 25px #ff6600, 0 -15px 50px #ff0000, 0 -25px 75px #cc0000;
+        }
+
+        .theme-electric {
+            color: #ffff00;
+            font-style: italic;
+            text-shadow: 4px 4px 0px #0000ff, 0 0 20px #ffff00, 0 0 40px #0000ff;
+            transform: skewX(-10deg);
+        }
+
+        .theme-cyberpunk {
+            color: #fff;
+            text-shadow: 3px 0px 0px #00e5ff, -3px 0px 0px #ff0055, 0 0 25px #00e5ff, 0 0 50px #ff0055;
+            letter-spacing: 2px;
+        }
+
+        .theme-hologram {
+            background: linear-gradient(135deg, #8EC5FC 0%, #E0C3FC 50%, #ff9a9e 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(0 0 20px rgba(200, 200, 255, 0.8)) drop-shadow(0 0 40px rgba(255, 150, 200, 0.6));
+            color: transparent !important;
+        }
+
+        .theme-retro {
+            background: -webkit-linear-gradient(#ff00cc, #333399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            -webkit-text-stroke: 1px #fff;
+            filter: drop-shadow(3px 3px 0px rgba(255, 255, 255, 0.3));
+            color: transparent !important;
+        }
+
+        .theme-metal {
+            background: linear-gradient(to bottom, #e0e0e0 0%, #5d5d5d 50%, #333333 51%, #e0e0e0 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.8));
+            color: transparent !important;
+        }
+
+        .theme-glass {
+            color: rgba(255, 255, 255, 0.1);
+            -webkit-text-stroke: 1.5px #fff;
+            text-shadow: 0 0 15px rgba(255, 255, 255, 0.6);
+        }
+
+        .theme-3d {
+            color: #fff;
+            text-shadow: 0 1px 0 #ccc, 0 2px 0 #c9c9c9, 0 3px 0 #bbb, 0 4px 0 #aaa, 0 5px 0 #999, 0 6px 1px rgba(0, 0, 0, .1), 0 0 5px rgba(0, 0, 0, .1), 0 1px 3px rgba(0, 0, 0, .3), 0 3px 5px rgba(0, 0, 0, .2), 0 15px 20px rgba(0, 0, 0, .35);
+        }
+
+        .theme-ice {
+            color: #f0f8ff;
+            text-shadow: 0 0 10px #00ffff, 0 0 25px #00bfff;
+            letter-spacing: 2px;
+        }
+
+        .theme-outline {
+            color: transparent;
+            -webkit-text-stroke: 2.5px #ffffff;
+            filter: drop-shadow(0 0 5px rgba(0, 0, 0, 0.5));
+        }
+
+        .theme-comic {
+            color: #ffeb3b;
+            -webkit-text-stroke: 3px #000;
+            text-shadow: 5px 5px 0px #000;
+            font-weight: 900;
+            transform: skewX(-5deg);
+        }
+
+        .theme-arcade {
+            color: #00ff00;
+            text-shadow: 4px 4px 0px #003300;
+            font-family: 'Courier Prime', monospace;
+            font-weight: bold;
+            letter-spacing: -2px;
+        }
+
+        .theme-matrix {
+            color: #00ff00;
+            text-shadow: 0 0 8px #00ff00;
+            font-family: 'Courier Prime', monospace;
+            letter-spacing: 2px;
+        }
+
+        .theme-horror {
+            color: #ff0000;
+            text-shadow: 0 0 10px #8b0000, 0 20px 20px #000;
+            filter: contrast(1.5);
+        }
+
+        .theme-paper {
+            color: #000;
+            background: #fff;
+            padding: 10px 30px;
+            box-shadow: 5px 5px 0px rgba(0, 0, 0, 0.3);
+            transform: rotate(-2deg);
+            display: inline-block;
+            width: auto;
+            border-radius: 4px;
+        }
+
+        /* HIDE GHOST FOR CLEAN STYLES */
+        .theme-box-black .lyric-ghost,
+        .theme-frosted .lyric-ghost,
+        .theme-clean .lyric-ghost,
+        .theme-pure .lyric-ghost,
+        .theme-paper .lyric-ghost,
+        .theme-plain .lyric-ghost {
+            display: none !important;
+        }
+
+        /* ============================== */
+        /* MASTER ANTI-GAP FIX: ALL EFFECTS */
+        /* Suppress height expansion pada bilingual */
+        /* ============================== */
+        .fx-bloom .lyric-wrapper,
+        .fx-bloom .bilingual-line,
+        .fx-smoke .lyric-wrapper,
+        .fx-smoke .bilingual-line,
+        .fx-light .lyric-wrapper,
+        .fx-light .bilingual-line,
+        .fx-softfocus .lyric-wrapper,
+        .fx-softfocus .bilingual-line,
+        .fx-float .lyric-wrapper,
+        .fx-float .bilingual-line,
+        .fx-punch .lyric-wrapper,
+        .fx-punch .bilingual-line,
+        .fx-elastic .lyric-wrapper,
+        .fx-elastic .bilingual-line,
+        .fx-flashpop .lyric-wrapper,
+        .fx-flashpop .bilingual-line,
+        .fx-whip .lyric-wrapper,
+        .fx-whip .bilingual-line,
+        .fx-gdrop .lyric-wrapper,
+        .fx-gdrop .bilingual-line,
+        .fx-dust .lyric-wrapper,
+        .fx-dust .bilingual-line,
+        .fx-lens .lyric-wrapper,
+        .fx-lens .bilingual-line,
+        .fx-wipe .lyric-wrapper,
+        .fx-wipe .bilingual-line,
+        .fx-abyss .lyric-wrapper,
+        .fx-abyss .bilingual-line,
+        .fx-aurora .lyric-wrapper,
+        .fx-aurora .bilingual-line,
+        .fx-rgb .lyric-wrapper,
+        .fx-rgb .bilingual-line,
+        .fx-shake .lyric-wrapper,
+        .fx-shake .bilingual-line,
+        .fx-smash .lyric-wrapper,
+        .fx-smash .bilingual-line,
+        .fx-slash .lyric-wrapper,
+        .fx-slash .bilingual-line,
+        .fx-terminal .lyric-wrapper,
+        .fx-terminal .bilingual-line {
+            line-height: 1 !important;
+            overflow: visible !important;
+            align-items: center !important;
+        }
+
+        /* ============================== */
+        /* FX LIBRARY (TARGET WRAPPER!)   */
+        /* Melindungi Inline Glow Filter  */
+        /* ============================== */
+        /* ANIMASI LAYER PENUH (Biasa) */
+        .fx-fade .lyric-wrapper {
+            animation: fadeIn var(--fade-speed) ease-in-out forwards;
+        }
+
+        @keyframes fadeIn {
+            0% {
+                opacity: 0;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .fx-track .lyric-wrapper {
+            animation: trackIn var(--fade-speed) ease-out forwards;
+        }
+
+        @keyframes trackIn {
+            0% {
+                letter-spacing: 0.3em;
+                opacity: 0;
+                filter: blur(10px);
+            }
+
+            100% {
+                letter-spacing: normal;
+                opacity: 1;
+                filter: blur(0);
+            }
+        }
+
+        .fx-blur .lyric-wrapper {
+            animation: blurIn var(--fade-speed) cubic-bezier(0.23, 1, 0.32, 1) forwards;
+        }
+
+        @keyframes blurIn {
+            0% {
+                filter: blur(30px);
+                transform: scale(1.1);
+                opacity: 0;
+            }
+
+            100% {
+                filter: blur(0);
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .fx-mask .lyric-wrapper {
+            animation: maskRise var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes maskRise {
+            0% {
+                clip-path: inset(100% -50% -50% -50%);
+                transform: translateY(60px);
+                opacity: 0;
+            }
+
+            100% {
+                clip-path: inset(-50% -50% -50% -50%);
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .fx-burst .lyric-wrapper {
+            animation: glowBurst var(--fade-speed) ease-out forwards;
+        }
+
+        @keyframes glowBurst {
+            0% {
+                opacity: 0;
+                transform: scale(0.9);
+                filter: brightness(3);
+            }
+
+            40% {
+                opacity: 1;
+                transform: scale(1.05);
+                filter: brightness(2);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: brightness(1);
+            }
+        }
+
+        .fx-echo .lyric-wrapper {
+            animation: echoMerge var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+
+        @keyframes echoMerge {
+            0% {
+                opacity: 0;
+                transform: scale(2);
+                filter: blur(20px);
+                letter-spacing: 0.2em;
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: blur(0);
+                letter-spacing: normal;
+            }
+        }
+
+        .fx-flip3d .lyric-wrapper {
+            animation: flipDown var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            transform-origin: top center;
+        }
+
+        @keyframes flipDown {
+            0% {
+                opacity: 0;
+                transform: rotateX(-90deg);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotateX(0deg);
+            }
+        }
+
+        .fx-slide .lyric-wrapper {
+            animation: motionSlide var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes motionSlide {
+            0% {
+                opacity: 0;
+                transform: translateX(-150px) skewX(-20deg);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateX(0) skewX(0);
+            }
+        }
+
+        .fx-focus .lyric-wrapper {
+            animation: focusExp var(--fade-speed) ease-out forwards;
+        }
+
+        @keyframes focusExp {
+            0% {
+                opacity: 0;
+                letter-spacing: -0.2em;
+                filter: blur(15px);
+                transform: scale(0.9);
+            }
+
+            100% {
+                opacity: 1;
+                letter-spacing: normal;
+                filter: blur(0);
+                transform: scale(1);
+            }
+        }
+
+        .fx-neon .lyric-wrapper {
+            animation: neonOn var(--fade-speed) linear forwards;
+        }
+
+        @keyframes neonOn {
+
+            0%,
+            10%,
+            20% {
+                opacity: 0;
+                filter: brightness(0);
+            }
+
+            15%,
+            30% {
+                opacity: 0.4;
+                filter: brightness(0.5);
+            }
+
+            25%,
+            35% {
+                opacity: 1;
+                filter: brightness(2);
+            }
+
+            100% {
+                opacity: 1;
+                filter: brightness(1);
+            }
+        }
+
+        .fx-pop .lyric-wrapper {
+            animation: elasticPop var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            transform-origin: center center;
+        }
+
+        @keyframes elasticPop {
+            0% {
+                opacity: 0;
+                transform: scale(0.3);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .fx-stretch .lyric-wrapper {
+            animation: cinemaStretch var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) forwards;
+            transform-origin: center center;
+        }
+
+        @keyframes cinemaStretch {
+            0% {
+                opacity: 0;
+                transform: scaleY(0) scaleX(1.2);
+                filter: blur(10px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scaleY(1) scaleX(1);
+                filter: blur(0);
+            }
+        }
+
+        .fx-cinema .lyric-wrapper {
+            animation: cinemaZoom var(--fade-speed) ease-out forwards;
+        }
+
+        @keyframes cinemaZoom {
+            0% {
+                opacity: 0;
+                transform: scale(1.3);
+                filter: blur(5px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: blur(0);
+            }
+        }
+
+        .fx-swipe .lyric-wrapper {
+            animation: swipeRight var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes swipeRight {
+            0% {
+                clip-path: inset(0 100% 0 0);
+                transform: translateX(-20px);
+                opacity: 0;
+            }
+
+            100% {
+                clip-path: inset(0 0 0 0);
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .fx-stamp .lyric-wrapper {
+            animation: stampIn var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes stampIn {
+            0% {
+                opacity: 0;
+                transform: scale(3);
+                filter: blur(10px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: blur(0);
+            }
+        }
+
+        .fx-elevator .lyric-wrapper {
+            animation: elevatorUp var(--fade-speed) cubic-bezier(0.23, 1, 0.32, 1) forwards;
+        }
+
+        @keyframes elevatorUp {
+            0% {
+                opacity: 0;
+                transform: translateY(100%);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fx-swivel .lyric-wrapper {
+            animation: swivelIn var(--fade-speed) ease-out forwards;
+            transform-origin: center;
+        }
+
+        @keyframes swivelIn {
+            0% {
+                opacity: 0;
+                transform: rotateY(-90deg);
+                filter: blur(5px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotateY(0deg);
+                filter: blur(0);
+            }
+        }
+
+        .fx-fold .lyric-wrapper {
+            animation: foldDown var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+            transform-origin: top center;
+        }
+
+        @keyframes foldDown {
+            0% {
+                opacity: 0;
+                transform: rotateX(90deg);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotateX(0);
+            }
+        }
+
+        .fx-turb .lyric-wrapper {
+            animation: turbIn var(--fade-speed) linear forwards;
+        }
+
+        @keyframes turbIn {
+            0% {
+                opacity: 0;
+                transform: scale(1.1) translateX(-10px);
+                filter: blur(5px);
+            }
+
+            40% {
+                transform: translateX(-5px);
+            }
+
+            80% {
+                opacity: 1;
+                transform: translateX(0);
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .fx-drop .lyric-wrapper {
+            animation: dropBounce var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes dropBounce {
+            0% {
+                opacity: 0;
+                transform: translateY(-100vh);
+            }
+
+            60% {
+                opacity: 1;
+                transform: translateY(20px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fx-rotate .lyric-wrapper {
+            animation: rotateIn var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes rotateIn {
+            0% {
+                opacity: 0;
+                transform: rotate(-180deg) scale(0.5);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotate(0) scale(1);
+            }
+        }
+
+        .fx-beat .lyric-wrapper {
+            animation: beatIn var(--fade-speed) ease-out forwards;
+        }
+
+        @keyframes beatIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.8);
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.1);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        /* ========================================= */
+        /* ANIMASI SPLIT CHAR (TARGET .char EKSKLUSIF) */
+        /* ========================================= */
+        .fx-stagger .lyric-text .char {
+            opacity: 0;
+            animation: staggerUp var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes staggerUp {
+            0% {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fx-spin .lyric-text .char {
+            opacity: 0;
+            transform-origin: center center;
+            animation: letterSpin var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes letterSpin {
+            0% {
+                opacity: 0;
+                transform: rotateY(90deg) scale(0.5);
+                filter: blur(5px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotateY(0deg) scale(1);
+                filter: blur(0);
+            }
+        }
+
+        .fx-wave .lyric-text .char {
+            opacity: 0;
+            animation: liquidWave var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes liquidWave {
+            0% {
+                opacity: 0;
+                transform: translateY(15px) scaleY(0.5);
+            }
+
+            50% {
+                transform: translateY(-5px) scaleY(1.1);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0) scaleY(1);
+            }
+        }
+
+        .fx-gauss .lyric-text .char {
+            opacity: 0;
+            animation: gaussMerge var(--fade-speed) ease-out forwards;
+        }
+
+        @keyframes gaussMerge {
+            0% {
+                opacity: 0;
+                filter: blur(20px);
+                transform: scale(1.5);
+            }
+
+            100% {
+                opacity: 1;
+                filter: blur(0);
+                transform: scale(1);
+            }
+        }
+
+        .fx-glitch .lyric-text .char {
+            opacity: 0;
+            animation: softGlitch var(--fade-speed) steps(3) forwards;
+        }
+
+        @keyframes softGlitch {
+            0% {
+                opacity: 0;
+                transform: translate(-10px, 5px);
+            }
+
+            33% {
+                transform: translate(10px, -5px);
+                opacity: 0.5;
+                filter: hue-rotate(90deg);
+            }
+
+            66% {
+                transform: translate(-5px, 2px);
+                opacity: 0.8;
+                filter: hue-rotate(-90deg);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translate(0, 0);
+                filter: hue-rotate(0);
+            }
+        }
+
+        /* ========================================= */
+        /* ================================================================ */
+        /* DRAMATIC MOTION LOOPS - PROFESSIONAL STAGE VISUALS & LED WALLS  */
+        /* High-Impact, Modern, Energetic Effects for Worship & Praise     */
+        /* ================================================================ */
+
+        /* ============================= */
+        /* WORSHIP MOTION LOOPS (10 EFFECTS) - SPIRITUAL & SERENE */
+        /* ============================= */
+
+        /* 1. GENTLE AURA PULSE: Soft spiritual aura expanding */
+        .loop-gentle-aura-pulse .lyric-text {
+            animation: gentleAuraPulse 8s ease-in-out infinite;
+        }
+
+        @keyframes gentleAuraPulse {
+
+            0%,
+            100% {
+                text-shadow: 0 0 20px rgba(255, 215, 0, 0.3), 0 0 40px rgba(255, 215, 0, 0.2);
+                opacity: 0.9;
+            }
+
+            50% {
+                text-shadow: 0 0 40px rgba(255, 215, 0, 0.6), 0 0 80px rgba(255, 215, 0, 0.4), 0 0 120px rgba(255, 215, 0, 0.2);
+                opacity: 1;
+                transform: scale(1.02);
+            }
+        }
+
+        /* 2. SILHOUETTE GLOW: Silhouette with divine glow */
+        .loop-silhouette-glow .lyric-text {
+            animation: silhouetteGlow 10s ease-in-out infinite;
+        }
+
+        @keyframes silhouetteGlow {
+
+            0%,
+            100% {
+                filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.4)) brightness(0.8);
+            }
+
+            50% {
+                filter: drop-shadow(0 0 30px rgba(255, 255, 255, 0.8)) brightness(1.2) contrast(1.1);
+                transform: translateY(-2px);
+            }
+        }
+
+        /* 3. PRAYER WAVE: Gentle prayer waves flowing */
+        .loop-prayer-wave .lyric-text {
+            animation: prayerWave 12s ease-in-out infinite;
+        }
+
+        @keyframes prayerWave {
+
+            0%,
+            100% {
+                transform: translateX(0) skewX(0deg);
+                filter: blur(0px);
+            }
+
+            25% {
+                transform: translateX(5px) skewX(1deg);
+                filter: blur(0.5px);
+            }
+
+            50% {
+                transform: translateX(0) skewX(0deg);
+                filter: blur(0px);
+            }
+
+            75% {
+                transform: translateX(-5px) skewX(-1deg);
+                filter: blur(0.5px);
+            }
+        }
+
+        /* 4. HOLY MIST: Sacred mist enveloping text */
+        .loop-holy-mist .lyric-text {
+            animation: holyMist 15s linear infinite;
+        }
+
+        @keyframes holyMist {
+            0% {
+                filter: blur(1px) opacity(0.95);
+                transform: scale(1);
+            }
+
+            50% {
+                filter: blur(3px) opacity(0.85);
+                transform: scale(1.01);
+            }
+
+            100% {
+                filter: blur(1px) opacity(0.95);
+                transform: scale(1);
+            }
+        }
+
+        /* 5. DIVINE LIGHT RAYS: Heavenly light rays piercing through */
+        .loop-divine-light-rays .lyric-text {
+            animation: divineLightRays 6s ease-in-out infinite;
+        }
+
+        @keyframes divineLightRays {
+
+            0%,
+            100% {
+                text-shadow: 0 0 10px rgba(255, 250, 150, 0.5), 0 0 20px rgba(255, 250, 150, 0.3);
+            }
+
+            50% {
+                text-shadow: 0 0 30px rgba(255, 250, 150, 0.9), 0 0 60px rgba(255, 250, 150, 0.6), 0 0 90px rgba(255, 250, 150, 0.3);
+                transform: scale(1.03);
+            }
+        }
+
+        /* 6. SPIRITUAL BREATH: Gentle breathing motion */
+        .loop-spiritual-breath .lyric-text {
+            animation: spiritualBreath 8s ease-in-out infinite;
+        }
+
+        @keyframes spiritualBreath {
+
+            0%,
+            100% {
+                transform: scale(1) rotate(0deg);
+                opacity: 0.9;
+            }
+
+            50% {
+                transform: scale(1.02) rotate(0.5deg);
+                opacity: 1;
+            }
+        }
+
+        /* 7. SACRED FLAME: Calm sacred flame flickering */
+        .loop-sacred-flame .lyric-text {
+            animation: sacredFlame 7s ease-in-out infinite;
+        }
+
+        @keyframes sacredFlame {
+
+            0%,
+            100% {
+                filter: hue-rotate(0deg) brightness(1.1) contrast(1.2);
+                text-shadow: 0 -5px 15px rgba(255, 100, 0, 0.4);
+            }
+
+            50% {
+                filter: hue-rotate(10deg) brightness(1.3) contrast(1.4);
+                text-shadow: 0 -10px 25px rgba(255, 150, 0, 0.7), 0 -15px 35px rgba(255, 100, 0, 0.5);
+                transform: translateY(-1px);
+            }
+        }
+
+        /* 8. ANGEL WINGS: Subtle angel wing motion */
+        .loop-angel-wings .lyric-text {
+            animation: angelWings 14s ease-in-out infinite;
+        }
+
+        @keyframes angelWings {
+
+            0%,
+            100% {
+                transform: rotate(0deg) scale(1);
+                filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.3));
+            }
+
+            25% {
+                transform: rotate(0.3deg) scale(1.005);
+                filter: drop-shadow(5px 0 15px rgba(255, 255, 255, 0.5));
+            }
+
+            50% {
+                transform: rotate(0deg) scale(1);
+                filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.3));
+            }
+
+            75% {
+                transform: rotate(-0.3deg) scale(1.005);
+                filter: drop-shadow(-5px 0 15px rgba(255, 255, 255, 0.5));
+            }
+        }
+
+        /* 9. HEAVENLY CLOUDS: Floating heavenly clouds */
+        .loop-heavenly-clouds .lyric-text {
+            animation: heavenlyClouds 20s linear infinite;
+        }
+
+        @keyframes heavenlyClouds {
+
+            0%,
+            100% {
+                transform: translateY(0) scale(1);
+                filter: blur(0px) opacity(1);
+            }
+
+            50% {
+                transform: translateY(-3px) scale(1.01);
+                filter: blur(1px) opacity(0.95);
+            }
+        }
+
+        /* 10. BLESSING RAIN: Gentle blessing rain falling */
+        .loop-blessing-rain .lyric-text {
+            animation: blessingRain 10s ease-in-out infinite;
+        }
+
+        @keyframes blessingRain {
+
+            0%,
+            100% {
+                transform: translateY(0) scale(1);
+                filter: drop-shadow(0 0 5px rgba(0, 150, 255, 0.3));
+            }
+
+            50% {
+                transform: translateY(2px) scale(1.005);
+                filter: drop-shadow(0 5px 15px rgba(0, 150, 255, 0.6));
+            }
+        }
+
+        /* ============================= */
+        /* PRAISE MOTION LOOPS (15 EFFECTS) - POWERFUL & ENERGETIC */
+        /* ============================= */
+
+        /* 11. POWER SURGE: Powerful energy surge */
+        .loop-power-surge .lyric-text {
+            animation: powerSurge 2s ease-in-out infinite;
+        }
+
+        @keyframes powerSurge {
+
+            0%,
+            100% {
+                transform: scale(1);
+                filter: brightness(1) saturate(1);
+                text-shadow: 0 0 10px var(--main-color);
+            }
+
+            50% {
+                transform: scale(1.1);
+                filter: brightness(1.5) saturate(1.5);
+                text-shadow: 0 0 30px var(--main-color), 0 0 60px var(--main-color);
+            }
+        }
+
+        /* 12. VICTORY BURST: Triumphant victory burst */
+        .loop-victory-burst .lyric-text {
+            animation: victoryBurst 2.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
+        }
+
+        @keyframes victoryBurst {
+
+            0%,
+            100% {
+                transform: scale(1) rotate(0deg);
+                filter: brightness(1);
+            }
+
+            50% {
+                transform: scale(1.12) rotate(1.5deg);
+                filter: brightness(1.6) saturate(1.3);
+                text-shadow: 0 0 25px rgba(255, 215, 0, 0.8);
+            }
+        }
+
+        /* 13. JOY EXPLOSION: Joyful explosion of energy */
+        .loop-joy-explosion .lyric-text {
+            animation: joyExplosion 2.8s ease-out infinite;
+        }
+
+        @keyframes joyExplosion {
+
+            0%,
+            100% {
+                transform: scale(1);
+                filter: brightness(1) hue-rotate(0deg);
+            }
+
+            50% {
+                transform: scale(1.1);
+                filter: brightness(1.8) hue-rotate(30deg) saturate(1.2);
+                text-shadow: 0 0 25px rgba(255, 0, 255, 0.6), 0 0 45px rgba(0, 255, 255, 0.4);
+            }
+        }
+
+        /* 14. PRAISE STORM: Powerful praise storm */
+        .loop-praise-storm .lyric-text {
+            animation: praiseStorm 2.2s ease-in-out infinite;
+        }
+
+        @keyframes praiseStorm {
+
+            0%,
+            100% {
+                transform: translateX(0) scale(1);
+                filter: blur(0px) brightness(1);
+            }
+
+            25% {
+                transform: translateX(3px) scale(1.05);
+                filter: blur(1px) brightness(1.3);
+            }
+
+            50% {
+                transform: translateX(0) scale(1);
+                filter: blur(0px) brightness(1);
+            }
+
+            75% {
+                transform: translateX(-3px) scale(1.05);
+                filter: blur(1px) brightness(1.3);
+            }
+        }
+
+        /* 15. DYNAMIC PULSE: Fast dynamic pulsing */
+        .loop-dynamic-pulse .lyric-text {
+            animation: dynamicPulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes dynamicPulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+                filter: brightness(1) contrast(1);
+            }
+
+            50% {
+                transform: scale(1.08);
+                filter: brightness(1.8) contrast(1.3) saturate(1.2);
+                text-shadow: 0 0 25px var(--main-color);
+            }
+        }
+
+        /* 16. TRIUMPH WAVE: Triumphant wave motion */
+        .loop-triumph-wave .lyric-text {
+            animation: triumphWave 3.5s ease-in-out infinite;
+        }
+
+        @keyframes triumphWave {
+
+            0%,
+            100% {
+                transform: translateY(0) rotate(0deg) scale(1);
+            }
+
+            25% {
+                transform: translateY(-3px) rotate(0.8deg) scale(1.015);
+            }
+
+            50% {
+                transform: translateY(0) rotate(0deg) scale(1);
+            }
+
+            75% {
+                transform: translateY(3px) rotate(-0.8deg) scale(1.015);
+            }
+        }
+
+        /* 17. CELEBRATION FIREWORKS: Firework celebration */
+        .loop-celebration-fireworks .lyric-text {
+            animation: celebrationFireworks 2.6s ease-out infinite;
+        }
+
+        @keyframes celebrationFireworks {
+
+            0%,
+            100% {
+                transform: scale(1) rotate(0deg);
+                filter: brightness(1) hue-rotate(0deg);
+            }
+
+            50% {
+                transform: scale(1.1) rotate(2deg);
+                filter: brightness(1.8) hue-rotate(40deg) saturate(1.4);
+                text-shadow: 0 0 20px rgba(255, 0, 0, 0.6), 0 0 35px rgba(0, 255, 0, 0.4), 0 0 50px rgba(0, 0, 255, 0.3);
+            }
+        }
+
+        /* 18. MIGHTY ROAR: Powerful mighty roar */
+        .loop-mighty-roar .lyric-text {
+            animation: mightyRoar 2.8s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
+        }
+
+        @keyframes mightyRoar {
+
+            0%,
+            100% {
+                transform: scale(1);
+                filter: brightness(1) contrast(1);
+                text-shadow: 0 0 10px var(--main-color);
+            }
+
+            30% {
+                transform: scale(1.2);
+                filter: brightness(1.5) contrast(1.5);
+                text-shadow: 0 0 40px var(--main-color), 0 0 80px var(--main-color);
+            }
+
+            60% {
+                transform: scale(0.95);
+                filter: brightness(0.8) contrast(0.8);
+            }
+        }
+
+        /* 19. GLORY BEAM: Sweeping glory beam */
+        .loop-glory-beam .lyric-text {
+            animation: gloryBeam 3s linear infinite;
+        }
+
+        @keyframes gloryBeam {
+            0% {
+                text-shadow: -100px 0 50px rgba(255, 215, 0, 0.8), -50px 0 30px rgba(255, 215, 0, 0.6);
+            }
+
+            50% {
+                text-shadow: 0 0 60px rgba(255, 215, 0, 1), 0 0 100px rgba(255, 215, 0, 0.8), 0 0 150px rgba(255, 215, 0, 0.6);
+                transform: scale(1.05);
+            }
+
+            100% {
+                text-shadow: 100px 0 50px rgba(255, 215, 0, 0.8), 50px 0 30px rgba(255, 215, 0, 0.6);
+            }
+        }
+
+        /* 20. WORSHIP THUNDER: Powerful worship thunder */
+        .loop-worship-thunder .lyric-text {
+            animation: worshipThunder 1.4s steps(3) infinite;
+        }
+
+        @keyframes worshipThunder {
+
+            0%,
+            100% {
+                filter: brightness(1) contrast(1);
+                transform: scale(1);
+            }
+
+            33% {
+                filter: brightness(3) contrast(2) saturate(1.5);
+                transform: scale(1.1);
+                text-shadow: 0 0 50px rgba(255, 255, 255, 1);
+            }
+
+            66% {
+                filter: brightness(0.5) contrast(0.5);
+                transform: scale(0.95);
+            }
+        }
+
+        /* 21. PRAISE LIGHTNING: Fast praise lightning */
+        .loop-praise-lightning .lyric-text {
+            animation: praiseLightning 0.8s steps(4) infinite;
+        }
+
+        @keyframes praiseLightning {
+
+            0%,
+            100% {
+                text-shadow: 0 0 10px var(--main-color);
+                filter: brightness(1);
+            }
+
+            25% {
+                text-shadow: -30px 0 60px rgba(0, 150, 255, 1), 30px 0 60px rgba(255, 255, 0, 1);
+                filter: brightness(2.5) contrast(1.5);
+            }
+
+            50% {
+                text-shadow: 0 0 10px var(--main-color);
+                filter: brightness(1);
+            }
+
+            75% {
+                text-shadow: 20px 20px 80px rgba(255, 0, 255, 1), -20px -20px 80px rgba(0, 255, 0, 1);
+                filter: brightness(3) contrast(1.8);
+            }
+        }
+
+        /* 22. JOYFUL DANCE: Joyful dancing motion */
+        .loop-joyful-dance .lyric-text {
+            animation: joyfulDance 1.3s ease-in-out infinite;
+        }
+
+        @keyframes joyfulDance {
+
+            0%,
+            100% {
+                transform: translateX(0) rotate(0deg) scale(1);
+            }
+
+            25% {
+                transform: translateX(4px) rotate(2deg) scale(1.02);
+            }
+
+            50% {
+                transform: translateX(0) rotate(0deg) scale(1);
+            }
+
+            75% {
+                transform: translateX(-4px) rotate(-2deg) scale(1.02);
+            }
+        }
+
+        /* 23. VICTORY MARCH: Triumphant victory march */
+        .loop-victory-march .lyric-text {
+            animation: victoryMarch 2s ease-in-out infinite;
+        }
+
+        @keyframes victoryMarch {
+
+            0%,
+            100% {
+                transform: translateX(0) scale(1);
+                filter: brightness(1);
+            }
+
+            50% {
+                transform: translateX(8px) scale(1.03);
+                filter: brightness(1.4) saturate(1.2);
+                text-shadow: 0 0 20px rgba(255, 215, 0, 0.8);
+            }
+        }
+
+        /* 24. POWER ANTHEM: Powerful anthem energy */
+        .loop-power-anthem .lyric-text {
+            animation: powerAnthem 1.7s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
+        }
+
+        @keyframes powerAnthem {
+
+            0%,
+            100% {
+                transform: scale(1);
+                filter: brightness(1) contrast(1);
+            }
+
+            40% {
+                transform: scale(1.15);
+                filter: brightness(1.8) contrast(1.4) saturate(1.3);
+                text-shadow: 0 0 40px var(--main-color);
+            }
+
+            70% {
+                transform: scale(0.98);
+                filter: brightness(0.9) contrast(0.9);
+            }
+        }
+
+        /* 25. CELEBRATION CHORUS: Joyful celebration chorus */
+        .loop-celebration-chorus .lyric-text {
+            animation: celebrationChorus 1.9s ease-in-out infinite;
+        }
+
+        @keyframes celebrationChorus {
+
+            0%,
+            100% {
+                transform: scale(1) rotate(0deg);
+                filter: brightness(1) hue-rotate(0deg);
+            }
+
+            50% {
+                transform: scale(1.08) rotate(1deg);
+                filter: brightness(1.6) hue-rotate(30deg) saturate(1.4);
+                text-shadow: 0 0 30px rgba(255, 0, 255, 0.7), 0 0 60px rgba(0, 255, 255, 0.5);
+            }
+        }
+
+        /* ALERT BAR */
+        #alert-crawl {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            background: rgba(139, 0, 0, 0.9);
+            color: #fff;
+            font-family: sans-serif;
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            display: none;
+            z-index: 999;
+            padding: 10px 0;
+            font-size: 2.5vw;
+        }
+
+        .crawl-content {
+            display: inline-block;
+            padding-left: 100%;
+            animation: crawl 15s linear infinite;
+        }
+
+        @keyframes crawl {
+            0% {
+                transform: translateX(0);
+            }
+
+            100% {
+                transform: translateX(-100%);
+            }
+        }
+
+        /* --- NEW WORSHIP THEMES --- */
+        .theme-holy {
+            color: #fff;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 230, 150, 0.6);
+        }
+
+        .theme-grace {
+            color: #fff;
+            text-shadow: 0 0 15px rgba(255, 255, 255, 0.9), 0 0 30px #d87093, 0 0 60px #800080;
+        }
+
+        .theme-dove {
+            color: #fdfdfd;
+            text-shadow: 0 0 20px #00ffff, 0 0 50px rgba(0, 255, 255, 0.4);
+            font-weight: 300;
+        }
+
+        .theme-sacred {
+            color: #fff;
+            text-shadow: 0 0 15px rgba(255, 255, 255, 0.8), 0 0 30px #ff0000, 0 0 50px #8b0000;
+        }
+
+        .theme-veil {
+            color: rgba(255, 255, 255, 0.8);
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+            filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
+        }
+
+        /* --- NEW PRAISE THEMES --- */
+        .theme-joy {
+            color: #fff;
+            text-shadow: 3px 3px 0 #ff00ff, 6px 6px 0 #ffff00, 9px 9px 0 rgba(0, 0, 0, 0.5);
+            font-weight: 900;
+        }
+
+        .theme-firework {
+            background: linear-gradient(90deg, #ff9900, #ff0055, #cc00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(0 0 15px rgba(255, 0, 85, 0.6));
+            color: transparent !important;
+        }
+
+        .theme-royal {
+            color: #ffd700;
+            text-shadow: 0 5px 15px rgba(0, 0, 0, 0.8), 0 0 20px rgba(255, 215, 0, 0.4);
+            -webkit-text-stroke: 1px #8b6508;
+        }
+
+        .theme-spirit {
+            background: linear-gradient(180deg, #00ffff, #0055ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            -webkit-text-stroke: 2px #fff;
+            filter: drop-shadow(0 5px 15px rgba(0, 0, 0, 0.5));
+            color: transparent !important;
+        }
+
+        .theme-victory {
+            color: #fff;
+            text-shadow: 0 0 10px #00ff00, 0 0 30px #adff2f, 0 0 50px rgba(0, 255, 0, 0.5);
+        }
+
+        /* --- EXTRA WORSHIP THEMES --- */
+        .theme-sunrise {
+            color: #fff;
+            text-shadow: 0 0 10px #ffeb3b, 0 0 30px #ff9800, 0 0 50px #e65100;
+        }
+
+        .theme-midnight {
+            color: #e0eaff;
+            text-shadow: 0 0 15px #0022ff, 0 0 40px #000088;
+        }
+
+        .theme-emerald {
+            color: #fff;
+            text-shadow: 0 0 15px #00ff88, 0 0 30px #008844, 0 0 50px #003311;
+        }
+
+        .theme-crystal {
+            color: #ffffff;
+            text-shadow: 0 0 5px #fff, 0 0 15px #00ffff, 0 0 30px #00bfff;
+        }
+
+        .theme-sepia {
+            color: #f4ecd8;
+            text-shadow: 0 2px 5px #5e4b3c, 0 0 20px #3e2723;
+        }
+
+        /* --- EXTRA PRAISE THEMES --- */
+        .theme-rainbow {
+            background: linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.5));
+            color: transparent !important;
+        }
+
+        .theme-toxic {
+            color: #39ff14;
+            text-shadow: 0 5px 15px #000, 0 0 20px rgba(57, 255, 20, 0.5);
+            -webkit-text-stroke: 1px #003300;
+        }
+
+        .theme-lava {
+            color: #ff3300;
+            text-shadow: 0 2px 0 #ffcc00, 0 5px 20px #000;
+            -webkit-text-stroke: 2px #000;
+            font-weight: 900;
+        }
+
+        .theme-synthwave {
+            color: #ff00ff;
+            text-shadow: 3px 3px 0 #00ffff, -3px -3px 0 #000;
+            font-style: italic;
+            font-weight: 900;
+        }
+
+        .theme-disco {
+            color: #ffffff;
+            text-shadow: 0 0 10px #ff00ff, 0 0 20px #ff00ff, 0 0 40px #00ffff;
+            -webkit-text-stroke: 1px #ff00ff;
+        }
+
+        /* --- LUXURY & TEXTURE THEMES --- */
+        .theme-marble {
+            color: #fdfdfd;
+            text-shadow: 1px 1px 2px #ccc, 2px 2px 4px #aaa, -1px -1px 2px #eee;
+            font-weight: 900;
+        }
+
+        .theme-velvet {
+            color: #8a0303;
+            text-shadow: 0 2px 10px #4a0101, 0 5px 20px #2a0000;
+            font-weight: 300;
+        }
+
+        .theme-diamond {
+            color: #e0ffff;
+            text-shadow: 0 0 5px #fff, 0 0 10px #e0ffff, 2px 2px 2px #fff, -2px -2px 2px #00ffff;
+        }
+
+        .theme-leather {
+            color: #4e342e;
+            text-shadow: 1px 1px 0px #3e2723, 2px 2px 5px #000;
+            font-weight: 900;
+        }
+
+        .theme-goldleaf {
+            background: linear-gradient(45deg, #FFDF00, #D4AF37, #FFDF00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.6));
+            color: transparent !important;
+        }
+
+        /* --- CREATIVE & ARTISTIC THEMES --- */
+        .theme-graffiti {
+            color: #ff0055;
+            -webkit-text-stroke: 2px #000;
+            text-shadow: 5px 5px 0px #00e5ff;
+            font-weight: 900;
+            font-style: italic;
+        }
+
+        .theme-watercolor {
+            color: rgba(0, 150, 255, 0.8);
+            text-shadow: 0 0 20px rgba(0, 255, 150, 0.6), 0 0 40px rgba(255, 0, 150, 0.4);
+            filter: blur(0.5px);
+        }
+
+        .theme-chalk {
+            color: #f4f4f4;
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.5), -1px -1px 2px rgba(255, 255, 255, 0.3);
+            font-weight: 300;
+            filter: drop-shadow(0 0 2px #fff);
+        }
+
+        .theme-blueprint {
+            background: repeating-linear-gradient(45deg, #0055ff, #0055ff 2px, #0044cc 2px, #0044cc 4px);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            filter: drop-shadow(1px 1px 0px #fff);
+            color: transparent !important;
+        }
+
+        .theme-popart {
+            color: #ffff00;
+            text-shadow: 3px 3px 0 #ff0000, 6px 6px 0 #0000ff, 9px 9px 0 #000;
+            font-weight: 900;
+        }
+
+        /* ========================================= */
+        /* --- NEW WORSHIP THEMES (5) --- */
+        /* ========================================= */
+
+        /* 1. CELESTIAL: Multi-layer golden corona glow */
+        .theme-celestial {
+            color: #fff;
+            text-shadow: 0 0 6px #fff, 0 0 18px rgba(255, 230, 160, 0.9), 0 0 50px rgba(255, 200, 80, 0.5), 0 0 100px rgba(255, 140, 30, 0.25);
+            -webkit-text-stroke: 0.5px rgba(255, 220, 120, 0.6);
+        }
+
+        /* 2. INCENSE: Warm amber smoke tones */
+        .theme-incense {
+            color: #f5deb3;
+            text-shadow: 0 0 12px rgba(255, 165, 50, 0.7), 0 0 35px rgba(200, 90, 10, 0.45), 2px 3px 10px rgba(0, 0, 0, 0.9);
+            filter: drop-shadow(0 6px 22px rgba(160, 75, 0, 0.55));
+        }
+
+        /* 3. COVENANT: Deep purple-to-gold-to-crimson gradient */
+        .theme-covenant {
+            background: linear-gradient(135deg, #7c3aed 0%, #9f1239 50%, #d97706 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            filter: drop-shadow(0 3px 18px rgba(124, 58, 237, 0.6));
+        }
+
+        /* 4. ETERNITY: Ultra-light silver with cool refraction glow */
+        .theme-eternity {
+            color: rgba(215, 230, 255, 0.95);
+            text-shadow: 0 0 3px #fff, 0 0 10px rgba(180, 210, 255, 0.85), 0 0 28px rgba(100, 160, 255, 0.4);
+            font-weight: 300;
+        }
+
+        /* 5. ANOINTED: Deep indigo with blessing-purple halo */
+        .theme-anointed {
+            color: #e8deff;
+            text-shadow: 0 0 10px #7c3aed, 0 0 28px #5b21b6, 0 0 60px rgba(124, 58, 237, 0.45);
+            -webkit-text-stroke: 1px rgba(200, 180, 255, 0.55);
+        }
+
+        /* ========================================= */
+        /* --- NEW PRAISE THEMES (5) --- */
+        /* ========================================= */
+
+        /* 6. THUNDER PRAISE: Electric yellow with heavy black shadow */
+        .theme-thunder-praise {
+            color: #ffe600;
+            text-shadow: 0 0 6px #fff, 0 0 20px #ffe600, 3px 3px 0 #000, 6px 6px 0 rgba(0, 0, 0, 0.6);
+            -webkit-text-stroke: 2px #000;
+            font-weight: 900;
+        }
+
+        /* 7. WILDFIRE: Vertical fire gradient – white tip to dark red base */
+        .theme-wildfire {
+            background: linear-gradient(180deg, #fff 0%, #ffdb4a 20%, #ff8c00 55%, #ff2200 80%, #8b0000 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            filter: drop-shadow(0 0 22px rgba(255, 80, 0, 0.85)) drop-shadow(0 0 50px rgba(255, 0, 0, 0.4));
+        }
+
+        /* 8. NEON CROSS: Intense hot-pink neon bloom */
+        .theme-neon-cross {
+            color: #ff0090;
+            text-shadow: 0 0 5px #fff, 0 0 12px #fff, 0 0 22px #fff, 0 0 42px #ff0090, 0 0 80px #ff0090, 0 0 110px #ff0090;
+        }
+
+        /* 9. CELEBRATION: Full-spectrum rainbow with bold weight */
+        .theme-celebration {
+            background: linear-gradient(90deg, #ff0080, #ff6600, #ffdd00, #00ff88, #00d4ff, #8000ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            filter: drop-shadow(0 0 12px rgba(255, 0, 128, 0.6));
+            font-weight: 900;
+        }
+
+        /* 10. ANTHEM: Bold white with double red-shadow for power */
+        .theme-anthem {
+            color: #ffffff;
+            text-shadow: 4px 4px 0 #cc0000, 8px 8px 0 #770000, 0 0 25px rgba(255, 60, 60, 0.55);
+            -webkit-text-stroke: 1px rgba(255, 255, 255, 0.8);
+            font-weight: 900;
+        }
+
+        /* ========================================= */
+        /* --- NEW CREATIVE ART THEMES (10) --- */
+        /* ========================================= */
+
+        /* 11. DUOTONE: Purple-orange cinematic duotone split */
+        .theme-duotone {
+            background: linear-gradient(135deg, #ff6b35 0%, #f7b267 40%, #c71585 65%, #4b0082 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            filter: drop-shadow(4px 4px 0 rgba(199, 21, 133, 0.45));
+        }
+
+        /* 12. MANGA: Bold white with thick black ink outline (anime style) */
+        .theme-manga {
+            color: #fff;
+            -webkit-text-stroke: 4px #000;
+            text-shadow: 5px 5px 0 #000, 9px 9px 0 rgba(0, 0, 0, 0.5);
+            font-weight: 900;
+            font-style: italic;
+        }
+
+        /* 13. BRUTALIST: High-contrast offset-shadow rawness */
+        .theme-brutalist {
+            color: #fff;
+            -webkit-text-stroke: 3px #fff;
+            text-shadow: 10px 10px 0 #ff0000, 20px 20px 0 #000;
+            font-weight: 900;
+        }
+
+        /* 14. GLASSMORPHISM: Frosted light text with depth haze */
+        .theme-glassmorphism {
+            color: rgba(255, 255, 255, 0.92);
+            text-shadow: 0 1px 4px rgba(255, 255, 255, 0.35), 0 0 18px rgba(255, 255, 255, 0.22), 0 0 40px rgba(200, 220, 255, 0.18);
+            -webkit-text-stroke: 1px rgba(255, 255, 255, 0.45);
+            filter: drop-shadow(0 10px 30px rgba(31, 38, 135, 0.35));
+        }
+
+        /* 15. PIXEL ART: 8-bit green with stacked pixel shadow */
+        .theme-pixel-art {
+            color: #39ff14;
+            text-shadow: 3px 0 0 #2ecc11, 6px 0 0 #1a9e0a, 0 3px 0 #39ff14, 3px 3px 0 #2ecc11;
+            -webkit-text-stroke: 1px #003300;
+            font-weight: 900;
+        }
+
+        /* 16. AURORA ART: Shifting aurora-spectrum gradient */
+        .theme-aurora-art {
+            background: linear-gradient(90deg, #00ff88, #00e5ff, #8000ff, #ff0088, #ff8800, #00ff88);
+            background-size: 300% 100%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            filter: drop-shadow(0 0 22px rgba(0, 229, 255, 0.6));
+        }
+
+        /* 17. DRIP PAINT: Bold red with vertical paint-drip shadow stack */
+        .theme-drip-paint {
+            color: #ff2200;
+            -webkit-text-stroke: 2px #000;
+            text-shadow: 0 4px 0 #cc0000, 0 8px 0 #990000, 0 14px 8px rgba(0, 0, 0, 0.6), 0 22px 22px rgba(0, 0, 0, 0.3);
+            font-weight: 900;
+        }
+
+        /* 18. CASSETTE: Lo-fi retro warmth with slight VHS tint */
+        .theme-cassette {
+            color: #d4c5a9;
+            text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.85), 0 0 18px rgba(212, 197, 169, 0.3);
+            -webkit-text-stroke: 1px #8b7355;
+            filter: sepia(0.35) saturate(0.75) drop-shadow(0 3px 10px rgba(0, 0, 0, 0.8));
+        }
+
+        /* 19. GRUNGE: Distressed gold with eroded edge feel */
+        .theme-grunge {
+            color: #c0a060;
+            text-shadow: -2px -2px 0 rgba(0, 0, 0, 0.85), 3px 3px 5px rgba(0, 0, 0, 0.7), 0 0 22px rgba(100, 60, 0, 0.45);
+            -webkit-text-stroke: 2px rgba(0, 0, 0, 0.55);
+            filter: contrast(1.25) saturate(0.65);
+        }
+
+        /* 20. SOLARPUNK: Vibrant eco-futurist green-to-gold gradient */
+        .theme-solarpunk {
+            background: linear-gradient(135deg, #22c55e, #84cc16, #eab308, #f59e0b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            filter: drop-shadow(0 0 18px rgba(34, 197, 94, 0.6)) drop-shadow(0 0 35px rgba(234, 179, 8, 0.35));
+        }
+
+        /* ========================================= */
+        /* --- BASE ALIGNMENT FIX: ANTI-GAP BILINGUAL --- */
+        /* ========================================= */
+        .word,
+        .char {
+            vertical-align: baseline !important;
+            line-height: 1 !important;
+            display: inline-block;
+            margin: 0 !important;
+            padding: 0 !important;
+            font-size: 1em;
+        }
+
+        /* ANTI-GAP FIX: BILINGUAL TEXT CONTAINER */
+        .main-lang,
+        .sub-lang {
+            display: block;
+            line-height: 1 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            min-height: 0;
+            overflow: visible;
+            text-align: inherit;
+            text-decoration: inherit;
+            width: auto;
+        }
+
+        .main-lang {
+            font-size: var(--main-font-size);
+            transform: translateY(0);
+        }
+
+        .sub-lang {
+            font-size: calc(var(--main-font-size) * 0.6);
+            pointer-events: none;
+            transform: translateY(0);
+            margin-top: 0 !important;
+        }
+
+        /* NEW: BILINGUAL LINE WRAPPER - FLEX BASED ALIGNMENT */
+        .bilingual-line {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: inherit;
+            justify-content: center;
+            gap: 0.1em;
+            min-height: 0;
+            overflow: visible;
+            width: auto;
+            margin: 0;
+            position: relative;
+            text-align: inherit;
+        }
+
+        /* ========================================= */
+        /* ENHANCED ANTI-GAP: WORD/CHAR BASELINE FIX */
+        /* Suppress height expansion pada bilingual */
+        /* ========================================= */
+
+        /* CINEMATIC WORSHIP: Per-Word Effects */
+        .fx-bloom .word,
+        .fx-smoke .word,
+        .fx-light .word,
+        .fx-softfocus .word,
+        .fx-float .word {
+            vertical-align: baseline !important;
+            line-height: 1 !important;
+            display: inline-block;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        /* ENERGETIC PRAISE: Per-Char Effects */
+        .fx-punch .lyric-text .char,
+        .fx-elastic .lyric-text .char,
+        .fx-flashpop .lyric-text .char,
+        .fx-whip .lyric-text .char,
+        .fx-gdrop .lyric-text .char,
+        .fx-rgb .lyric-text .char,
+        .fx-shake .lyric-text .char,
+        .fx-smash .lyric-text .char,
+        .fx-slash .lyric-text .char,
+        .fx-terminal .lyric-text .char {
+            vertical-align: baseline !important;
+            line-height: 1 !important;
+            display: inline-block;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        /* AE CINEMATIC: Per-Word Effects */
+        .fx-dust .word,
+        .fx-lens .word,
+        .fx-wipe .word,
+        .fx-abyss .word,
+        .fx-aurora .word {
+            vertical-align: baseline !important;
+            line-height: 1 !important;
+            display: inline-block;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        /* ========================================= */
+        /* --- PRO WORSHIP (PER-WORD): NO SWIPES! --- */
+        /* ========================================= */
+
+        /* 1. BLOOM (Exposure Burn-in): Cahaya blinding yang terbakar lalu fokus menjadi teks */
+        .fx-bloom .word {
+            animation: wBloom var(--fade-speed) ease-out both;
+            display: inline-block;
+        }
+
+        @keyframes wBloom {
+            0% {
+                opacity: 0;
+                filter: brightness(10) blur(20px) contrast(3);
+                transform: scale(1.05);
+            }
+
+            100% {
+                opacity: 1;
+                filter: brightness(1) blur(0) contrast(1);
+                transform: scale(1);
+            }
+        }
+
+        /* 2. SMOKE (Wavering Skew): Meliuk-liuk seperti asap ketiup angin (Tanpa geser posisi) */
+        .fx-smoke .word {
+            animation: wSmoke var(--fade-speed) ease-in-out both;
+            display: inline-block;
+        }
+
+        @keyframes wSmoke {
+            0% {
+                opacity: 0;
+                transform: skewX(-20deg) scale(1.05);
+                filter: blur(10px);
+            }
+
+            50% {
+                opacity: 0.5;
+                transform: skewX(10deg) scale(1.02);
+                filter: blur(4px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: skewX(0deg) scale(1);
+                filter: blur(0);
+            }
+        }
+
+        /* 3. LIGHT (Iris Reveal): Muncul dari tengah seperti gerhana matahari / lensa iris */
+        .fx-light .word {
+            animation: wLight var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+            display: inline-block;
+        }
+
+        @keyframes wLight {
+            0% {
+                opacity: 0;
+                clip-path: circle(0% at 50% 50%);
+                filter: drop-shadow(0 0 20px white);
+            }
+
+            100% {
+                opacity: 1;
+                clip-path: circle(150% at 50% 50%);
+                filter: drop-shadow(0 0 0 transparent);
+            }
+        }
+
+        /* 4. SOFTFOCUS (Deep 3D Tilt): Tidur terlentang, lalu bangun ke depan menatap penonton */
+        .fx-softfocus .word {
+            animation: wFocus var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
+            display: inline-block;
+            transform-origin: bottom center;
+        }
+
+        @keyframes wFocus {
+            0% {
+                opacity: 0;
+                transform: perspective(600px) rotateX(85deg) scale(1.2);
+                filter: blur(15px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: perspective(600px) rotateX(0deg) scale(1);
+                filter: blur(0);
+            }
+        }
+
+        /* 5. FLOAT (Ghostly Convergence): Dua bayangan terpisah yang menyatu jadi satu kata */
+        .fx-float .word {
+            animation: wFloat var(--fade-speed) ease-out both;
+            display: inline-block;
+        }
+
+        @keyframes wFloat {
+            0% {
+                opacity: 0;
+                text-shadow: -30px 0 20px rgba(255, 255, 255, 0.6), 30px 0 20px rgba(255, 255, 255, 0.6);
+                transform: scale(1.1);
+                filter: blur(5px);
+                color: transparent;
+            }
+
+            100% {
+                opacity: 1;
+                text-shadow: 0 0 0 transparent, 0 0 0 transparent;
+                transform: scale(1);
+                filter: blur(0);
+                color: inherit;
+            }
+        }
+
+        /* ========================================= */
+        /* --- PRO PRAISE (PER-CHAR): EXTREME KINETIC --- */
+        /* ========================================= */
+
+        /* 6. PUNCH (Tornado Spin): Mutar dari jarak pandang jauh hingga menabrak layar */
+        .fx-punch .lyric-text .char {
+            animation: pPunch var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+            display: inline-block;
+        }
+
+        @keyframes pPunch {
+            0% {
+                opacity: 0;
+                transform: scale(4) rotate(180deg);
+                filter: blur(10px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1) rotate(0deg);
+                filter: blur(0);
+            }
+        }
+
+        /* 7. ELASTIC (Squish & Squash): Memipih super gepeng horizontal lalu loncat normal (True Jelly) */
+        .fx-elastic .lyric-text .char {
+            animation: pElastic var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
+            display: inline-block;
+            transform-origin: center;
+        }
+
+        @keyframes pElastic {
+            0% {
+                opacity: 0;
+                transform: scaleX(4) scaleY(0.1);
+                filter: blur(5px);
+            }
+
+            40% {
+                opacity: 1;
+                transform: scaleX(0.5) scaleY(1.5);
+                filter: blur(0);
+            }
+
+            70% {
+                transform: scaleX(1.2) scaleY(0.9);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scaleX(1) scaleY(1);
+            }
+        }
+
+        /* 8. FLASHPOP (CRT TV On): Berawal dari garis cahaya super tipis lalu melebar jadi huruf */
+        .fx-flashpop .lyric-text .char {
+            animation: pFlash var(--fade-speed) cubic-bezier(0.1, 0.9, 0.2, 1) both;
+            display: inline-block;
+        }
+
+        @keyframes pFlash {
+            0% {
+                opacity: 0;
+                transform: scaleY(0.01) scaleX(5);
+                filter: brightness(10) contrast(3);
+                background: white;
+                color: transparent;
+            }
+
+            50% {
+                opacity: 1;
+                transform: scaleY(1.2) scaleX(0.9);
+                background: transparent;
+                color: inherit;
+                filter: brightness(2);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: brightness(1);
+            }
+        }
+
+        /* 9. WHIP (3D Door Slam): Berayun seperti pintu dibanting tutup dari samping */
+        .fx-whip .lyric-text .char {
+            animation: pWhip var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+            display: inline-block;
+            transform-origin: left;
+        }
+
+        @keyframes pWhip {
+            0% {
+                opacity: 0;
+                transform: perspective(400px) rotateY(90deg) scale(1.5);
+                filter: blur(5px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: perspective(400px) rotateY(0deg) scale(1);
+                filter: blur(0);
+            }
+        }
+
+        /* 10. GDROP (Giant Stomp): Karakter raksasa dari atas layar nge-stomp ke dalam layar */
+        .fx-gdrop .lyric-text .char {
+            animation: pDrop var(--fade-speed) cubic-bezier(0.5, 0, 0.1, 1) both;
+            display: inline-block;
+        }
+
+        @keyframes pDrop {
+            0% {
+                opacity: 0;
+                transform: scale(8);
+                text-shadow: 0 0 50px red;
+                filter: blur(10px);
+            }
+
+            80% {
+                opacity: 1;
+                transform: scale(0.9);
+                text-shadow: 0 0 10px cyan;
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                text-shadow: 0 0 0 transparent;
+            }
+        }
+
+        /* ========================================= */
+        /* --- AE CINEMATIC WORSHIP (PER-WORD) --- */
+        /* ========================================= */
+
+        /* 1. DUST CLEAR: Simulasi partikel asap/debu yang mengendap */
+        .fx-dust .word {
+            animation: aeDust var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
+            display: inline-block;
+        }
+
+        @keyframes aeDust {
+            0% {
+                opacity: 0;
+                filter: blur(15px);
+                transform: translateY(-20px) scale(1.05) skewX(10deg);
+                text-shadow: 0 30px 20px rgba(255, 255, 255, 0.6);
+            }
+
+            100% {
+                opacity: 1;
+                filter: blur(0);
+                transform: translateY(0) scale(1) skewX(0);
+                text-shadow: 0 0 0 transparent;
+            }
+        }
+
+        /* 2. LENS FLARE: Silau ekstrem ala kamera anamorphic */
+        .fx-lens .word {
+            animation: aeLens var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) both;
+            display: inline-block;
+        }
+
+        @keyframes aeLens {
+            0% {
+                opacity: 0;
+                filter: brightness(5) blur(15px) contrast(2);
+                transform: scale(1.05);
+            }
+
+            100% {
+                opacity: 1;
+                filter: brightness(1) blur(0) contrast(1);
+                transform: scale(1);
+            }
+        }
+
+        /* 3. CINEMATIC WIPE: Muncul disapu dari kiri ke kanan pakai masking */
+        .fx-wipe .word {
+            animation: aeWipe var(--fade-speed) cubic-bezier(0.65, 0, 0.15, 1) both;
+            display: inline-block;
+        }
+
+        @keyframes aeWipe {
+            0% {
+                opacity: 0;
+                clip-path: inset(0 100% 0 0);
+                transform: translateX(-15px);
+            }
+
+            100% {
+                opacity: 1;
+                clip-path: inset(0 0 0 0);
+                transform: translateX(0);
+            }
+        }
+
+        /* 4. ABYSS RISE: Muncul dari jurang 3D (Z-Axis) */
+        .fx-abyss .word {
+            animation: aeAbyss var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+            display: inline-block;
+            transform-origin: top;
+        }
+
+        @keyframes aeAbyss {
+            0% {
+                opacity: 0;
+                transform: perspective(800px) translateZ(-300px) rotateX(-60deg);
+                filter: blur(15px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: perspective(800px) translateZ(0) rotateX(0);
+                filter: blur(0);
+            }
+        }
+
+        /* 5. AURORA GLOW: Glow warna-warni perlahan memudar ke teks solid */
+        .fx-aurora .word {
+            animation: aeAurora var(--fade-speed) ease-out both;
+            display: inline-block;
+        }
+
+        @keyframes aeAurora {
+            0% {
+                opacity: 0;
+                filter: blur(10px);
+                text-shadow: -20px 0 40px #00e5ff, 20px 0 40px #ff00ff;
+                transform: scale(1.02);
+            }
+
+            100% {
+                opacity: 1;
+                filter: blur(0);
+                text-shadow: 0 0 0 transparent;
+                transform: scale(1);
+            }
+        }
+
+        /* ========================================= */
+        /* --- AE MOTION PRAISE (PER-CHAR) --- */
+        /* ========================================= */
+
+        /* 6. RGB GLITCH: Shadow Merah & Biru misah lalu nabrak bersatu */
+        .fx-rgb .lyric-text .char {
+            animation: aeRGB var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
+            display: inline-block;
+        }
+
+        @keyframes aeRGB {
+            0% {
+                opacity: 0;
+                transform: scale(1.2);
+                text-shadow: -30px 0 10px red, 30px 0 10px cyan;
+                filter: blur(5px);
+            }
+
+            50% {
+                opacity: 1;
+                text-shadow: 5px 0 0 red, -5px 0 0 cyan;
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                text-shadow: 0 0 0 transparent;
+            }
+        }
+
+        /* 7. IMPACT SHAKE: Teks jatuh keras trus kameranya gempa (Shake) */
+        .fx-shake .lyric-text .char {
+            animation: aeShake var(--fade-speed) cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+            display: inline-block;
+        }
+
+        @keyframes aeShake {
+            0% {
+                opacity: 0;
+                transform: scale(2.5) translateY(-30px);
+                filter: blur(10px);
+            }
+
+            40% {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+                filter: blur(0);
+            }
+
+            50% {
+                transform: translate(-4px, 4px);
+            }
+
+            60% {
+                transform: translate(4px, -4px);
+            }
+
+            70% {
+                transform: translate(-4px, -4px);
+            }
+
+            80% {
+                transform: translate(4px, 4px);
+            }
+
+            100% {
+                transform: translate(0, 0);
+            }
+        }
+
+        /* 8. KINETIC SMASH: Muter dari sudut tajam lalu ngerem mendadak */
+        .fx-smash .lyric-text .char {
+            animation: aeSmash var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+            display: inline-block;
+        }
+
+        @keyframes aeSmash {
+            0% {
+                opacity: 0;
+                transform: scale(0) rotate(-45deg) translateX(-50px);
+                filter: blur(5px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1) rotate(0) translateX(0);
+                filter: blur(0);
+            }
+        }
+
+        /* 9. NINJA SLASH: Dipotong diagonal (Masking Polygon) trus nyatu */
+        .fx-slash .lyric-text .char {
+            animation: aeSlash var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) both;
+            display: inline-block;
+        }
+
+        @keyframes aeSlash {
+            0% {
+                opacity: 0;
+                clip-path: polygon(0 0, 100% 0, 100% 0, 0 0);
+                transform: translateY(30px) skewX(40deg);
+            }
+
+            100% {
+                opacity: 1;
+                clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+                transform: translateY(0) skewX(0);
+            }
+        }
+
+        /* 10. TERMINAL TYPE: Ngetik instan ala koding Hacker (No fade) */
+        .fx-terminal .lyric-text .char {
+            animation: aeTerminal var(--fade-speed) steps(1, end) both;
+            display: inline-block;
+            border-right: 3px solid transparent;
+        }
+
+        @keyframes aeTerminal {
+            0% {
+                opacity: 0;
+            }
+
+            50% {
+                opacity: 1;
+                border-right-color: var(--main-color);
+            }
+
+            95% {
+                opacity: 1;
+                border-right-color: transparent;
+            }
+
+            100% {
+                opacity: 1;
+                border-right-color: transparent;
+            }
+        }
+
+        /* ========================================================= */
+        /* --- DEEP EFFECT: GROUPED ODD/EVEN WORD TRANSITIONS --- */
+        /* Words 1,3,5... appear first; words 2,4,6... appear after */
+        /* ========================================================= */
+
+        /* BASE: Per-word inline display for all deep effects */
+        .fx-smoke-deep .word,
+        .fx-liquid .word,
+        .fx-zoom-deep .word,
+        .fx-glitch-deep .word,
+        .fx-fisheye .word,
+        .fx-radial-blur .word,
+        .fx-chromatic .word,
+        .fx-motion-blur .word,
+        .fx-veil-lift .word,
+        .fx-particle .word {
+            display: inline-block;
+            vertical-align: baseline !important;
+            line-height: 1 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            will-change: transform, opacity, filter;
+        }
+
+        /* 1. SMOKE DEEP: Asap mengepul berbarengan – odd naik dari kiri, even dari kanan */
+        .fx-smoke-deep .word {
+            animation: wSmokeDpOdd var(--fade-speed) cubic-bezier(0.22, 1, 0.36, 1) both;
+        }
+
+        .fx-smoke-deep .word:nth-child(even) {
+            animation-name: wSmokeDpEven;
+        }
+
+        @keyframes wSmokeDpOdd {
+            0% {
+                opacity: 0;
+                transform: skewX(-25deg) translateX(-10px) scale(1.08);
+                filter: blur(14px);
+            }
+
+            60% {
+                opacity: 0.8;
+                transform: skewX(8deg) translateX(3px) scale(1.01);
+                filter: blur(2px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: skewX(0deg) translateX(0) scale(1);
+                filter: blur(0);
+            }
+        }
+
+        @keyframes wSmokeDpEven {
+            0% {
+                opacity: 0;
+                transform: skewX(25deg) translateX(10px) scale(1.08);
+                filter: blur(14px);
+            }
+
+            60% {
+                opacity: 0.8;
+                transform: skewX(-8deg) translateX(-3px) scale(1.01);
+                filter: blur(2px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: skewX(0deg) translateX(0) scale(1);
+                filter: blur(0);
+            }
+        }
+
+        /* 2. LIQUID: Cair dari atas – odd muncul normal, even terbalik (flip) */
+        .fx-liquid .word {
+            animation: wLiquidOdd var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
+            transform-origin: center top;
+        }
+
+        .fx-liquid .word:nth-child(even) {
+            animation-name: wLiquidEven;
+            transform-origin: center bottom;
+        }
+
+        @keyframes wLiquidOdd {
+            0% {
+                opacity: 0;
+                transform: perspective(400px) rotateX(-80deg) scale(1.1);
+                filter: blur(8px);
+            }
+
+            70% {
+                opacity: 1;
+                transform: perspective(400px) rotateX(8deg) scale(0.98);
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: perspective(400px) rotateX(0deg) scale(1);
+                filter: blur(0);
+            }
+        }
+
+        @keyframes wLiquidEven {
+            0% {
+                opacity: 0;
+                transform: perspective(400px) rotateX(80deg) scale(1.1);
+                filter: blur(8px);
+            }
+
+            70% {
+                opacity: 1;
+                transform: perspective(400px) rotateX(-8deg) scale(0.98);
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: perspective(400px) rotateX(0deg) scale(1);
+                filter: blur(0);
+            }
+        }
+
+        /* 3. ZOOM DEEP: Odd words zoom in from 0, even words zoom in from large */
+        .fx-zoom-deep .word {
+            animation: wZoomDpIn var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        .fx-zoom-deep .word:nth-child(even) {
+            animation-name: wZoomDpOut;
+        }
+
+        @keyframes wZoomDpIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.2) translateZ(-200px);
+                filter: blur(20px) brightness(3);
+            }
+
+            70% {
+                opacity: 1;
+                transform: scale(1.05) translateZ(5px);
+                filter: blur(0) brightness(1.1);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1) translateZ(0);
+                filter: blur(0) brightness(1);
+            }
+        }
+
+        @keyframes wZoomDpOut {
+            0% {
+                opacity: 0;
+                transform: scale(3.5) translateZ(200px);
+                filter: blur(25px) brightness(4);
+            }
+
+            70% {
+                opacity: 1;
+                transform: scale(0.97) translateZ(-5px);
+                filter: blur(0) brightness(1.1);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1) translateZ(0);
+                filter: blur(0) brightness(1);
+            }
+        }
+
+        /* 4. GLITCH DEEP: Odd snaps from top-left, even snaps from bottom-right with RGB split */
+        .fx-glitch-deep .word {
+            animation: wGlitchDpA var(--fade-speed) steps(3) both;
+        }
+
+        .fx-glitch-deep .word:nth-child(even) {
+            animation-name: wGlitchDpB;
+        }
+
+        @keyframes wGlitchDpA {
+            0% {
+                opacity: 0;
+                transform: translate(-12px, -8px) skewX(15deg);
+                text-shadow: -8px 0 0 #ff0055, 8px 0 0 #00e5ff;
+                filter: blur(4px);
+            }
+
+            33% {
+                opacity: 1;
+                transform: translate(4px, 2px) skewX(-5deg);
+                text-shadow: 4px 0 0 #ff0055, -4px 0 0 #00e5ff;
+                filter: blur(1px);
+            }
+
+            66% {
+                opacity: 1;
+                transform: translate(-2px, -1px) skewX(2deg);
+                text-shadow: 1px 0 0 #ff0055, -1px 0 0 #00e5ff;
+            }
+
+            100% {
+                opacity: 1;
+                transform: translate(0, 0) skewX(0deg);
+                text-shadow: none;
+                filter: blur(0);
+            }
+        }
+
+        @keyframes wGlitchDpB {
+            0% {
+                opacity: 0;
+                transform: translate(12px, 8px) skewX(-15deg);
+                text-shadow: 8px 0 0 #ff00ff, -8px 0 0 #ffff00;
+                filter: blur(4px);
+            }
+
+            33% {
+                opacity: 1;
+                transform: translate(-4px, -2px) skewX(5deg);
+                text-shadow: -4px 0 0 #ff00ff, 4px 0 0 #ffff00;
+                filter: blur(1px);
+            }
+
+            66% {
+                opacity: 1;
+                transform: translate(2px, 1px) skewX(-2deg);
+                text-shadow: -1px 0 0 #ff00ff, 1px 0 0 #ffff00;
+            }
+
+            100% {
+                opacity: 1;
+                transform: translate(0, 0) skewX(0deg);
+                text-shadow: none;
+                filter: blur(0);
+            }
+        }
+
+        /* 5. FISHEYE: Odd from exaggerated fisheye distortion, even from inverted barrel */
+        .fx-fisheye .word {
+            animation: wFisheyeA var(--fade-speed) cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+
+        .fx-fisheye .word:nth-child(even) {
+            animation-name: wFisheyeB;
+        }
+
+        @keyframes wFisheyeA {
+            0% {
+                opacity: 0;
+                transform: scale(2.2) perspective(200px) rotateY(-30deg);
+                filter: blur(10px);
+            }
+
+            65% {
+                opacity: 1;
+                transform: scale(1.03) perspective(400px) rotateY(4deg);
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1) perspective(400px) rotateY(0deg);
+            }
+        }
+
+        @keyframes wFisheyeB {
+            0% {
+                opacity: 0;
+                transform: scale(2.2) perspective(200px) rotateY(30deg);
+                filter: blur(10px);
+            }
+
+            65% {
+                opacity: 1;
+                transform: scale(1.03) perspective(400px) rotateY(-4deg);
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1) perspective(400px) rotateY(0deg);
+            }
+        }
+
+        /* 6. RADIAL BLUR: Odd bursts from center outward, even implodes from outside inward */
+        .fx-radial-blur .word {
+            animation: wRadialBurstOut var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+
+        .fx-radial-blur .word:nth-child(even) {
+            animation-name: wRadialBurstIn;
+        }
+
+        @keyframes wRadialBurstOut {
+            0% {
+                opacity: 0;
+                transform: scale(0.1);
+                filter: blur(30px) brightness(5);
+            }
+
+            50% {
+                opacity: 0.9;
+                transform: scale(1.08);
+                filter: blur(2px) brightness(1.3);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: blur(0) brightness(1);
+            }
+        }
+
+        @keyframes wRadialBurstIn {
+            0% {
+                opacity: 0;
+                transform: scale(4.5);
+                filter: blur(30px) brightness(0.3);
+            }
+
+            50% {
+                opacity: 0.9;
+                transform: scale(0.95);
+                filter: blur(2px) brightness(1.2);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: blur(0) brightness(1);
+            }
+        }
+
+        /* 7. CHROMATIC: RGB channel split – odd = red channel first, even = cyan channel first */
+        .fx-chromatic .word {
+            animation: wChromaticA var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
+        }
+
+        .fx-chromatic .word:nth-child(even) {
+            animation-name: wChromaticB;
+        }
+
+        @keyframes wChromaticA {
+            0% {
+                opacity: 0;
+                transform: scale(1.1);
+                text-shadow: -15px 0 10px #ff0055, 15px 0 10px #00e5ff;
+                filter: blur(6px);
+            }
+
+            40% {
+                opacity: 1;
+                text-shadow: -5px 0 4px #ff0055, 5px 0 4px #00e5ff;
+                filter: blur(1px);
+            }
+
+            75% {
+                text-shadow: -1px 0 0 #ff0055, 1px 0 0 #00e5ff;
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                text-shadow: none;
+                filter: blur(0);
+            }
+        }
+
+        @keyframes wChromaticB {
+            0% {
+                opacity: 0;
+                transform: scale(1.1);
+                text-shadow: 15px 0 10px #ff00ff, -15px 0 10px #ffff00;
+                filter: blur(6px);
+            }
+
+            40% {
+                opacity: 1;
+                text-shadow: 5px 0 4px #ff00ff, -5px 0 4px #ffff00;
+                filter: blur(1px);
+            }
+
+            75% {
+                text-shadow: 1px 0 0 #ff00ff, -1px 0 0 #ffff00;
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                text-shadow: none;
+                filter: blur(0);
+            }
+        }
+
+        /* 8. MOTION BLUR: Odd streaks from left with -5° tilt, even streaks from right with +5° tilt */
+        .fx-motion-blur .word {
+            animation: wMotionBlurL var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        .fx-motion-blur .word:nth-child(even) {
+            animation-name: wMotionBlurR;
+        }
+
+        @keyframes wMotionBlurL {
+            0% {
+                opacity: 0;
+                transform: translateX(-60px) rotate(-5deg) scaleX(1.4);
+                filter: blur(15px);
+            }
+
+            60% {
+                opacity: 1;
+                transform: translateX(3px) rotate(1deg) scaleX(0.99);
+                filter: blur(1px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateX(0) rotate(0deg) scaleX(1);
+                filter: blur(0);
+            }
+        }
+
+        @keyframes wMotionBlurR {
+            0% {
+                opacity: 0;
+                transform: translateX(60px) rotate(5deg) scaleX(1.4);
+                filter: blur(15px);
+            }
+
+            60% {
+                opacity: 1;
+                transform: translateX(-3px) rotate(-1deg) scaleX(0.99);
+                filter: blur(1px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateX(0) rotate(0deg) scaleX(1);
+                filter: blur(0);
+            }
+        }
+
+        /* 9. VEIL LIFT: Odd = iris open from center, even = veil falls away from top */
+        .fx-veil-lift .word {
+            animation: wVeilIris var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+
+        .fx-veil-lift .word:nth-child(even) {
+            animation-name: wVeilFall;
+        }
+
+        @keyframes wVeilIris {
+            0% {
+                opacity: 0;
+                clip-path: circle(0% at 50% 50%);
+                filter: blur(12px) brightness(3);
+            }
+
+            60% {
+                opacity: 1;
+                clip-path: circle(75% at 50% 50%);
+                filter: blur(2px) brightness(1.2);
+            }
+
+            100% {
+                opacity: 1;
+                clip-path: circle(200% at 50% 50%);
+                filter: blur(0) brightness(1);
+            }
+        }
+
+        @keyframes wVeilFall {
+            0% {
+                opacity: 0;
+                clip-path: inset(0 0 100% 0);
+                transform: translateY(-8px);
+                filter: blur(10px);
+            }
+
+            60% {
+                opacity: 1;
+                clip-path: inset(0 0 0% 0);
+                transform: translateY(3px);
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                clip-path: inset(0 0 0% 0);
+                transform: translateY(0);
+                filter: blur(0);
+            }
+        }
+
+        /* 10. PARTICLE: Odd from above with scatter, even from below – AE Particle-style */
+        .fx-particle .word {
+            animation: wParticleUp var(--fade-speed) cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+
+        .fx-particle .word:nth-child(even) {
+            animation-name: wParticleDown;
+        }
+
+        @keyframes wParticleUp {
+            0% {
+                opacity: 0;
+                transform: translateY(-40px) scale(1.3);
+                filter: blur(12px) brightness(4);
+            }
+
+            60% {
+                opacity: 1;
+                transform: translateY(6px) scale(0.97);
+                filter: blur(0) brightness(1.1);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+                filter: blur(0) brightness(1);
+            }
+        }
+
+        @keyframes wParticleDown {
+            0% {
+                opacity: 0;
+                transform: translateY(40px) scale(1.3);
+                filter: blur(12px) brightness(4);
+            }
+
+            60% {
+                opacity: 1;
+                transform: translateY(-6px) scale(0.97);
+                filter: blur(0) brightness(1.1);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+                filter: blur(0) brightness(1);
+            }
+        }
+
+        /* ============================================================= */
+        /* --- WORSHIP PRO (CENTER-OUT WORD STAGGER) --- */
+        /* Center word appears first, then ripples outward L & R */
+        /* ============================================================= */
+
+        .fx-holy-breathe .word,
+        .fx-sanctify .word,
+        .fx-ascend .word,
+        .fx-mist-form .word,
+        .fx-rapture .word {
+            display: inline-block;
+            vertical-align: baseline !important;
+            line-height: 1 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            will-change: transform, opacity, filter;
+        }
+
+        /* 1. HOLY BREATHE: Divine light materializes from center outward */
+        .fx-holy-breathe .word {
+            animation: wHolyBreathe var(--fade-speed) ease-out both;
+        }
+
+        @keyframes wHolyBreathe {
+            0% {
+                opacity: 0;
+                transform: scale(0.7);
+                filter: brightness(8) blur(18px);
+            }
+
+            55% {
+                opacity: 1;
+                transform: scale(1.04);
+                filter: brightness(1.5) blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: brightness(1);
+            }
+        }
+
+        /* 2. SANCTIFY: White-hot glow cools into color, center-out */
+        .fx-sanctify .word {
+            animation: wSanctify var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
+        }
+
+        @keyframes wSanctify {
+            0% {
+                opacity: 0;
+                filter: brightness(10) saturate(0) blur(10px);
+                transform: scale(1.1);
+            }
+
+            50% {
+                opacity: 1;
+                filter: brightness(2.5) saturate(0.4) blur(2px);
+                transform: scale(1.02);
+            }
+
+            100% {
+                opacity: 1;
+                filter: brightness(1) saturate(1) blur(0);
+                transform: scale(1);
+            }
+        }
+
+        /* 3. ASCEND: Words rise with golden shimmer trail, center-out */
+        .fx-ascend .word {
+            animation: wAscend var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        @keyframes wAscend {
+            0% {
+                opacity: 0;
+                transform: translateY(35px) scale(0.85);
+                filter: blur(12px) brightness(4);
+                text-shadow: 0 0 40px gold;
+            }
+
+            65% {
+                opacity: 1;
+                transform: translateY(-4px) scale(1.02);
+                filter: blur(0) brightness(1.2);
+                text-shadow: 0 0 8px gold;
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+                filter: brightness(1);
+                text-shadow: none;
+            }
+        }
+
+        /* 4. MIST FORM: Mist coalesces from scattered angle, center-out */
+        .fx-mist-form .word {
+            animation: wMistForm var(--fade-speed) cubic-bezier(0.22, 1, 0.36, 1) both;
+        }
+
+        @keyframes wMistForm {
+            0% {
+                opacity: 0;
+                transform: rotate(-18deg) scale(1.5);
+                filter: blur(22px) brightness(2.5);
+            }
+
+            55% {
+                opacity: 0.9;
+                transform: rotate(4deg) scale(1.04);
+                filter: blur(4px) brightness(1.2);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotate(0deg) scale(1);
+                filter: blur(0) brightness(1);
+            }
+        }
+
+        /* 5. RAPTURE: Words descend from heaven with light beam, center-out */
+        .fx-rapture .word {
+            animation: wRapture var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+
+        @keyframes wRapture {
+            0% {
+                opacity: 0;
+                transform: translateY(-55px) scale(1.25);
+                filter: blur(18px) brightness(6);
+            }
+
+            60% {
+                opacity: 1;
+                transform: translateY(5px) scale(0.97);
+                filter: blur(0) brightness(1.3);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+                filter: brightness(1);
+            }
+        }
+
+        /* ============================================================= */
+        /* --- PRAISE EXTREME (REVERSE CASCADE + VARIATION CHARS) --- */
+        /* Last char appears first, ripples backward to first char */
+        /* ============================================================= */
+
+        .fx-shockwave .lyric-text .char,
+        .fx-overdrive .lyric-text .char,
+        .fx-nuke .lyric-text .char,
+        .fx-voltage .lyric-text .char,
+        .fx-riot .lyric-text .char {
+            display: inline-block;
+            vertical-align: baseline !important;
+            line-height: 1 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            will-change: transform, opacity, filter;
+        }
+
+        /* 6. SHOCKWAVE: Chars explode from microscale then snap back, reverse cascade */
+        .fx-shockwave .lyric-text .char {
+            animation: pShockwave var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+        }
+
+        @keyframes pShockwave {
+            0% {
+                opacity: 0;
+                transform: scale(6);
+                filter: blur(10px) brightness(8);
+            }
+
+            55% {
+                opacity: 1;
+                transform: scale(0.88);
+                filter: blur(0) brightness(1.4);
+            }
+
+            75% {
+                transform: scale(1.06);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: brightness(1);
+            }
+        }
+
+        /* 7. OVERDRIVE: Chars slam from extreme horizontal skew, reverse cascade */
+        .fx-overdrive .lyric-text .char {
+            animation: pOverdrive var(--fade-speed) cubic-bezier(0.68, -0.55, 0.265, 1.55) both;
+        }
+
+        @keyframes pOverdrive {
+            0% {
+                opacity: 0;
+                transform: skewX(-50deg) scaleX(4);
+                filter: blur(12px) brightness(10);
+            }
+
+            55% {
+                opacity: 1;
+                transform: skewX(6deg) scaleX(0.96);
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: skewX(0deg) scaleX(1);
+            }
+        }
+
+        /* 8. NUKE: Chars implode from microscale then bounce, reverse cascade */
+        .fx-nuke .lyric-text .char {
+            animation: pNuke var(--fade-speed) cubic-bezier(0.5, -0.3, 0.1, 1.5) both;
+        }
+
+        @keyframes pNuke {
+            0% {
+                opacity: 0;
+                transform: scale(0.01) translateY(-80px);
+                filter: blur(20px) brightness(12);
+            }
+
+            45% {
+                opacity: 1;
+                transform: scale(1.4) translateY(12px);
+                filter: blur(0) brightness(2);
+            }
+
+            72% {
+                transform: scale(0.88) translateY(-5px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+                filter: brightness(1);
+            }
+        }
+
+        /* 9. VOLTAGE: Electric crackling – odd from top, even from bottom (sequential) */
+        .fx-voltage .lyric-text .char {
+            animation: pVoltageA var(--fade-speed) steps(4) both;
+        }
+
+        .fx-voltage .lyric-text .char:nth-child(even) {
+            animation-name: pVoltageB;
+        }
+
+        @keyframes pVoltageA {
+            0% {
+                opacity: 0;
+                transform: translateY(-25px) scaleY(0.05);
+                filter: brightness(15) blur(4px);
+                color: #00e5ff;
+            }
+
+            25% {
+                opacity: 1;
+                transform: translateY(6px) scaleY(1.4);
+                filter: brightness(4);
+            }
+
+            75% {
+                transform: translateY(-2px) scaleY(1);
+                filter: brightness(1.6);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0) scaleY(1);
+                filter: brightness(1);
+                color: inherit;
+            }
+        }
+
+        @keyframes pVoltageB {
+            0% {
+                opacity: 0;
+                transform: translateY(25px) scaleY(0.05);
+                filter: brightness(15) blur(4px);
+                color: #ffff00;
+            }
+
+            25% {
+                opacity: 1;
+                transform: translateY(-6px) scaleY(1.4);
+                filter: brightness(4);
+            }
+
+            75% {
+                transform: translateY(2px) scaleY(1);
+                filter: brightness(1.6);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0) scaleY(1);
+                filter: brightness(1);
+                color: inherit;
+            }
+        }
+
+        /* 10. RIOT: Chars spin from 3 rotating angles in chaotic rhythm (sequential) */
+        .fx-riot .lyric-text .char {
+            animation: pRiotA var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+        }
+
+        .fx-riot .lyric-text .char:nth-child(3n+1) {
+            animation-name: pRiotB;
+        }
+
+        .fx-riot .lyric-text .char:nth-child(3n+2) {
+            animation-name: pRiotC;
+        }
+
+        @keyframes pRiotA {
+            0% {
+                opacity: 0;
+                transform: rotate(-200deg) scale(3.5) translateX(-25px);
+                filter: blur(8px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotate(0deg) scale(1) translateX(0);
+                filter: blur(0);
+            }
+        }
+
+        @keyframes pRiotB {
+            0% {
+                opacity: 0;
+                transform: rotate(200deg) scale(3.5) translateY(-25px);
+                filter: blur(8px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotate(0deg) scale(1) translateY(0);
+                filter: blur(0);
+            }
+        }
+
+        @keyframes pRiotC {
+            0% {
+                opacity: 0;
+                transform: rotate(-90deg) scale(0.1) translateX(25px);
+                filter: blur(8px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: rotate(0deg) scale(1) translateX(0);
+                filter: blur(0);
+            }
+        }
+
+        /* =========================================================== */
+        /* --- PRO MOTION LOOPS (SUBTLE & ELEGANT) ---                */
+        /* FIX v2: Target .lyric-text (bukan layer itu sendiri)        */
+        /* Agar tidak konflik dengan FX IN yang animates .lyric-wrapper */
+        /* =========================================================== */
+
+        /* 1. LAZY: Melayang vertikal super lambat (Ambient Float) */
+        .loop-lazy .lyric-text {
+            animation: proLazy 8s cubic-bezier(0.4, 0, 0.6, 1) infinite alternate;
+        }
+
+        @keyframes proLazy {
+            0% {
+                transform: translateY(0);
+                filter: drop-shadow(0 5px 15px rgba(255, 255, 255, 0.1));
+            }
+
+            100% {
+                transform: translateY(-10px);
+                filter: drop-shadow(0 15px 25px rgba(255, 255, 255, 0.3));
+            }
+        }
+
+        /* 2. JINGLE: Bernapas pelan, membesar/mengecil (Cinematic Breathe) */
+        .loop-jingle .lyric-text {
+            animation: proBreathe 4s ease-in-out infinite alternate;
+        }
+
+        @keyframes proBreathe {
+            0% {
+                transform: scale(1);
+                opacity: 0.9;
+            }
+
+            100% {
+                transform: scale(1.02);
+                opacity: 1;
+            }
+        }
+
+        /* 3. GRUNGE: Getaran analog yang sangat halus (VHS Tracking micro-shake) */
+        .loop-grunge .lyric-text {
+            animation: proGrunge 0.2s infinite;
+        }
+
+        @keyframes proGrunge {
+
+            0%,
+            100% {
+                transform: translate(0, 0);
+            }
+
+            50% {
+                transform: translate(-1px, 1px) skewX(0.5deg);
+            }
+        }
+
+        /* 4. STROBE: Denyut cahaya ambient (Glow Pulse), BUKAN kedip layar */
+        .loop-strobe .lyric-text {
+            animation: proGlowPulse 2.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes proGlowPulse {
+            0% {
+                filter: drop-shadow(0 0 5px var(--main-color));
+                opacity: 0.85;
+            }
+
+            100% {
+                filter: drop-shadow(0 0 30px var(--main-color)) brightness(1.2);
+                opacity: 1;
+            }
+        }
+
+        /* 5. NEON PULSE: Perubahan warna Hue yang sangat lambat dan tipis (Aura Shift) */
+        .loop-pulse-neon .lyric-text {
+            animation: proAura 10s linear infinite alternate;
+        }
+
+        @keyframes proAura {
+            0% {
+                filter: hue-rotate(-10deg) brightness(1);
+            }
+
+            100% {
+                filter: hue-rotate(10deg) brightness(1.1);
+            }
+        }
+
+        /* 6. EARTHQUAKE: Efek "Handheld Camera" (kamera dipegang tangan, goyang lambat) */
+        .loop-earthquake .lyric-text {
+            animation: proHandheld 6s ease-in-out infinite;
+        }
+
+        @keyframes proHandheld {
+
+            0%,
+            100% {
+                transform: translate(0, 0) rotate(0deg);
+            }
+
+            25% {
+                transform: translate(2px, -1px) rotate(0.2deg);
+            }
+
+            50% {
+                transform: translate(-1px, 2px) rotate(-0.2deg);
+            }
+
+            75% {
+                transform: translate(-2px, -2px) rotate(0.1deg);
+            }
+        }
+
+        /* 7. HYPNOTIC: Efek Parallax 3D yang sangat tipis merespon seolah ada lensa */
+        .loop-hypnotic .lyric-text {
+            animation: proParallax 8s ease-in-out infinite alternate;
+            transform-style: preserve-3d;
+        }
+
+        @keyframes proParallax {
+            0% {
+                transform: perspective(1000px) rotateX(-2deg) rotateY(2deg);
+            }
+
+            100% {
+                transform: perspective(1000px) rotateX(2deg) rotateY(-2deg);
+            }
+        }
+
+        /* 8. SONAR PING: Garis tepi (stroke) cahaya yang muncul berkala (Edge Scan) */
+        .loop-sonar .lyric-text {
+            animation: proScan 4s cubic-bezier(0.1, 0.9, 0.2, 1) infinite;
+        }
+
+        @keyframes proScan {
+
+            0%,
+            80% {
+                text-shadow: 0 0 0 transparent;
+                transform: scale(1);
+            }
+
+            85% {
+                text-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+                transform: scale(1.01);
+            }
+
+            100% {
+                text-shadow: 0 0 40px rgba(255, 255, 255, 0);
+                transform: scale(1);
+            }
+        }
+
+        /* 9. RGB GLITCH: Glitch Subtil, cuma misah 1-2 pixel jarang-jarang (Tasteful Glitch) */
+        .loop-glitch-rgb .lyric-text {
+            animation: proRGB 5s infinite;
+        }
+
+        @keyframes proRGB {
+
+            0%,
+            96%,
+            100% {
+                filter: drop-shadow(0 0 0 transparent);
+                transform: translateX(0);
+            }
+
+            97% {
+                filter: drop-shadow(-2px 0 0 rgba(255, 0, 0, 0.5)) drop-shadow(2px 0 0 rgba(0, 255, 255, 0.5));
+                transform: translateX(1px);
+            }
+
+            98% {
+                filter: drop-shadow(2px 0 0 rgba(255, 0, 0, 0.5)) drop-shadow(-2px 0 0 rgba(0, 255, 255, 0.5));
+                transform: translateX(-1px);
+            }
+        }
+
+        /* 10. VERTIGO: Blur horizontal yang sesekali lewat (Wind/Speed effect) */
+        .loop-vertigo .lyric-text {
+            animation: proWind 4s ease-in-out infinite;
+        }
+
+        @keyframes proWind {
+
+            0%,
+            40%,
+            100% {
+                filter: blur(0);
+            }
+
+            50% {
+                filter: blur(2px) contrast(1.1);
+                transform: skewX(-5deg);
+            }
+        }
+
+        /* ============================================================== */
+        /* --- UNIFIED LOOP HANDOFF (all loop-* / fx-* transitions)     --- */
+        /* ============================================================== */
+
+        [class*='loop-'].loop-handoff .lyric-wrapper,
+        [class*='loop-'].loop-handoff .lyric-text,
+        [class*='loop-'].loop-handoff .word,
+        [class*='loop-'].loop-handoff .char {
+            animation-play-state: paused !important;
+        }
+
+        [class*='loop-'].loop-handoff-active:not(.loop-ready) .lyric-wrapper,
+        [class*='loop-'].loop-handoff-active:not(.loop-ready) .lyric-text,
+        [class*='loop-'].loop-handoff-active:not(.loop-ready) .word,
+        [class*='loop-'].loop-handoff-active:not(.loop-ready) .char {
+            transition: transform var(--loop-handoff-ms) var(--loop-handoff-ease),
+                filter var(--loop-handoff-ms) ease,
+                opacity var(--loop-handoff-ms) ease !important;
+        }
+
+        [class*='loop-'].loop-handoff .lyric-wrapper::after {
+            content: '';
+            position: absolute;
+            inset: -4%;
+            pointer-events: none;
+            background: transparent;
+            opacity: 0.35;
+            transition: opacity var(--loop-handoff-ms) ease;
+            z-index: 5;
+        }
+
+        [class*='loop-'].loop-handoff-active .lyric-wrapper::after {
+            opacity: 0;
+        }
+
+        /* ============================================================== */
+        /* --- WORSHIP LINE (5) — animate .lyric-wrapper              ---  */
+        /* FIX v2: Gunakan animation-play-state: paused sampai FX selesai  */
+        /* Kelas .loop-ready diset oleh JS setelah FX IN animationend       */
+        /* ============================================================== */
+
+        /* Base: semua wrapper-loop dimulai PAUSED, baru jalan setelah .loop-ready */
+        [class*='loop-worship-line-'] .lyric-wrapper,
+        [class*='loop-praise-line-'] .lyric-wrapper {
+            animation-play-state: paused;
+        }
+
+        [class*='loop-worship-line-'].loop-ready .lyric-wrapper,
+        [class*='loop-praise-line-'].loop-ready .lyric-wrapper {
+            animation-play-state: running;
+        }
+
+        /* 1. Deep Shadow Breathe */
+        .loop-worship-line-deep-shadow .lyric-wrapper {
+            animation: wlDeepShadow 5s ease-in-out infinite alternate;
+            animation-delay: 0s;
+        }
+
+        @keyframes wlDeepShadow {
+            0% {
+                transform: scale(0.97) translateY(5px);
+                filter: blur(0.8px) brightness(0.82);
+                opacity: 0.85;
+            }
+
+            100% {
+                transform: scale(1.03) translateY(-5px);
+                filter: blur(0) brightness(1.12);
+                opacity: 1;
+            }
+        }
+
+        /* 2. Diagonal Light Scan */
+        .loop-worship-line-elegant-diagonal-scan .lyric-wrapper {
+            animation: wlDiagScan 6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes wlDiagScan {
+            0% {
+                transform: translateX(-8px) translateY(3px);
+                filter: brightness(0.8);
+            }
+
+            48% {
+                transform: translateX(0) translateY(0);
+                filter: brightness(1.22);
+            }
+
+            100% {
+                transform: translateX(8px) translateY(-3px);
+                filter: brightness(0.8);
+            }
+        }
+
+        /* 3. Soft Smoke Rise */
+        .loop-worship-line-soft-smoke .lyric-wrapper {
+            animation: wlSoftSmoke 6s ease-in-out infinite alternate;
+            animation-delay: 0s;
+        }
+
+        @keyframes wlSoftSmoke {
+            0% {
+                transform: translateY(6px);
+                filter: blur(1.2px) brightness(0.78);
+                opacity: 0.82;
+            }
+
+            100% {
+                transform: translateY(-6px);
+                filter: blur(0) brightness(1.1);
+                opacity: 1;
+            }
+        }
+
+        /* 4. Sacred Breath — deep inhale scale */
+        .loop-worship-line-sacred-breath .lyric-wrapper {
+            animation: wlSacredBreath 4.5s ease-in-out infinite alternate;
+            animation-delay: 0s;
+        }
+
+        @keyframes wlSacredBreath {
+            0% {
+                transform: scale(0.94);
+                filter: blur(0.8px) brightness(0.78);
+                opacity: 0.8;
+            }
+
+            100% {
+                transform: scale(1.06);
+                filter: blur(0) brightness(1.15);
+                opacity: 1;
+            }
+        }
+
+        /* 5. Holy Glow Drift */
+        .loop-worship-line-glow-drift .lyric-wrapper {
+            animation: wlGlowDrift 5.5s ease-in-out infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes wlGlowDrift {
+            0% {
+                transform: translateX(-5px) scale(0.97);
+                filter: brightness(0.82);
+            }
+
+            50% {
+                transform: translateX(5px) scale(1.04);
+                filter: brightness(1.25);
+            }
+
+            100% {
+                transform: translateX(-5px) scale(0.97);
+                filter: brightness(0.82);
+            }
+        }
+
+        /* ============================================================ */
+        /* --- WORSHIP WORD (5) — .word, alternate-reverse bergantian - */
+        /* Odd = zoom/glow UP, Even = zoom/glow DOWN (true alternating) */
+        /* ============================================================ */
+
+        /* 1. Deep Zoom — random delays untuk natural feel */
+        .loop-worship-word-depth-shadow .lyric-text .word {
+            display: inline-block;
+            animation: wwDepthZoom 9s ease-in-out infinite alternate;
+        }
+
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(2) {
+            animation-delay: 450ms;
+        }
+
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(3) {
+            animation-delay: 1100ms;
+        }
+
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(4) {
+            animation-delay: 650ms;
+        }
+
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(5) {
+            animation-delay: 1500ms;
+        }
+
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(6) {
+            animation-delay: 250ms;
+        }
+
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(n+7) {
+            animation-delay: 850ms;
+        }
+
+        @keyframes wwDepthZoom {
+            0% {
+                transform: scale(0.98) translateY(2px);
+                filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.4)) brightness(0.95);
+            }
+
+            100% {
+                transform: scale(1.02) translateY(-2px);
+                filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.08)) brightness(1.05);
+            }
+        }
+
+        /* 2. Deep Glow — random delays untuk natural feel */
+        .loop-worship-word-silk-scan .lyric-text .word {
+            display: inline-block;
+            animation: wwDeepGlow 9s ease-in-out infinite alternate;
+        }
+
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(1) {
+            animation-delay: 100ms;
+        }
+
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(2) {
+            animation-delay: 750ms;
+        }
+
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(3) {
+            animation-delay: 400ms;
+        }
+
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(4) {
+            animation-delay: 1200ms;
+        }
+
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(5) {
+            animation-delay: 600ms;
+        }
+
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(n+6) {
+            animation-delay: 950ms;
+        }
+
+        @keyframes wwDeepGlow {
+            0% {
+                filter: brightness(0.92) drop-shadow(0 0 2px rgba(255, 255, 255, 0.1));
+                transform: scale(0.99);
+                opacity: 0.92;
+            }
+
+            100% {
+                filter: brightness(1.08) drop-shadow(0 0 6px rgba(255, 255, 255, 0.25));
+                transform: scale(1.01);
+                opacity: 1;
+            }
+        }
+
+        /* 3. Smoke Breathe — random delays untuk natural feel */
+        .loop-worship-word-soft-smoke .lyric-text .word {
+            display: inline-block;
+            animation: wwSmokeFloat 10s ease-in-out infinite alternate;
+        }
+
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(1) {
+            animation-delay: 200ms;
+        }
+
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(2) {
+            animation-delay: 700ms;
+        }
+
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(3) {
+            animation-delay: 1100ms;
+        }
+
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(4) {
+            animation-delay: 550ms;
+        }
+
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(n+5) {
+            animation-delay: 1400ms;
+        }
+
+        @keyframes wwSmokeFloat {
+            0% {
+                transform: translateY(2px) scale(0.99);
+                filter: blur(0.3px) brightness(0.92);
+                opacity: 0.90;
+            }
+
+            100% {
+                transform: translateY(-2px) scale(1.01);
+                filter: blur(0) brightness(1.05);
+                opacity: 1;
+            }
+        }
+
+        /* 4. Floating Devotion — random delays untuk natural feel */
+        .loop-worship-word-floating-devotion .lyric-text .word {
+            display: inline-block;
+            animation: wwFloatDevot 9s ease-in-out infinite alternate;
+        }
+
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(1) {
+            animation-delay: 300ms;
+        }
+
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(2) {
+            animation-delay: 850ms;
+        }
+
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(3) {
+            animation-delay: 600ms;
+        }
+
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(4) {
+            animation-delay: 1350ms;
+        }
+
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(n+5) {
+            animation-delay: 450ms;
+        }
+
+        @keyframes wwFloatDevot {
+            0% {
+                transform: translateY(1.5px) scale(0.98);
+                filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.3)) brightness(0.94);
+            }
+
+            100% {
+                transform: translateY(-1.5px) scale(1.02);
+                filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.15)) brightness(1.06);
+            }
+        }
+
+        /* 5. Gentle Rise — random delays untuk natural feel */
+        .loop-worship-word-gentle-rise .lyric-text .word {
+            display: inline-block;
+            animation: wwGentleRise 10s ease-in-out infinite alternate;
+        }
+
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(1) {
+            animation-delay: 150ms;
+        }
+
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(2) {
+            animation-delay: 1000ms;
+        }
+
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(3) {
+            animation-delay: 700ms;
+        }
+
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(4) {
+            animation-delay: 1450ms;
+        }
+
+        @keyframes wwGentleRise {
+            0% {
+                transform: translateY(1.5px) scale(0.99);
+                opacity: 0.92;
+            }
+
+            100% {
+                transform: translateY(-1.5px) scale(1.01);
+                opacity: 1;
+                filter: brightness(1.04);
+            }
+        }
+
+        /* ============================================================ */
+        /* --- PRAISE LINE (13) — .lyric-wrapper, aman dari tema  --- */
+        /* ============================================================ */
+
+        /* 1. RGB Split — transform on wrapper */
+        .loop-praise-line-clear-shadow-rgb .lyric-wrapper {
+            animation: plRGBSplit 2.5s steps(4) infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes plRGBSplit {
+
+            0%,
+            100% {
+                transform: translateX(0);
+                filter: none;
+            }
+
+            25% {
+                transform: translateX(3px);
+                filter: drop-shadow(-5px 0 0 rgba(255, 0, 0, 0.7)) drop-shadow(5px 0 0 rgba(0, 255, 255, 0.7));
+            }
+
+            50% {
+                transform: translateX(0);
+                filter: brightness(1.3);
+            }
+
+            75% {
+                transform: translateX(-3px);
+                filter: drop-shadow(5px 0 0 rgba(255, 0, 0, 0.7)) drop-shadow(-5px 0 0 rgba(0, 255, 255, 0.7));
+            }
+        }
+
+        /* 2. Metal Sheen sweep */
+        .loop-praise-line-metal-sheen .lyric-wrapper {
+            animation: plMetalSheen 4.5s linear infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes plMetalSheen {
+            0% {
+                transform: translateX(-8px);
+                filter: brightness(0.82);
+            }
+
+            45% {
+                transform: translateX(0);
+                filter: brightness(1.35);
+            }
+
+            100% {
+                transform: translateX(8px);
+                filter: brightness(0.82);
+            }
+        }
+
+        /* 3. RGB Signal Break */
+        .loop-praise-line-rgb-signal .lyric-wrapper {
+            animation: plRGBSignal 1.8s steps(3) infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes plRGBSignal {
+
+            0%,
+            100% {
+                transform: translate(0, 0);
+                filter: none;
+            }
+
+            33% {
+                transform: translate(3px, 0);
+                filter: drop-shadow(-4px 0 0 rgba(255, 0, 100, 0.85)) drop-shadow(4px 0 0 rgba(0, 255, 200, 0.85));
+            }
+
+            66% {
+                transform: translate(-3px, 0);
+                filter: drop-shadow(4px 0 0 rgba(255, 0, 100, 0.85)) drop-shadow(-4px 0 0 rgba(0, 255, 200, 0.85));
+            }
+        }
+
+        /* 4. Shadow Running */
+        .loop-praise-line-shadow-running .lyric-wrapper {
+            animation: plShadowRun 3s ease-in-out infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes plShadowRun {
+            0% {
+                transform: translateX(-5px);
+                filter: brightness(0.82);
+            }
+
+            50% {
+                transform: translateX(5px);
+                filter: brightness(1.22);
+            }
+
+            100% {
+                transform: translateX(-5px);
+                filter: brightness(0.82);
+            }
+        }
+
+        /* 5. Big Shadow Rotate — -3 to +3 deg */
+        .loop-praise-line-big-shadow-micro-rotate .lyric-wrapper {
+            animation: plBigRot 4.5s ease-in-out infinite alternate;
+            animation-delay: 0s;
+        }
+
+        @keyframes plBigRot {
+            0% {
+                transform: rotate(-3deg) scale(0.98);
+                filter: brightness(0.92);
+            }
+
+            100% {
+                transform: rotate(3deg) scale(1.02);
+                filter: brightness(1.08);
+            }
+        }
+
+        /* 6. Outline Drift */
+        .loop-praise-line-outline-drift .lyric-wrapper {
+            animation: plOutDrift 3.5s ease-in-out infinite alternate;
+            animation-delay: 0s;
+        }
+
+        @keyframes plOutDrift {
+            0% {
+                transform: translateX(-10px);
+                filter: brightness(0.82);
+            }
+
+            100% {
+                transform: translateX(10px);
+                filter: brightness(1.2);
+            }
+        }
+
+        /* 7. Rotate -3 to +3 deg */
+        .loop-praise-line-micro-rotate .lyric-wrapper {
+            animation: plMicroRot 4.5s ease-in-out infinite alternate;
+            animation-delay: 0s;
+        }
+
+        @keyframes plMicroRot {
+            0% {
+                transform: rotate(-1.7deg);
+            }
+
+            100% {
+                transform: rotate(1.7deg);
+            }
+        }
+
+        /* 8. Zoom Tilt */
+        .loop-praise-line-zoom-tilt .lyric-wrapper {
+            animation: plZoomTilt 2.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite alternate;
+            animation-delay: 0s;
+        }
+
+        @keyframes plZoomTilt {
+            0% {
+                transform: scale(0.92) skewX(-5deg);
+                filter: brightness(0.85);
+            }
+
+            100% {
+                transform: scale(1.1) skewX(5deg);
+                filter: brightness(1.22);
+            }
+        }
+
+        /* 9. Handheld Camera */
+        .loop-praise-line-handheld-float .lyric-wrapper {
+            animation: plHandheld 6s ease-in-out infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes plHandheld {
+
+            0%,
+            100% {
+                transform: translate(0, 0) rotate(0deg);
+            }
+
+            20% {
+                transform: translate(3px, -1px) rotate(1.5deg);
+            }
+
+            40% {
+                transform: translate(-2px, 3px) rotate(-2deg);
+            }
+
+            60% {
+                transform: translate(-3px, -1px) rotate(1deg);
+            }
+
+            80% {
+                transform: translate(2px, 2px) rotate(-1.5deg);
+            }
+        }
+
+        /* 10. Soft Glitch */
+        .loop-praise-line-soft-glitch .lyric-wrapper {
+            animation: plSoftGlitch 3.5s infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes plSoftGlitch {
+
+            0%,
+            82%,
+            100% {
+                transform: translate(0);
+                filter: none;
+            }
+
+            85% {
+                transform: translate(-4px, 1px);
+                filter: drop-shadow(-5px 0 0 rgba(255, 0, 100, 0.8));
+            }
+
+            88% {
+                transform: translate(5px, -1px);
+                filter: drop-shadow(5px 0 0 rgba(0, 255, 200, 0.8));
+            }
+
+            91% {
+                transform: translate(-2px, 0);
+                filter: drop-shadow(-3px 0 0 rgba(255, 0, 100, 0.5));
+            }
+        }
+
+        /* 11. VHS Drift */
+        .loop-praise-line-premium-vhs .lyric-wrapper {
+            animation: plVHSDrift 0.1s infinite;
+            animation-delay: 0s;
+        }
+
+        @keyframes plVHSDrift {
+
+            0%,
+            100% {
+                transform: translate(0, 0) skewX(0);
+            }
+
+            50% {
+                transform: translate(-2px, 0.5px) skewX(0.8deg);
+                filter: drop-shadow(3px 0 0 rgba(255, 0, 0, 0.4)) drop-shadow(-3px 0 0 rgba(0, 255, 255, 0.4));
+            }
+        }
+
+        /* 12. Panorama Drift */
+        .loop-praise-line-shadow-panorama .lyric-wrapper {
+            animation: plPanorama 6s linear infinite alternate;
+            animation-delay: 0s;
+        }
+
+        @keyframes plPanorama {
+            0% {
+                text-shadow: -40px 0 30px rgba(0, 0, 0, 0.7);
+                filter: brightness(0.92);
+            }
+
+            100% {
+                text-shadow: 40px 0 30px rgba(0, 0, 0, 0.4);
+                filter: brightness(1.08);
+            }
+        }
+
+        /* 13. Full Screen Zoom Shadow */
+        .loop-praise-line-cinematic-breath .lyric-text {
+            animation: plCineBreath 5s ease-in-out infinite alternate;
+        }
+
+        @keyframes plCineBreath {
+            0% {
+                transform: scale(1);
+                filter: drop-shadow(0 5px 25px rgba(0, 0, 0, 0.7));
+            }
+
+            100% {
+                transform: scale(1.02);
+                filter: drop-shadow(0 10px 40px rgba(0, 0, 0, 0.4)) brightness(1.08);
+            }
+        }
+
+        /* ============================================================ */
+        /* --- PRAISE WORD (12) — .word, delay acak, efek kencang  --- */
+        /* ============================================================ */
+
+        /* 1. Jiggle — bounce naik-turun bergantian acak */
+        .loop-praise-word-jiggle-lite .lyric-text .word {
+            display: inline-block;
+            animation: pwJiggle 1.2s ease-in-out infinite alternate;
+        }
+
+        .loop-praise-word-jiggle-lite .lyric-text .word:nth-child(even) {
+            animation-direction: alternate-reverse;
+        }
+
+        .loop-praise-word-jiggle-lite .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-jiggle-lite .lyric-text .word:nth-child(2) {
+            animation-delay: 200ms;
+        }
+
+        .loop-praise-word-jiggle-lite .lyric-text .word:nth-child(3) {
+            animation-delay: 80ms;
+        }
+
+        .loop-praise-word-jiggle-lite .lyric-text .word:nth-child(4) {
+            animation-delay: 320ms;
+        }
+
+        .loop-praise-word-jiggle-lite .lyric-text .word:nth-child(5) {
+            animation-delay: 140ms;
+        }
+
+        .loop-praise-word-jiggle-lite .lyric-text .word:nth-child(n+6) {
+            animation-delay: 260ms;
+        }
+
+        @keyframes pwJiggle {
+            0% {
+                transform: translateY(0) rotate(-2deg) scale(0.97);
+            }
+
+            100% {
+                transform: translateY(-8px) rotate(2deg) scale(1.04);
+            }
+        }
+
+        /* 2. Viggle Flow — skew + scale bergantian */
+        .loop-praise-word-viggle-flow .lyric-text .word {
+            display: inline-block;
+            animation: pwViggle 3.8s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite alternate;
+        }
+
+        .loop-praise-word-viggle-flow .lyric-text .word:nth-child(even) {
+            animation-direction: alternate-reverse;
+        }
+
+        .loop-praise-word-viggle-flow .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-viggle-flow .lyric-text .word:nth-child(2) {
+            animation-delay: 280ms;
+        }
+
+        .loop-praise-word-viggle-flow .lyric-text .word:nth-child(3) {
+            animation-delay: 120ms;
+        }
+
+        .loop-praise-word-viggle-flow .lyric-text .word:nth-child(4) {
+            animation-delay: 380ms;
+        }
+
+        .loop-praise-word-viggle-flow .lyric-text .word:nth-child(n+5) {
+            animation-delay: 180ms;
+        }
+
+        @keyframes pwViggle {
+            0% {
+                transform: scale(0.95) skewX(-2deg);
+                filter: brightness(0.92);
+            }
+
+            100% {
+                transform: scale(1.08) skewX(2deg);
+                filter: brightness(1.15);
+            }
+        }
+
+        /* 3. Micro Pop — zoom glow bergantian */
+        .loop-praise-word-micro-pop .lyric-text .word {
+            display: inline-block;
+            animation: pwMicroPop 2.5s ease-in-out infinite;
+        }
+
+        .loop-praise-word-micro-pop .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-micro-pop .lyric-text .word:nth-child(2) {
+            animation-delay: 700ms;
+        }
+
+        .loop-praise-word-micro-pop .lyric-text .word:nth-child(3) {
+            animation-delay: 250ms;
+        }
+
+        .loop-praise-word-micro-pop .lyric-text .word:nth-child(4) {
+            animation-delay: 950ms;
+        }
+
+        .loop-praise-word-micro-pop .lyric-text .word:nth-child(5) {
+            animation-delay: 450ms;
+        }
+
+        .loop-praise-word-micro-pop .lyric-text .word:nth-child(n+6) {
+            animation-delay: 150ms;
+        }
+
+        @keyframes pwMicroPop {
+
+            0%,
+            100% {
+                transform: scale(1);
+                filter: brightness(1);
+            }
+
+            50% {
+                transform: scale(1.1);
+                filter: brightness(1.25) drop-shadow(0 0 8px rgba(255, 255, 255, 0.4));
+            }
+        }
+
+        /* 4. Glitch Scan — RGB split acak */
+        .loop-praise-word-glitch-scan .lyric-text .word {
+            display: inline-block;
+            animation: pwGlitchScan 3.8s infinite;
+        }
+
+        .loop-praise-word-glitch-scan .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-glitch-scan .lyric-text .word:nth-child(2) {
+            animation-delay: 800ms;
+        }
+
+        .loop-praise-word-glitch-scan .lyric-text .word:nth-child(3) {
+            animation-delay: 300ms;
+        }
+
+        .loop-praise-word-glitch-scan .lyric-text .word:nth-child(4) {
+            animation-delay: 1100ms;
+        }
+
+        .loop-praise-word-glitch-scan .lyric-text .word:nth-child(n+5) {
+            animation-delay: 550ms;
+        }
+
+        @keyframes pwGlitchScan {
+
+            0%,
+            80%,
+            100% {
+                filter: none;
+                transform: translateX(0);
+            }
+
+            83% {
+                filter: drop-shadow(-4px 0 0 rgba(255, 0, 100, 0.85));
+                transform: translateX(-2px);
+            }
+
+            87% {
+                filter: drop-shadow(4px 0 0 rgba(0, 255, 200, 0.85));
+                transform: translateX(3px);
+            }
+
+            91% {
+                filter: drop-shadow(-2px 0 0 rgba(255, 0, 100, 0.5));
+                transform: translateX(-1px);
+            }
+        }
+
+        /* 5. VHS Jitter — tremor cepat acak */
+        .loop-praise-word-vhs-jitter .lyric-text .word {
+            display: inline-block;
+            animation: pwVHSJitter 0.9s infinite;
+        }
+
+        .loop-praise-word-vhs-jitter .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-vhs-jitter .lyric-text .word:nth-child(2) {
+            animation-delay: 33ms;
+        }
+
+        .loop-praise-word-vhs-jitter .lyric-text .word:nth-child(3) {
+            animation-delay: 15ms;
+        }
+
+        .loop-praise-word-vhs-jitter .lyric-text .word:nth-child(4) {
+            animation-delay: 47ms;
+        }
+
+        .loop-praise-word-vhs-jitter .lyric-text .word:nth-child(n+5) {
+            animation-delay: 25ms;
+        }
+
+        @keyframes pwVHSJitter {
+
+            0%,
+            100% {
+                transform: translate(0, 0) skewX(0);
+            }
+
+            50% {
+                transform: translate(-1px, 0.5px) skewX(0.3deg);
+                filter: drop-shadow(1.5px 0 0 rgba(255, 0, 0, 0.3)) drop-shadow(-1.5px 0 0 rgba(0, 255, 255, 0.3));
+            }
+        }
+
+        /* 6. Tilt Dance — -3 to +3 deg bergantian */
+        .loop-praise-word-tilt-dance .lyric-text .word {
+            display: inline-block;
+            transform-origin: bottom center;
+            animation: pwTiltDance 2.8s ease-in-out infinite alternate;
+        }
+
+        .loop-praise-word-tilt-dance .lyric-text .word:nth-child(even) {
+            animation-direction: alternate-reverse;
+        }
+
+        .loop-praise-word-tilt-dance .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-tilt-dance .lyric-text .word:nth-child(2) {
+            animation-delay: 250ms;
+        }
+
+        .loop-praise-word-tilt-dance .lyric-text .word:nth-child(3) {
+            animation-delay: 100ms;
+        }
+
+        .loop-praise-word-tilt-dance .lyric-text .word:nth-child(4) {
+            animation-delay: 350ms;
+        }
+
+        .loop-praise-word-tilt-dance .lyric-text .word:nth-child(n+5) {
+            animation-delay: 180ms;
+        }
+
+        @keyframes pwTiltDance {
+            0% {
+                transform: rotate(-2deg) scale(0.97);
+            }
+
+            100% {
+                transform: rotate(2deg) scale(1.04);
+            }
+        }
+
+        /* 7. Outline Rise — stroke + naik bergantian */
+        .loop-praise-word-outline-rise .lyric-text .word {
+            display: inline-block;
+            animation: pwOutlineRise 3.5s ease-in-out infinite alternate;
+        }
+
+        .loop-praise-word-outline-rise .lyric-text .word:nth-child(even) {
+            animation-direction: alternate-reverse;
+        }
+
+        .loop-praise-word-outline-rise .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-outline-rise .lyric-text .word:nth-child(2) {
+            animation-delay: 600ms;
+        }
+
+        .loop-praise-word-outline-rise .lyric-text .word:nth-child(3) {
+            animation-delay: 220ms;
+        }
+
+        .loop-praise-word-outline-rise .lyric-text .word:nth-child(4) {
+            animation-delay: 850ms;
+        }
+
+        .loop-praise-word-outline-rise .lyric-text .word:nth-child(n+5) {
+            animation-delay: 400ms;
+        }
+
+        @keyframes pwOutlineRise {
+            0% {
+                -webkit-text-stroke: 0px transparent;
+                transform: translateY(0) scale(1);
+                filter: brightness(1);
+            }
+
+            100% {
+                -webkit-text-stroke: 1px rgba(255, 255, 255, 0.7);
+                transform: translateY(-6px) scale(1.08);
+                filter: brightness(1.3);
+            }
+        }
+
+        /* 8. Shadow Chase — shadow berlarian per kata */
+        .loop-praise-word-shadow-chase .lyric-text .word {
+            display: inline-block;
+            animation: pwShadowChase 3.5s ease-in-out infinite;
+        }
+
+        .loop-praise-word-shadow-chase .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-shadow-chase .lyric-text .word:nth-child(2) {
+            animation-delay: 450ms;
+        }
+
+        .loop-praise-word-shadow-chase .lyric-text .word:nth-child(3) {
+            animation-delay: 180ms;
+        }
+
+        .loop-praise-word-shadow-chase .lyric-text .word:nth-child(4) {
+            animation-delay: 630ms;
+        }
+
+        .loop-praise-word-shadow-chase .lyric-text .word:nth-child(n+5) {
+            animation-delay: 280ms;
+        }
+
+        @keyframes pwShadowChase {
+
+            0%,
+            100% {
+                transform: translateX(-3px);
+                filter: drop-shadow(-8px 3px 15px rgba(0, 0, 0, 0.7));
+            }
+
+            50% {
+                transform: translateX(3px);
+                filter: drop-shadow(8px -3px 15px rgba(0, 0, 0, 0.4)) brightness(1.15);
+            }
+        }
+
+        /* 9. Zoom Flick — pop besar bergantian */
+        .loop-praise-word-zoom-flick .lyric-text .word {
+            display: inline-block;
+            animation: pwZoomFlick 4s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
+        }
+
+        .loop-praise-word-zoom-flick .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-zoom-flick .lyric-text .word:nth-child(2) {
+            animation-delay: 750ms;
+        }
+
+        .loop-praise-word-zoom-flick .lyric-text .word:nth-child(3) {
+            animation-delay: 300ms;
+        }
+
+        .loop-praise-word-zoom-flick .lyric-text .word:nth-child(4) {
+            animation-delay: 1050ms;
+        }
+
+        .loop-praise-word-zoom-flick .lyric-text .word:nth-child(n+5) {
+            animation-delay: 500ms;
+        }
+
+        @keyframes pwZoomFlick {
+
+            0%,
+            70%,
+            100% {
+                transform: scale(1);
+                filter: brightness(1);
+            }
+
+            85% {
+                transform: scale(1.12);
+                filter: brightness(1.3) drop-shadow(0 0 10px rgba(255, 255, 255, 0.4));
+            }
+        }
+
+        /* 10. Handheld Scatter — shake + rotate berbeda tiap kata */
+        .loop-praise-word-handheld-scatter .lyric-text .word {
+            display: inline-block;
+            animation: pwHandheld 7s ease-in-out infinite;
+        }
+
+        .loop-praise-word-handheld-scatter .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-handheld-scatter .lyric-text .word:nth-child(2) {
+            animation-delay: 900ms;
+        }
+
+        .loop-praise-word-handheld-scatter .lyric-text .word:nth-child(3) {
+            animation-delay: 350ms;
+        }
+
+        .loop-praise-word-handheld-scatter .lyric-text .word:nth-child(4) {
+            animation-delay: 1250ms;
+        }
+
+        .loop-praise-word-handheld-scatter .lyric-text .word:nth-child(n+5) {
+            animation-delay: 600ms;
+        }
+
+        @keyframes pwHandheld {
+
+            0%,
+            100% {
+                transform: translate(0, 0) rotate(0deg);
+            }
+
+            20% {
+                transform: translate(2.5px, -1.5px) rotate(1.5deg);
+            }
+
+            40% {
+                transform: translate(-1.5px, 2.5px) rotate(-1.5deg);
+            }
+
+            60% {
+                transform: translate(-2.5px, -1.5px) rotate(1.5deg);
+            }
+
+            80% {
+                transform: translate(1.5px, 1.5px) rotate(-1.5deg);
+            }
+        }
+
+        /* 11. Metal Jitter — tremor metalik cepat */
+        .loop-praise-word-metal-jitter .lyric-text .word {
+            display: inline-block;
+            animation: pwMetalJitter 0.8s infinite;
+        }
+
+        .loop-praise-word-metal-jitter .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-metal-jitter .lyric-text .word:nth-child(2) {
+            animation-delay: 27ms;
+        }
+
+        .loop-praise-word-metal-jitter .lyric-text .word:nth-child(3) {
+            animation-delay: 12ms;
+        }
+
+        .loop-praise-word-metal-jitter .lyric-text .word:nth-child(4) {
+            animation-delay: 40ms;
+        }
+
+        .loop-praise-word-metal-jitter .lyric-text .word:nth-child(n+5) {
+            animation-delay: 20ms;
+        }
+
+        @keyframes pwMetalJitter {
+
+            0%,
+            100% {
+                transform: translate(0, 0) skewX(0);
+                filter: brightness(1);
+            }
+
+            50% {
+                transform: translate(-1px, 0.5px) skewX(0.25deg);
+                filter: brightness(1.12) drop-shadow(1px 0 0 rgba(200, 200, 200, 0.4));
+            }
+        }
+
+        /* 12. Clear Shadow Rush — wave bergantian per kata */
+        .loop-praise-word-clear-shadow-rush .lyric-text .word {
+            display: inline-block;
+            animation: pwShadowRush 3.5s ease-in-out infinite;
+        }
+
+        .loop-praise-word-clear-shadow-rush .lyric-text .word:nth-child(1) {
+            animation-delay: 0ms;
+        }
+
+        .loop-praise-word-clear-shadow-rush .lyric-text .word:nth-child(2) {
+            animation-delay: 450ms;
+        }
+
+        .loop-praise-word-clear-shadow-rush .lyric-text .word:nth-child(3) {
+            animation-delay: 180ms;
+        }
+
+        .loop-praise-word-clear-shadow-rush .lyric-text .word:nth-child(4) {
+            animation-delay: 640ms;
+        }
+
+        .loop-praise-word-clear-shadow-rush .lyric-text .word:nth-child(5) {
+            animation-delay: 290ms;
+        }
+
+        .loop-praise-word-clear-shadow-rush .lyric-text .word:nth-child(n+6) {
+            animation-delay: 820ms;
+        }
+
+        @keyframes pwShadowRush {
+
+            0%,
+            100% {
+                transform: translateY(0) scale(1);
+                filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.7)) brightness(0.88);
+            }
+
+            50% {
+                transform: translateY(-8px) scale(1.1);
+                filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.2)) brightness(1.25);
+            }
+        }
+
+        /* ========================================== */
+        /* ADVANCED SCENIC TEXT STYLE PRESETS         */
+        /* ========================================== */
+        .theme-cloud-halo,
+        .theme-cinematic-caption,
+        .theme-calligraphy-gold,
+        .theme-neo-prism,
+        .theme-liquid-gold-box,
+        .theme-aurora-glass-box,
+        .theme-ink-sermon,
+        .theme-velvet-marquee,
+        .theme-modern-kinetic,
+        .theme-sacred-parchment {
+            isolation: isolate;
+        }
+
+        .theme-cloud-halo.lyric-text::before,
+        .theme-cinematic-caption.lyric-text::before,
+        .theme-calligraphy-gold.lyric-text::before,
+        .theme-liquid-gold-box.lyric-text::before,
+        .theme-aurora-glass-box.lyric-text::before,
+        .theme-ink-sermon.lyric-text::before,
+        .theme-velvet-marquee.lyric-text::before,
+        .theme-modern-kinetic.lyric-text::before,
+        .theme-sacred-parchment.lyric-text::before {
+            content: "";
+            position: absolute;
+            inset: -0.28em -0.7em;
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        .theme-cloud-halo .main-lang,
+        .theme-cloud-halo .sub-lang,
+        .theme-cinematic-caption .main-lang,
+        .theme-cinematic-caption .sub-lang,
+        .theme-calligraphy-gold .main-lang,
+        .theme-calligraphy-gold .sub-lang,
+        .theme-liquid-gold-box .main-lang,
+        .theme-liquid-gold-box .sub-lang,
+        .theme-aurora-glass-box .main-lang,
+        .theme-aurora-glass-box .sub-lang,
+        .theme-ink-sermon .main-lang,
+        .theme-ink-sermon .sub-lang,
+        .theme-velvet-marquee .main-lang,
+        .theme-velvet-marquee .sub-lang,
+        .theme-modern-kinetic .main-lang,
+        .theme-modern-kinetic .sub-lang,
+        .theme-sacred-parchment .main-lang,
+        .theme-sacred-parchment .sub-lang {
+            position: relative;
+            z-index: 1;
+        }
+
+        .theme-cloud-halo {
+            color: #f8fcff;
+            font-weight: 800;
+            text-shadow: 0 2px 12px rgba(60, 120, 160, 0.45), 0 0 38px rgba(255, 255, 255, 0.78);
+        }
+
+        .theme-cloud-halo.lyric-text::before {
+            inset: -0.45em -0.95em;
+            border-radius: 999px;
+            background:
+                radial-gradient(circle at 15% 58%, rgba(255, 255, 255, 0.92) 0 17%, transparent 18%),
+                radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.86) 0 22%, transparent 23%),
+                radial-gradient(circle at 58% 48%, rgba(232, 246, 255, 0.9) 0 25%, transparent 26%),
+                radial-gradient(circle at 78% 56%, rgba(255, 255, 255, 0.82) 0 18%, transparent 19%),
+                linear-gradient(180deg, rgba(210, 236, 255, 0.72), rgba(255, 255, 255, 0.2));
+            filter: blur(2px) drop-shadow(0 18px 35px rgba(80, 145, 190, 0.35));
+            opacity: 0.88;
+        }
+
+        .theme-cinematic-caption {
+            color: #fff8e8;
+            font-weight: 900;
+            text-transform: uppercase;
+            text-shadow: 0 2px 0 rgba(0, 0, 0, 0.8), 0 12px 26px rgba(0, 0, 0, 0.55);
+        }
+
+        .theme-cinematic-caption.lyric-text::before {
+            inset: -0.22em -0.62em;
+            border-radius: 12px;
+            background: linear-gradient(110deg, rgba(8, 10, 16, 0.86), rgba(30, 34, 48, 0.72));
+            border: 1px solid rgba(255, 218, 145, 0.42);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 22px 60px rgba(0, 0, 0, 0.52);
+        }
+
+        .theme-calligraphy-gold {
+            color: #fff4bf;
+            font-family: "Playfair Display", "Cinzel", serif !important;
+            font-style: italic;
+            font-weight: 700;
+            text-shadow: 0 2px 0 #8b5a12, 0 12px 24px rgba(0, 0, 0, 0.52), 0 0 28px rgba(255, 202, 88, 0.45);
+        }
+
+        .theme-calligraphy-gold.lyric-text::before {
+            inset: -0.34em -0.82em;
+            border-radius: 999px;
+            background: linear-gradient(135deg, rgba(64, 31, 8, 0.62), rgba(143, 91, 18, 0.34), rgba(255, 229, 150, 0.16));
+            border-top: 2px solid rgba(255, 226, 150, 0.65);
+            border-bottom: 2px solid rgba(132, 80, 16, 0.65);
+            filter: drop-shadow(0 16px 36px rgba(0, 0, 0, 0.5));
+        }
+
+        .theme-neo-prism {
+            background: linear-gradient(110deg, #ffffff 0%, #8ff7ff 22%, #ff7ad9 50%, #ffe66d 76%, #ffffff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            font-weight: 900;
+            filter: drop-shadow(3px 0 0 rgba(0, 229, 255, 0.42)) drop-shadow(-3px 0 0 rgba(255, 45, 117, 0.35)) drop-shadow(0 12px 28px rgba(0, 0, 0, 0.42));
+        }
+
+        .theme-liquid-gold-box {
+            background: linear-gradient(135deg, #fff7bd 0%, #f7c948 38%, #b7791f 72%, #fff0a3 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            font-weight: 900;
+            filter: drop-shadow(0 3px 0 rgba(84, 45, 8, 0.85));
+        }
+
+        .theme-liquid-gold-box.lyric-text::before {
+            border-radius: 18px;
+            background: linear-gradient(145deg, rgba(61, 35, 8, 0.88), rgba(112, 68, 12, 0.72));
+            border: 1px solid rgba(255, 220, 116, 0.7);
+            box-shadow: inset 0 12px 24px rgba(255, 236, 160, 0.14), inset 0 -18px 28px rgba(0, 0, 0, 0.28), 0 18px 45px rgba(0, 0, 0, 0.48);
+        }
+
+        .theme-aurora-glass-box {
+            background: linear-gradient(120deg, #dffcff 0%, #8dd8ff 35%, #d0a2ff 70%, #ffffff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            font-weight: 800;
+            filter: drop-shadow(0 0 22px rgba(120, 220, 255, 0.42));
+        }
+
+        .theme-aurora-glass-box.lyric-text::before {
+            border-radius: 16px;
+            background: linear-gradient(120deg, rgba(255, 255, 255, 0.18), rgba(111, 201, 255, 0.12), rgba(203, 146, 255, 0.18));
+            border: 1px solid rgba(230, 250, 255, 0.42);
+            backdrop-filter: blur(14px) saturate(1.3);
+            -webkit-backdrop-filter: blur(14px) saturate(1.3);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 22px 48px rgba(28, 48, 78, 0.36);
+        }
+
+        .theme-ink-sermon {
+            color: #f7f1e4;
+            font-family: "Cinzel", "Playfair Display", serif !important;
+            font-weight: 700;
+            text-shadow: 2px 2px 0 rgba(18, 18, 18, 0.9), 0 8px 18px rgba(0, 0, 0, 0.65);
+        }
+
+        .theme-ink-sermon.lyric-text::before {
+            border-radius: 6px;
+            background:
+                linear-gradient(90deg, transparent 0 7%, rgba(255, 255, 255, 0.08) 7% 8%, transparent 8% 92%, rgba(255, 255, 255, 0.08) 92% 93%, transparent 93%),
+                linear-gradient(135deg, rgba(10, 10, 12, 0.86), rgba(32, 28, 24, 0.76));
+            border-left: 5px solid rgba(245, 211, 128, 0.65);
+            border-right: 5px solid rgba(245, 211, 128, 0.35);
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.52);
+        }
+
+        .theme-velvet-marquee {
+            color: #fff2dc;
+            font-weight: 900;
+            text-shadow: 0 2px 0 #4a0715, 0 0 14px rgba(255, 214, 145, 0.62), 0 12px 24px rgba(0, 0, 0, 0.65);
+        }
+
+        .theme-velvet-marquee.lyric-text::before {
+            border-radius: 999px;
+            background:
+                radial-gradient(circle at 8% 50%, rgba(255, 231, 166, 0.85) 0 3%, transparent 4%),
+                radial-gradient(circle at 92% 50%, rgba(255, 231, 166, 0.85) 0 3%, transparent 4%),
+                linear-gradient(135deg, rgba(86, 5, 28, 0.92), rgba(145, 18, 52, 0.82), rgba(67, 7, 24, 0.92));
+            border: 2px solid rgba(255, 218, 138, 0.7);
+            box-shadow: inset 0 0 24px rgba(255, 231, 166, 0.12), 0 18px 48px rgba(0, 0, 0, 0.58);
+        }
+
+        .theme-modern-kinetic {
+            background: linear-gradient(90deg, #ffffff 0%, #00e5ff 40%, #ff2d75 68%, #ffffff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+            font-weight: 900;
+            text-transform: uppercase;
+            filter: drop-shadow(8px 8px 0 rgba(0, 0, 0, 0.72));
+        }
+
+        .theme-modern-kinetic.lyric-text::before {
+            inset: -0.16em -0.5em;
+            transform: skewX(-9deg);
+            background: linear-gradient(90deg, rgba(0, 229, 255, 0.88), rgba(255, 45, 117, 0.88));
+            clip-path: polygon(5% 0, 100% 0, 95% 100%, 0 100%);
+            opacity: 0.26;
+        }
+
+        .theme-sacred-parchment {
+            color: #3b240c;
+            font-family: "Cinzel", "Playfair Display", serif !important;
+            font-weight: 900;
+            text-shadow: 0 1px 0 rgba(255, 245, 205, 0.8), 0 10px 18px rgba(68, 36, 8, 0.28);
+        }
+
+        .theme-sacred-parchment.lyric-text::before {
+            border-radius: 10px;
+            background:
+                radial-gradient(circle at 15% 20%, rgba(128, 77, 24, 0.2), transparent 18%),
+                radial-gradient(circle at 82% 74%, rgba(128, 77, 24, 0.16), transparent 20%),
+                linear-gradient(135deg, rgba(255, 243, 198, 0.92), rgba(220, 177, 104, 0.84));
+            border: 1px solid rgba(95, 55, 16, 0.55);
+            box-shadow: inset 0 0 24px rgba(92, 49, 12, 0.18), 0 18px 40px rgba(0, 0, 0, 0.42);
+        }
+
+        /* ========================================== */
+        /* PRAISE/WORSHIP RANDOM LETTER TRANSITIONS   */
+        /* ========================================== */
+        .fx-praise-letter-zoom-spark .lyric-text .char,
+        .fx-praise-letter-strobe-pop .lyric-text .char,
+        .fx-praise-letter-prism-snap .lyric-text .char,
+        .fx-praise-letter-whip-grid .lyric-text .char,
+        .fx-praise-letter-flash-cut .lyric-text .char,
+        .fx-praise-letter-orbit-hit .lyric-text .char,
+        .fx-praise-letter-bass-drop .lyric-text .char,
+        .fx-praise-letter-chroma-burst .lyric-text .char,
+        .fx-praise-letter-tile-shatter .lyric-text .char,
+        .fx-praise-letter-speed-ramp .lyric-text .char,
+        .fx-worship-letter-candle-rise .lyric-text .char,
+        .fx-worship-letter-mist-bloom .lyric-text .char,
+        .fx-worship-letter-lens-prayer .lyric-text .char,
+        .fx-worship-letter-silk-drift .lyric-text .char,
+        .fx-worship-letter-soft-iris .lyric-text .char,
+        .fx-worship-letter-cloud-form .lyric-text .char,
+        .fx-worship-letter-golden-hour .lyric-text .char,
+        .fx-worship-letter-deep-focus .lyric-text .char,
+        .fx-worship-letter-veil-cascade .lyric-text .char,
+        .fx-worship-letter-cinematic-breathe .lyric-text .char {
+            display: inline-block;
+            vertical-align: baseline !important;
+            line-height: 1 !important;
+            will-change: transform, opacity, filter;
+            transform-origin: center;
+        }
+
+        .fx-praise-letter-zoom-spark .lyric-text .char { animation: prZoomSpark max(0.18s, calc(var(--fade-speed) - 0.16s)) cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .fx-praise-letter-strobe-pop .lyric-text .char { animation: prStrobePop max(0.16s, calc(var(--fade-speed) - 0.22s)) steps(4) both; }
+        .fx-praise-letter-prism-snap .lyric-text .char { animation: prPrismSnap max(0.2s, calc(var(--fade-speed) - 0.14s)) cubic-bezier(0.22, 1, 0.36, 1) both; }
+        .fx-praise-letter-whip-grid .lyric-text .char { animation: prWhipGrid max(0.18s, calc(var(--fade-speed) - 0.18s)) cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+        .fx-praise-letter-flash-cut .lyric-text .char { animation: prFlashCut max(0.15s, calc(var(--fade-speed) - 0.24s)) cubic-bezier(0.1, 0.9, 0.2, 1) both; }
+        .fx-praise-letter-orbit-hit .lyric-text .char { animation: prOrbitHit max(0.2s, calc(var(--fade-speed) - 0.12s)) cubic-bezier(0.175, 0.885, 0.32, 1.275) both; }
+        .fx-praise-letter-bass-drop .lyric-text .char { animation: prBassDrop max(0.2s, calc(var(--fade-speed) - 0.15s)) cubic-bezier(0.5, -0.25, 0.12, 1.45) both; }
+        .fx-praise-letter-chroma-burst .lyric-text .char { animation: prChromaBurst max(0.18s, calc(var(--fade-speed) - 0.18s)) steps(3) both; }
+        .fx-praise-letter-tile-shatter .lyric-text .char { animation: prTileShatter max(0.22s, calc(var(--fade-speed) - 0.1s)) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+        .fx-praise-letter-speed-ramp .lyric-text .char { animation: prSpeedRamp max(0.16s, calc(var(--fade-speed) - 0.2s)) cubic-bezier(0.05, 0.9, 0.14, 1) both; }
+
+        .fx-worship-letter-candle-rise .lyric-text .char { animation: woCandleRise calc(var(--fade-speed) + 0.34s) cubic-bezier(0.22, 1, 0.36, 1) both; }
+        .fx-worship-letter-mist-bloom .lyric-text .char { animation: woMistBloom calc(var(--fade-speed) + 0.48s) ease-out both; }
+        .fx-worship-letter-lens-prayer .lyric-text .char { animation: woLensPrayer calc(var(--fade-speed) + 0.38s) cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .fx-worship-letter-silk-drift .lyric-text .char { animation: woSilkDrift calc(var(--fade-speed) + 0.46s) cubic-bezier(0.25, 1, 0.5, 1) both; }
+        .fx-worship-letter-soft-iris .lyric-text .char { animation: woSoftIris calc(var(--fade-speed) + 0.42s) ease-out both; }
+        .fx-worship-letter-cloud-form .lyric-text .char { animation: woCloudForm calc(var(--fade-speed) + 0.52s) cubic-bezier(0.22, 1, 0.36, 1) both; }
+        .fx-worship-letter-golden-hour .lyric-text .char { animation: woGoldenHour calc(var(--fade-speed) + 0.4s) ease-out both; }
+        .fx-worship-letter-deep-focus .lyric-text .char { animation: woDeepFocus calc(var(--fade-speed) + 0.46s) cubic-bezier(0.25, 1, 0.5, 1) both; }
+        .fx-worship-letter-veil-cascade .lyric-text .char { animation: woVeilCascade calc(var(--fade-speed) + 0.5s) cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .fx-worship-letter-cinematic-breathe .lyric-text .char { animation: woCinematicBreathe calc(var(--fade-speed) + 0.58s) ease-out both; }
+
+        @keyframes prZoomSpark {
+            0% { opacity: 0; transform: scale(5) rotate(12deg); filter: blur(12px) brightness(8); }
+            62% { opacity: 1; transform: scale(0.88) rotate(-2deg); filter: blur(0) brightness(1.8); }
+            100% { opacity: 1; transform: scale(1) rotate(0); filter: brightness(1); }
+        }
+
+        @keyframes prStrobePop {
+            0% { opacity: 0; transform: scale(0.1) translateY(30px); filter: brightness(12) contrast(2); }
+            35% { opacity: 1; transform: scale(1.35) translateY(-8px); }
+            70% { transform: scale(0.92) translateY(2px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); filter: brightness(1); }
+        }
+
+        @keyframes prPrismSnap {
+            0% { opacity: 0; transform: translate3d(-22px, 18px, 0) scale(1.9); filter: blur(7px) hue-rotate(120deg) saturate(2.4); text-shadow: -7px 0 #00e5ff, 7px 0 #ff2d75; }
+            72% { opacity: 1; transform: translate3d(3px, -2px, 0) scale(0.98); filter: blur(0) saturate(1.5); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; text-shadow: none; }
+        }
+
+        @keyframes prWhipGrid {
+            0% { opacity: 0; transform: translateX(-120px) skewX(-42deg) scaleX(3); filter: blur(10px) brightness(5); }
+            58% { opacity: 1; transform: translateX(8px) skewX(8deg) scaleX(0.92); filter: blur(0); }
+            100% { opacity: 1; transform: translateX(0) skewX(0) scaleX(1); }
+        }
+
+        @keyframes prFlashCut {
+            0% { opacity: 0; transform: scale(2.8) rotate(-8deg); filter: brightness(20) blur(2px); }
+            25% { opacity: 1; transform: scale(0.72) rotate(4deg); }
+            60% { transform: scale(1.12) rotate(-1deg); }
+            100% { opacity: 1; transform: scale(1) rotate(0); filter: brightness(1); }
+        }
+
+        @keyframes prOrbitHit {
+            0% { opacity: 0; transform: rotate(180deg) translateX(90px) rotate(-180deg) scale(0.3); filter: blur(8px) brightness(7); }
+            70% { opacity: 1; transform: rotate(-12deg) translateX(4px) rotate(12deg) scale(1.08); filter: blur(0) brightness(1.4); }
+            100% { opacity: 1; transform: rotate(0) translateX(0) scale(1); filter: brightness(1); }
+        }
+
+        @keyframes prBassDrop {
+            0% { opacity: 0; transform: translateY(-95px) scaleY(0.08) scaleX(1.8); filter: blur(9px) brightness(9); }
+            48% { opacity: 1; transform: translateY(16px) scaleY(1.35) scaleX(0.86); }
+            78% { transform: translateY(-4px) scaleY(0.96) scaleX(1.04); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: brightness(1); }
+        }
+
+        @keyframes prChromaBurst {
+            0% { opacity: 0; transform: translate(24px, -18px) scale(1.6); filter: blur(8px) hue-rotate(240deg) contrast(2); text-shadow: 8px 0 #00e5ff, -8px 0 #ff2d75; }
+            55% { opacity: 1; transform: translate(-3px, 2px) scale(1.05); }
+            100% { opacity: 1; transform: translate(0, 0) scale(1); filter: none; text-shadow: none; }
+        }
+
+        @keyframes prTileShatter {
+            0% { opacity: 0; transform: perspective(500px) rotateX(80deg) rotateY(-55deg) translateY(38px) scale(0.65); filter: blur(7px) brightness(4); }
+            64% { opacity: 1; transform: perspective(500px) rotateX(-8deg) rotateY(6deg) translateY(-3px) scale(1.05); filter: blur(0); }
+            100% { opacity: 1; transform: perspective(500px) rotateX(0) rotateY(0) translateY(0) scale(1); }
+        }
+
+        @keyframes prSpeedRamp {
+            0% { opacity: 0; transform: translateX(-180px) scaleX(4); filter: blur(18px) brightness(8); }
+            52% { opacity: 1; transform: translateX(10px) scaleX(0.85); filter: blur(1px) brightness(1.5); }
+            100% { opacity: 1; transform: translateX(0) scaleX(1); filter: blur(0) brightness(1); }
+        }
+
+        @keyframes woCandleRise {
+            0% { opacity: 0; transform: translateY(42px) scale(0.82); filter: blur(14px) brightness(3.5); text-shadow: 0 0 28px rgba(255, 196, 95, 0.85); }
+            68% { opacity: 1; transform: translateY(-3px) scale(1.02); filter: blur(1px) brightness(1.25); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0) brightness(1); text-shadow: none; }
+        }
+
+        @keyframes woMistBloom {
+            0% { opacity: 0; transform: scale(1.65); filter: blur(26px) saturate(0.8) brightness(2.4); }
+            70% { opacity: 0.95; transform: scale(1.03); filter: blur(3px) brightness(1.15); }
+            100% { opacity: 1; transform: scale(1); filter: blur(0) brightness(1); }
+        }
+
+        @keyframes woLensPrayer {
+            0% { opacity: 0; transform: translateY(18px) scale(1.2); filter: blur(18px) brightness(5); text-shadow: 0 0 42px rgba(255, 255, 255, 0.85); }
+            58% { opacity: 1; transform: translateY(-2px) scale(1.02); filter: blur(2px) brightness(1.35); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0) brightness(1); text-shadow: none; }
+        }
+
+        @keyframes woSilkDrift {
+            0% { opacity: 0; transform: translate3d(-36px, 22px, 0) rotate(-7deg) scale(1.12); filter: blur(18px); }
+            74% { opacity: 1; transform: translate3d(2px, -2px, 0) rotate(1deg) scale(1.01); filter: blur(1px); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) rotate(0) scale(1); filter: blur(0); }
+        }
+
+        @keyframes woSoftIris {
+            0% { opacity: 0; transform: scale(0.42); filter: blur(20px) brightness(4); }
+            64% { opacity: 1; transform: scale(1.04); filter: blur(2px) brightness(1.22); }
+            100% { opacity: 1; transform: scale(1); filter: blur(0) brightness(1); }
+        }
+
+        @keyframes woCloudForm {
+            0% { opacity: 0; transform: translateY(-18px) scale(1.45); filter: blur(28px) opacity(0.25); }
+            72% { opacity: 0.92; transform: translateY(2px) scale(1.02); filter: blur(4px) opacity(0.95); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0) opacity(1); }
+        }
+
+        @keyframes woGoldenHour {
+            0% { opacity: 0; transform: translateY(26px) scale(0.92); filter: sepia(1) blur(18px) brightness(3.2); text-shadow: 0 0 36px rgba(255, 190, 92, 0.78); }
+            70% { opacity: 1; transform: translateY(-2px) scale(1.02); filter: sepia(0.25) blur(1px) brightness(1.25); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: none; text-shadow: none; }
+        }
+
+        @keyframes woDeepFocus {
+            0% { opacity: 0; transform: translateZ(0) scale(1.35); filter: blur(30px) contrast(0.55) brightness(2.1); }
+            75% { opacity: 1; transform: scale(1.01); filter: blur(3px) contrast(0.92) brightness(1.08); }
+            100% { opacity: 1; transform: scale(1); filter: blur(0) contrast(1) brightness(1); }
+        }
+
+        @keyframes woVeilCascade {
+            0% { opacity: 0; transform: translateY(-58px) scaleY(1.28); filter: blur(16px) brightness(2.8); }
+            68% { opacity: 1; transform: translateY(4px) scaleY(0.98); filter: blur(2px) brightness(1.2); }
+            100% { opacity: 1; transform: translateY(0) scaleY(1); filter: blur(0) brightness(1); }
+        }
+
+        @keyframes woCinematicBreathe {
+            0% { opacity: 0; transform: scale(0.72) translateY(20px); filter: blur(22px) brightness(2.7); }
+            56% { opacity: 1; transform: scale(1.06) translateY(-2px); filter: blur(2px) brightness(1.16); }
+            100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0) brightness(1); }
+        }
+
+        /* ========================================== */
+        /* FIX: WEBKIT GRADIENT BUG PADA ANIMASI FX   */
+        /* ========================================== */
+        .gradient-text {
+            background-image: var(--grad-color);
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+        }
+
+        .gradient-text .word,
+        .gradient-text .char,
+        .gradient-text .main-lang {
+            background-image: var(--grad-color);
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+        }
+
+        .gradient-text .sub-lang,
+        .gradient-text .sub-lang .word,
+        .gradient-text .sub-lang .char {
+            background-image: none !important;
+            -webkit-background-clip: initial !important;
+            -webkit-text-fill-color: initial !important;
+        }
+
+        .iframe-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .layer-audio {
+            z-index: 0;
+        }
+
+        .layer-video {
+            z-index: 1;
+        }
+
+        .layer-photo {
+            z-index: 2;
+        }
+
+        .layer-lyrics {
+            z-index: 3;
+        }

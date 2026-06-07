@@ -78,6 +78,18 @@ const THEME_DEFAULTS = {
     "popart": { glow: 0, shadow_int: 40, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
     "blueprint": { glow: 0, shadow_int: 15, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
 
+    // Advanced scenic / text-box presets
+    "cloud-halo": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "cinematic-caption": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "calligraphy-gold": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "neo-prism": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "liquid-gold-box": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "aurora-glass-box": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "ink-sermon": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "velvet-marquee": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "modern-kinetic": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+    "sacred-parchment": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' },
+
     "_fallback": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' }
 };
 
@@ -176,10 +188,6 @@ function applyMediaTimeSync(targetPlayer, rawValue, options = {}) {
 setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
         if (!masterBgAudio.paused && masterBgAudio.readyState > 0) {
-            ws.send(JSON.stringify({
-                action: "bg_control",
-                payload: { target: "video", command: "sync_time", value: masterBgAudio.currentTime }
-            }));
             saveVideoTimelineSnapshot();
         }
         if (!masterSfxAudio.paused && masterSfxAudio.readyState > 0) {
@@ -308,6 +316,11 @@ ws.addEventListener("message", function (event) {
                 window.waitingForPPTId = null;
                 window.waitingForPPTName = null;
             }
+        }
+        if (action === "cache_status") {
+            const videoId = payload.video_id;
+            const status = payload.status;
+            console.log(`[Cache Sync] Client background video ${videoId} status: ${status}`);
         }
 
         // 🎯 FORCE SIGN OUT (Revoke License UI)
@@ -605,6 +618,12 @@ window.onload = async function () {
     // 🎯 FIX: Pastikan langsung masuk tab library waktu baru refresh biar tidak tabrakan
     switchTab('library');
     setupPlaylistResizer();
+    setupSidebarResizer();
+    setupSettingsResizer();
+    if (typeof setupBgLibraryResizer === 'function') {
+        setupBgLibraryResizer();
+    }
+    await initGridSettings();
 
     // Load memori Bilingual dari server
     try {
@@ -702,6 +721,199 @@ function switchTab(tab) {
         contentSched.style.display = 'flex';
     }
 }
+
+async function setupSidebarResizer() {
+    const playlist = document.querySelector('.col-playlist');
+    const resizer = document.getElementById('sidebar-resizer');
+    if (!playlist || !resizer) return;
+
+    // Helper to calculate current bounds dynamically
+    const getBounds = () => {
+        const min = Math.max(250, Math.round(window.innerWidth * 0.15));
+        const max = Math.max(350, Math.round(window.innerWidth * 0.25));
+        return { min, max };
+    };
+
+    // Helper to clamp values
+    const clampWidth = (val) => {
+        const { min, max } = getBounds();
+        return Math.min(Math.max(val, min), max);
+    };
+
+    // Load initial width from settings
+    try {
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+            const settings = await res.json();
+            if (settings.sidebar_width) {
+                const savedWidth = parseInt(settings.sidebar_width);
+                const clamped = clampWidth(savedWidth);
+                playlist.style.setProperty('--col-playlist-width', `${clamped}px`);
+            } else {
+                const clamped = clampWidth(280);
+                playlist.style.setProperty('--col-playlist-width', `${clamped}px`);
+            }
+        }
+    } catch (err) {
+        console.warn("Failed to load sidebar width:", err);
+    }
+
+    let isDragging = false;
+    let startX = 0;
+    let startWidth = 0;
+    let animationFrameId = null;
+
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        isDragging = true;
+        startX = e.clientX;
+        startWidth = playlist.offsetWidth;
+        document.body.classList.add('sidebar-resizing');
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        animationFrameId = requestAnimationFrame(() => {
+            const newWidth = startWidth + (e.clientX - startX);
+            const clamped = clampWidth(newWidth);
+            playlist.style.setProperty('--col-playlist-width', `${clamped}px`);
+        });
+    });
+
+    document.addEventListener('mouseup', async () => {
+        if (!isDragging) return;
+        isDragging = false;
+        document.body.classList.remove('sidebar-resizing');
+
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        const finalWidth = playlist.offsetWidth;
+        // Save to settings
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sidebar_width: finalWidth })
+            });
+        } catch (err) {
+            console.warn("Failed to save sidebar width:", err);
+        }
+    });
+
+    // Handle window resize dynamically to clamp width within new bounds if necessary
+    window.addEventListener('resize', () => {
+        const currentWidth = playlist.offsetWidth;
+        const clamped = clampWidth(currentWidth);
+        if (clamped !== currentWidth) {
+            playlist.style.setProperty('--col-playlist-width', `${clamped}px`);
+        }
+    });
+}
+window.setupSidebarResizer = setupSidebarResizer;
+
+async function setupSettingsResizer() {
+    const settings = document.querySelector('.col-settings');
+    const resizer = document.getElementById('settings-resizer');
+    if (!settings || !resizer) return;
+
+    // Dynamic bounds: Min 20% window width (min 250px), Max 30% window width (min 450px)
+    const getBounds = () => ({
+        min: Math.max(250, Math.round(window.innerWidth * 0.20)),
+        max: Math.max(450, Math.round(window.innerWidth * 0.30))
+    });
+
+    const clampWidth = (val) => {
+        const { min, max } = getBounds();
+        return Math.min(Math.max(val, min), max);
+    };
+
+    // Load initial width from settings
+    try {
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+            const data = await res.json();
+            if (data.settings_panel_width) {
+                const saved = parseInt(data.settings_panel_width);
+                settings.style.setProperty('--col-settings-width', `${clampWidth(saved)}px`);
+            } else {
+                settings.style.setProperty('--col-settings-width', `${clampWidth(260)}px`);
+            }
+        }
+    } catch (err) {
+        console.warn("Failed to load settings panel width:", err);
+    }
+
+    let isDragging = false;
+    let startX = 0;
+    let startWidth = 0;
+    let animationFrameId = null;
+
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        isDragging = true;
+        startX = e.clientX;
+        startWidth = settings.offsetWidth;
+        document.body.classList.add('settings-resizing');
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        // Settings is on the right: dragging left (smaller clientX) = wider panel
+        animationFrameId = requestAnimationFrame(() => {
+            const newWidth = startWidth + (startX - e.clientX);
+            const clamped = clampWidth(newWidth);
+            settings.style.setProperty('--col-settings-width', `${clamped}px`);
+            // Re-scale the display preview iframe to fit its updated container
+            if (typeof resizePreview === 'function') resizePreview();
+        });
+    });
+
+    document.addEventListener('mouseup', async () => {
+        if (!isDragging) return;
+        isDragging = false;
+        document.body.classList.remove('settings-resizing');
+
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        const finalWidth = settings.offsetWidth;
+        // Final rescale after drag ends
+        if (typeof resizePreview === 'function') requestAnimationFrame(resizePreview);
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ settings_panel_width: finalWidth })
+            });
+        } catch (err) {
+            console.warn("Failed to save settings panel width:", err);
+        }
+    });
+
+    // Re-clamp on window resize
+    window.addEventListener('resize', () => {
+        const currentWidth = settings.offsetWidth;
+        const clamped = clampWidth(currentWidth);
+        if (clamped !== currentWidth) {
+            settings.style.setProperty('--col-settings-width', `${clamped}px`);
+            if (typeof resizePreview === 'function') requestAnimationFrame(resizePreview);
+        }
+    });
+}
+window.setupSettingsResizer = setupSettingsResizer;
 
 function setupPlaylistResizer() {
     const playlist = document.querySelector('.col-playlist');
@@ -821,12 +1033,8 @@ function renderNextChunk() {
         let activeClass = (song.title === currentSongTitle) ? " active" : "";
 
         htmlString += `
-                    <div class="song-item${activeClass}" draggable="true" ondragstart="startLibrarySongDrag(event, '${safeTitle}')">
+                    <div class="song-item${activeClass}" draggable="true" ondragstart="startLibrarySongDrag(event, '${safeTitle}')" oncontextmenu="showLibrarySongContextMenu(event, '${safeTitle}')">
                         <span style="flex:1" onclick="loadSong('${safeTitle}')">${song.title}</span>
-                        <div class="item-actions">
-                            <button class="btn-icon btn-add" title="Add to Schedule" onclick="addToSchedule('${safeTitle}')">✚</button>
-                            <button class="btn-icon btn-del" title="Delete from Library" onclick="deleteSong('${safeTitle}')">🗑</button>
-                        </div>
                     </div>`;
     });
 
@@ -842,6 +1050,71 @@ function startLibrarySongDrag(event, title) {
         action: "add_song_to_schedule",
         title: title
     }));
+}
+
+// 🎯 LIBRARY SONG CONTEXT MENU (Right-Click)
+function showLibrarySongContextMenu(event, title) {
+    event.preventDefault();
+    
+    // Hapus context menu lama jika ada
+    const oldMenu = document.getElementById("library-song-context-menu");
+    if (oldMenu) oldMenu.remove();
+    
+    // Buat context menu baru
+    const menu = document.createElement("div");
+    menu.id = "library-song-context-menu";
+    menu.className = "library-context-menu";
+    
+    // Option 1: Add to Schedule
+    const addOption = document.createElement("div");
+    addOption.className = "library-context-item";
+    addOption.innerHTML = "✚ Add to Schedule";
+    addOption.onclick = () => {
+        addToSchedule(title);
+        menu.remove();
+    };
+    menu.appendChild(addOption);
+    
+    // Option 2: Delete
+    const delOption = document.createElement("div");
+    delOption.className = "library-context-item library-context-danger";
+    delOption.innerHTML = "🗑 Delete";
+    delOption.onclick = () => {
+        deleteSong(title);
+        menu.remove();
+    };
+    menu.appendChild(delOption);
+    
+    // Tambahkan menu ke body
+    document.body.appendChild(menu);
+    
+    // Positioning logic: jangan sampai terpotong oleh viewport
+    const rect = menu.getBoundingClientRect();
+    let x = event.clientX;
+    let y = event.clientY;
+    
+    // Cek apakah menu keluar dari kanan layar
+    if (x + rect.width > window.innerWidth) {
+        x = window.innerWidth - rect.width - 10;
+    }
+    
+    // Cek apakah menu keluar dari bawah layar
+    if (y + rect.height > window.innerHeight) {
+        y = window.innerHeight - rect.height - 10;
+    }
+    
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    
+    // Hapus menu jika klik di tempat lain
+    setTimeout(() => {
+        document.addEventListener('click', function removeMenu(e) {
+            if (!menu.contains(e.target) && menu.parentElement) {
+                menu.remove();
+                document.removeEventListener('click', removeMenu);
+            }
+        });
+    }, 10);
 }
 
 // Pasang sensor scroll (Kalo VJ scroll mentok bawah, render lagi 100 lagu) - THROTTLED WITH requestAnimationFrame
@@ -1038,6 +1311,21 @@ function renderSchedule() {
             window.dragStartIndex = -1;
         };
 
+        // 🎯 CLICK DI FULL KOTAK UNTUK LOAD SONG
+        div.onclick = (e) => {
+            // Jangan load song kalau klik di note
+            if (e.target.classList.contains('sched-note-text')) {
+                return;
+            }
+            // Load song dengan klik di area manapun (tapi bukan note)
+            loadSong(item.title);
+        };
+
+        // 🎯 RIGHT-CLICK CONTEXT MENU
+        div.oncontextmenu = (e) => {
+            showScheduleContextMenu(e, index, item.title);
+        };
+
         // 🎯 FIX 2: POTONG TEKS KEPANJANGAN
         let safeTitle = item.title.replace(/'/g, "\\'").replace(/"/g, "&quot;");
         let displayTitle = item.title;
@@ -1055,13 +1343,21 @@ function renderSchedule() {
         div.innerHTML = `
                     <div class="drag-handle" title="Drag to reorder">☰</div>
                     <div class="sched-item-wrap">
-                        <div class="${titleClass}" title="${safeTitle}" onclick="loadSong('${safeTitle}')">${index + 1}. ${displayTitle}</div>
-                        <div class="sched-note-text ${noteClass}" onclick="editScheduleNote(${index})">${noteText}</div>
-                    </div>
-                    <div class="item-actions">
-                        <button class="btn-icon btn-del" title="Remove" onclick="removeFromSchedule(${index})">✖</button>
+                        <div class="${titleClass}" title="${safeTitle}">${index + 1}. ${displayTitle}</div>
+                        <div class="sched-note-text ${noteClass}">${noteText}</div>
                     </div>
                 `;
+        
+        // 🎯 ATTACH EDIT NOTE HANDLER KE NOTE TEXT SAJA
+        const noteElement = div.querySelector('.sched-note-text');
+        if (noteElement) {
+            noteElement.onclick = (e) => {
+                e.stopPropagation(); // Jangan propagate ke parent (yang load song)
+                editScheduleNote(index);
+            };
+            noteElement.style.cursor = 'pointer';
+        }
+        
         container.appendChild(div);
     });
 }
@@ -1080,19 +1376,75 @@ async function addSongToScheduleAt(title, insertIndex = -1) {
     await saveActiveSchedule();
 }
 async function removeFromSchedule(index) {
-    // Ambil nama lagu yang mau dihapus buat ditampilin di pop-up
-    const songName = scheduleList[index].title;
-
-    // Panggil Custom Dialog buat minta konfirmasi
-    const isOk = await showCustomDialog("confirm", `Yakin ingin menghapus <b>"${songName}"</b> dari Scheduled?`);
-
-    // Kalau user pilih "Cancel", batalkan proses hapus
-    if (!isOk) return;
-
-    // Kalau "OK", baru eksekusi hapusnya
+    // Hapus langsung tanpa konfirmasi
     scheduleList.splice(index, 1);
     renderSchedule();
     await saveActiveSchedule();
+}
+
+// 🎯 SCHEDULE CONTEXT MENU (Right-Click)
+function showScheduleContextMenu(event, index, title) {
+    event.preventDefault();
+    
+    // Hapus context menu lama jika ada
+    const oldMenu = document.getElementById("schedule-context-menu");
+    if (oldMenu) oldMenu.remove();
+    
+    // Buat context menu baru
+    const menu = document.createElement("div");
+    menu.id = "schedule-context-menu";
+    menu.className = "library-context-menu";
+    
+    // Option 1: Edit Note
+    const editNoteOption = document.createElement("div");
+    editNoteOption.className = "library-context-item";
+    editNoteOption.innerHTML = "✏️ Edit Note";
+    editNoteOption.onclick = () => {
+        editScheduleNote(index);
+        menu.remove();
+    };
+    menu.appendChild(editNoteOption);
+    
+    // Option 2: Delete
+    const delOption = document.createElement("div");
+    delOption.className = "library-context-item library-context-danger";
+    delOption.innerHTML = "🗑 Delete";
+    delOption.onclick = () => {
+        removeFromSchedule(index);
+        menu.remove();
+    };
+    menu.appendChild(delOption);
+    
+    // Tambahkan menu ke body
+    document.body.appendChild(menu);
+    
+    // Positioning logic: jangan sampai terpotong oleh viewport
+    const rect = menu.getBoundingClientRect();
+    let x = event.clientX;
+    let y = event.clientY;
+    
+    // Cek apakah menu keluar dari kanan layar
+    if (x + rect.width > window.innerWidth) {
+        x = window.innerWidth - rect.width - 10;
+    }
+    
+    // Cek apakah menu keluar dari bawah layar
+    if (y + rect.height > window.innerHeight) {
+        y = window.innerHeight - rect.height - 10;
+    }
+    
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    
+    // Hapus menu jika klik di tempat lain
+    setTimeout(() => {
+        document.addEventListener('click', function removeMenu(e) {
+            if (!menu.contains(e.target) && menu.parentElement) {
+                menu.remove();
+                document.removeEventListener('click', removeMenu);
+            }
+        });
+    }, 10);
 }
 async function editScheduleNote(index) {
     const oldNote = scheduleList[index].note || "";
@@ -1106,7 +1458,26 @@ async function editScheduleNote(index) {
     }
 }
 async function saveActiveSchedule() { await fetch('/api/service', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scheduleList) }); }
-async function fetchSavedSchedules() { const res = await fetch('/api/schedules'); savedSchedules = await res.json(); const select = document.getElementById("saved-sched-select"); select.innerHTML = '<option value="">-- Select Saved --</option>'; for (const name in savedSchedules) { const opt = document.createElement("option"); opt.value = name; opt.innerText = name; select.appendChild(opt); } }
+async function fetchSavedSchedules() { 
+    const res = await fetch('/api/schedules'); 
+    savedSchedules = await res.json(); 
+    const select = document.getElementById("saved-sched-select"); 
+    select.innerHTML = '<option value="">-- Select Saved --</option>'; 
+    
+    // 🎯 GET ALL SCHEDULE NAMES & SORT - MOST RECENT FIRST (MAX 10)
+    let scheduleNames = Object.keys(savedSchedules);
+    
+    // Sort by name in reverse order (most recent first - assuming last added is last in iteration)
+    // For proper chronological sorting, backend should return timestamps
+    scheduleNames = scheduleNames.reverse().slice(0, 10);
+    
+    scheduleNames.forEach(name => {
+        const opt = document.createElement("option"); 
+        opt.value = name; 
+        opt.innerText = name; 
+        select.appendChild(opt); 
+    }); 
+}
 
 async function saveCurrentGrid() {
     if (currentActiveTab === 'scripture') {
@@ -1214,6 +1585,11 @@ function loadSong(title) {
         // 4. APPLY TO UI & SCREEN
         applyDisplayPresetToUI(activeSettings);
 
+        // 🎯 AUTO-SET BOX MODE IF PPT IS LOADED
+        if (currentSongTitle.startsWith("📊 PPT:")) {
+            currentGridMode = 'box';
+        }
+
         // updateSettings(); 
         renderGrid();
         const libraryItems = document.querySelectorAll('#library-list .song-item');
@@ -1255,6 +1631,229 @@ async function deleteSong(title) {
 }
 function parseLyrics() { const raw = document.getElementById("raw-input").value; const lines = raw.split('\n'); lyricsData = []; currentSongTitle = ""; let idCounter = 0; lines.forEach(line => { if (line.trim()) { lyricsData.push({ id: idCounter++, text: line.trim(), type: 'normal' }); } }); renderGrid(); }
 
+const gridBoxSizes = [
+    { width: '110px', height: '60px', fontSize: '0.62em' },
+    { width: '140px', height: '70px', fontSize: '0.7em' },
+    { width: '170px', height: '80px', fontSize: '0.8em' }, // Default
+    { width: '200px', height: '90px', fontSize: '0.9em' },
+    { width: '240px', height: '105px', fontSize: '1.0em' },
+    { width: '280px', height: '120px', fontSize: '1.1em' },
+    { width: '320px', height: '140px', fontSize: '1.2em' }
+];
+let currentGridBoxSizeIndex = 2; // Default size index (170px)
+let currentGridMode = 'box'; // Default grid mode
+let currentGridGrouping = false; // Default grouping mode
+
+// Update text content of all existing lyric boxes in-place when switching BOX <-> ROW mode
+function updateGridLyricTexts() {
+    const spans = document.querySelectorAll('#grid-container .grid-lyric-text[data-full-text]');
+    spans.forEach(span => {
+        const fullText = span.getAttribute('data-full-text');
+        if (!fullText) return;
+        if (currentGridMode === 'box') {
+            // Re-apply truncation: full text is stored, so decode and re-truncate
+            const tmp = document.createElement('div');
+            tmp.innerHTML = fullText;
+            const plain = tmp.innerText;
+            const truncated = plain.length > 35 ? plain.substring(0, 35) + '...' : plain;
+            const safe = document.createElement('div');
+            safe.innerText = truncated;
+            span.innerHTML = safe.innerHTML;
+        } else {
+            // ROW mode: show full untruncated text
+            span.innerHTML = fullText;
+        }
+    });
+}
+window.updateGridLyricTexts = updateGridLyricTexts;
+
+function applyGridModeAndSize() {
+    const container = document.getElementById("grid-container");
+    if (!container) return;
+
+    // 🎯 FORCE BOX MODE IF PPT IS ACTIVE
+    if (currentSongTitle.startsWith("📊 PPT:") && currentGridMode === 'row') {
+        currentGridMode = 'box';
+    }
+
+    // Remove existing mode classes
+    container.classList.remove("grid-mode-box", "grid-mode-row", "grid-grouped");
+
+    if (currentGridGrouping) {
+        container.classList.add("grid-grouped");
+    }
+
+    const dropdownVal = document.getElementById("grid-dropdown-val");
+    const itemBox = document.getElementById("item-grid-mode-box");
+    const itemRow = document.getElementById("item-grid-mode-row");
+    const zoomControls = document.getElementById("grid-dropdown-zoom");
+
+    const chkGrouping = document.getElementById("chk-grid-grouping");
+    const itemGrouping = document.getElementById("item-grid-grouping");
+    if (chkGrouping) chkGrouping.checked = currentGridGrouping;
+    if (itemGrouping) {
+        if (currentGridGrouping) {
+            itemGrouping.classList.add("active");
+        } else {
+            itemGrouping.classList.remove("active");
+        }
+    }
+
+    if (currentGridMode === 'row') {
+        container.classList.add("grid-mode-row");
+        if (dropdownVal) dropdownVal.textContent = "☰ ROW";
+        if (itemBox) itemBox.classList.remove("active");
+        if (itemRow) itemRow.classList.add("active");
+        if (zoomControls) zoomControls.style.display = "none";
+    } else {
+        container.classList.add("grid-mode-box");
+        if (dropdownVal) dropdownVal.textContent = "⊞ BOX";
+        if (itemBox) itemBox.classList.add("active");
+        if (itemRow) itemRow.classList.remove("active");
+        if (zoomControls) zoomControls.style.display = "flex";
+
+        // Apply box sizes using CSS variables on the container
+        const size = gridBoxSizes[currentGridBoxSizeIndex];
+        container.style.setProperty('--grid-box-width', size.width);
+        container.style.setProperty('--grid-box-height', size.height);
+        container.style.setProperty('--grid-box-font-size', size.fontSize);
+    }
+}
+
+function toggleGridDropdown(event) {
+    if (event) event.stopPropagation();
+    const menu = document.getElementById("grid-dropdown-menu");
+    if (!menu) return;
+    if (menu.style.display === "block") {
+        menu.style.display = "none";
+    } else {
+        menu.style.display = "block";
+    }
+}
+
+async function selectGridMode(mode, event) {
+    if (event) event.stopPropagation();
+    
+    // 🎯 PREVENT ROW MODE WHEN PPT IS ACTIVE
+    const isPPTActive = currentSongTitle.startsWith("📊 PPT:");
+    
+    if (mode === 'row' && isPPTActive) {
+        showToast("⚠️ PPT mode requires BOX grid layout", "error", 1000);
+        // Force back to box mode
+        currentGridMode = 'box';
+        // Update button UI to show box is selected
+        const boxBtn = document.querySelector('[onclick*="selectGridMode(\'box\'"]');
+        const rowBtn = document.querySelector('[onclick*="selectGridMode(\'row\'"]');
+        if (boxBtn) boxBtn.classList.add('active');
+        if (rowBtn) rowBtn.classList.remove('active');
+        return;
+    }
+    
+    currentGridMode = mode;
+
+    const menu = document.getElementById("grid-dropdown-menu");
+    if (menu) menu.style.display = "none";
+
+    applyGridModeAndSize();
+    updateGridLyricTexts();
+    
+    // Save to server app_settings.json
+    try {
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                song_grid_mode: currentGridMode
+            })
+        });
+    } catch (err) {
+        console.warn("Failed to save grid mode setting:", err);
+    }
+}
+
+async function toggleGridGrouping(event) {
+    if (event) event.stopPropagation();
+    currentGridGrouping = !currentGridGrouping;
+
+    const chk = document.getElementById("chk-grid-grouping");
+    if (chk) chk.checked = currentGridGrouping;
+
+    const item = document.getElementById("item-grid-grouping");
+    if (item) {
+        if (currentGridGrouping) {
+            item.classList.add("active");
+        } else {
+            item.classList.remove("active");
+        }
+    }
+
+    renderGrid();
+
+    // Save to server app_settings.json
+    try {
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                song_grid_grouping: currentGridGrouping
+            })
+        });
+    } catch (err) {
+        console.warn("Failed to save grid grouping setting:", err);
+    }
+}
+
+async function adjustGridBoxSize(direction) {
+    let nextIndex = currentGridBoxSizeIndex + direction;
+    if (nextIndex >= 0 && nextIndex < gridBoxSizes.length) {
+        currentGridBoxSizeIndex = nextIndex;
+        applyGridModeAndSize();
+        
+        // Save to server app_settings.json
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    song_grid_zoom_level: currentGridBoxSizeIndex
+                })
+            });
+        } catch (err) {
+            console.warn("Failed to save grid zoom setting:", err);
+        }
+    }
+}
+
+async function initGridSettings() {
+    try {
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+            const settings = await res.json();
+            if (settings.song_grid_mode) {
+                currentGridMode = settings.song_grid_mode;
+            }
+            if (settings.song_grid_zoom_level !== undefined) {
+                currentGridBoxSizeIndex = parseInt(settings.song_grid_zoom_level);
+            }
+            if (settings.song_grid_grouping !== undefined) {
+                currentGridGrouping = settings.song_grid_grouping === true || settings.song_grid_grouping === 'true';
+            }
+        }
+    } catch (err) {
+        console.warn("Failed to load grid settings:", err);
+    }
+    applyGridModeAndSize();
+
+    // Click outside handler for custom grid mode dropdown
+    window.addEventListener('click', (e) => {
+        const menu = document.getElementById("grid-dropdown-menu");
+        const btn = document.getElementById("grid-dropdown-btn");
+        if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+            menu.style.display = "none";
+        }
+    });
+}
+
 function renderGrid() {
     // 🚀 FIX: Safely exit PPT Remote Mode if active when forcing local song
     const container = document.getElementById("grid-container");
@@ -1270,6 +1869,7 @@ function renderGrid() {
     }
 
     container.innerHTML = "";
+    applyGridModeAndSize();
 
     // 🎯 LOGIKA DROP KE AREA KOSONG
     container.ondragover = (e) => { e.preventDefault(); };
@@ -1303,14 +1903,14 @@ function renderGrid() {
         }
     };
 
-    lyricsData.forEach((item, idx) => {
+    function createBoxElement(item, idx) {
         const box = document.createElement("div");
         let typeClass = "", typeLabel = (idx + 1).toString();
 
         if (item.type === 'video') { typeClass = "tag-video"; typeLabel = "🎞️ VID"; }
         else if (item.type === 'audio') { typeClass = "tag-audio"; typeLabel = "🎵 AUD"; }
         else if (item.type === 'photo') { typeClass = "tag-photo"; typeLabel = "📷 PHT"; }
-        else if (item.type === 'scripture') { typeClass = "tag-scripture"; typeLabel = `AYAT ${item.verse}`; } // 🎯 TAMBAH INI
+        else if (item.type === 'scripture') { typeClass = "tag-scripture"; typeLabel = `AYAT ${item.verse}`; }
         else if (item.type === 'verse') { typeClass = "tag-verse"; typeLabel = "VERSE"; }
         else if (item.type === 'verse2') { typeClass = "tag-verse2"; typeLabel = "VERSE 2"; }
         else if (item.type === 'chorus') { typeClass = "tag-chorus"; typeLabel = "CHORUS"; }
@@ -1331,22 +1931,19 @@ function renderGrid() {
         box.draggable = true;
         box.ondragstart = (e) => {
             e.dataTransfer.setData("text/plain", JSON.stringify({ action: "reorder_slide", index: idx }));
-            box.style.opacity = "0.4"; // Opacity wajar buat efek geser
+            box.style.opacity = "0.4";
         };
         box.ondragend = () => box.style.opacity = "1";
 
-        // 🎯 INJECT THUMBNAIL (DENGAN ANTI-CACHE BIAR GA SLIDE 1 TERUS)
         let thumbHtml = "";
         if (item.bg_id) {
             let cat = item.bg_type || 'video';
             if (cat === 'audio') {
                 thumbHtml = `<div class="grid-audio-layer">🎵</div>`;
             } else if (item.type === 'presentation_slide') {
-                // Tembak API Slide Spesifik dengan Timestamp Anti-Cache!
                 let thumbUrl = `/api/media/presentation/${item.bg_id}/slide/${item.slide_num}?t=${item.bg_id}`;
                 thumbHtml = `<img src="${thumbUrl}" class="grid-thumb-layer" onerror="this.style.display='none'">`;
             } else if (item.type === 'remote_ppt_slide') {
-                // Tentukan Base URL
                 let baseUrl = currentSender.public_url && currentSender.public_url !== "None"
                     ? currentSender.public_url
                     : `http://${currentSender.ip}:${currentSender.ws_port}`;
@@ -1354,76 +1951,60 @@ function renderGrid() {
                 thumbHtml = `<img src="${thumbUrl}" class="grid-thumb-layer" onerror="this.style.display='none'">`;
             } else {
                 let thumbUrl = `/api/media/thumb/${cat}/${item.bg_id}`;
-
-                // 🎯 CEK BUKU CATATAN UNTUK GRID LAGU
                 if (window.freshThumbs && window.freshThumbs.has(item.bg_id)) {
                     thumbUrl += `?t=${Date.now()}`;
                 }
-
                 thumbHtml = `<img src="${thumbUrl}" data-thumb-id="${item.bg_id}" class="grid-thumb-layer" style="transition: opacity 0.3s ease-in-out;" onerror="this.style.display='none'">`;
             }
         }
 
-        // ==========================================
-        // 🎯 TEKS DI DALAM KOTAK (TANPA WRAPPER PERUSAK LAYOUT)
-        // ==========================================
         const isStandalone = ['video', 'audio', 'photo', 'presentation_slide'].includes(item.type);
         if (isStandalone) {
-            let badgeClass = item.type === 'video' ? 'badge-video' : (item.type === 'audio' ? 'badge-audio' : (item.type === 'presentation_slide' ? 'badge-photo' : 'badge-photo'));
+            let badgeClass = item.type === 'video' ? 'badge-video' : (item.type === 'audio' ? 'badge-audio' : 'badge-photo');
             box.innerHTML = `
-                        ${thumbHtml}
-                        <div class="tag-badge badge-standalone ${badgeClass}">${typeLabel}</div>
-                    `;
+                ${thumbHtml}
+                <div class="tag-badge badge-standalone ${badgeClass}">${typeLabel}</div>
+            `;
         } else {
-            let preview = item.text.length > 35 ? item.text.substring(0, 35) + "..." : item.text;
+            let preview = item.text;
+            if (currentGridMode === 'box') {
+                preview = item.text.length > 35 ? item.text.substring(0, 35) + "..." : item.text;
+            }
             let safeText = document.createElement('div'); safeText.innerText = preview;
+            // Store the full (untruncated) text for live switching
+            const safeFullText = document.createElement('div'); safeFullText.innerText = item.text;
 
-            // 🎯 SUNTIKKAN TOMBOL MATIKAN INLINE KHUSUS SCRIPTURE
             let inlineClearBtn = "";
             if (item.type === 'scripture') {
                 inlineClearBtn = `<button class="btn-inline-clear" onclick="event.stopPropagation(); clearScriptureLive();" title="Matikan Ayat">✖ CLEAR</button>`;
             }
 
             box.innerHTML = `
-                        ${thumbHtml}
-                        ${inlineClearBtn}
-                        <div class="tag-badge">${typeLabel}</div>
-                        <span class="grid-lyric-text">${safeText.innerHTML}</span>
-                    `;
+                ${thumbHtml}
+                ${inlineClearBtn}
+                <div class="tag-badge">${typeLabel}</div>
+                <span class="grid-lyric-text" data-full-text="${safeFullText.innerHTML}">${safeText.innerHTML}</span>
+            `;
         }
 
-        // Di dalam fungsi renderGrid(), ubah dari true menjadi false:
-        // 🎯 FIX 2: SMART CLICK! Mouse bisa mikir kapan harus antre, kapan harus tembak.
         box.onclick = () => {
-            // Cek apakah VJ sedang sengaja menggelapkan layar (Clear Lyrics / Blackout)
             const isScreenCleared = !isShowing || clearStates.lyrics;
-
             if (isScreenCleared) {
-                // Kalau VJ sengaja nge-clear, Klik Mouse HANYA MENGANTRE (Silent Queue)
                 fireLyric(idx, false);
             } else {
-                // Kalau layar hidup, Klik Mouse BERFUNGSI SEBAGAI FORCE SHOW
-                // (Wajib untuk mereset cache agar saat VJ ganti lagu, background pasti tertembak)
                 fireLyric(idx, true);
             }
         };
         box.oncontextmenu = (e) => showGridContextMenu(e, idx);
 
-        // ==========================================
-        // 🚀 SENSOR DRAG & DROP IRIT GPU (CACHING RECT)
-        // ==========================================
-        let cachedRect = null; // Memori sementara
-
+        let cachedRect = null;
         box.ondragenter = (e) => {
-            // Hitung ukuran kotak CUMA SEKALI pas mouse masuk!
             cachedRect = box.getBoundingClientRect();
         };
 
         box.ondragover = (e) => {
             e.preventDefault();
-            // Fallback aman kalau mouse meleset
             if (!cachedRect) cachedRect = box.getBoundingClientRect();
-
             const isLeftEdge = (e.clientX - cachedRect.left) < (cachedRect.width / 4);
             const isRightEdge = (e.clientX - cachedRect.left) > (cachedRect.width * 0.75);
 
@@ -1434,18 +2015,94 @@ function renderGrid() {
         };
 
         box.ondragleave = (e) => {
-            cachedRect = null; // Buang memori saat mouse pergi
+            cachedRect = null;
             box.classList.remove("drag-insert-left", "drag-insert-right", "drag-insert-center");
         };
 
         box.ondrop = (e) => {
-            cachedRect = null; // Bersihkan memori
+            cachedRect = null;
             box.classList.remove("drag-insert-left", "drag-insert-right", "drag-insert-center");
             handleSlideDrop(e, idx);
         };
 
-        container.appendChild(box);
-    });
+        return box;
+    }
+
+    if (currentGridGrouping && lyricsData.length > 0) {
+        let groups = [];
+        let currentGroup = null;
+        let activeType = 'normal';
+        let activeVerse = null;
+        const groupableTypes = ['verse', 'verse2', 'pre', 'chorus', 'chorus2', 'bridge', 'scripture', 'video', 'audio', 'photo', 'presentation_slide', 'remote_ppt_slide'];
+
+        lyricsData.forEach((item, idx) => {
+            const isGroupable = groupableTypes.includes(item.type);
+
+            const isGroupStart = (
+                idx === 0 ||
+                (isGroupable && item.type !== activeType)
+            );
+
+            if (isGroupStart) {
+                activeType = isGroupable ? item.type : 'normal';
+                activeVerse = isGroupable && item.type === 'scripture' ? item.verse : null;
+                currentGroup = {
+                    type: activeType,
+                    verse: activeVerse,
+                    items: []
+                };
+                groups.push(currentGroup);
+            }
+            currentGroup.items.push({ item, idx });
+        });
+
+        groups.forEach(group => {
+            const groupBox = document.createElement("div");
+            groupBox.className = "grid-group";
+
+            let groupColor = "#888888";
+            let groupTitleText = "LYRICS";
+
+            if (group.type === 'verse') { groupColor = "#06b6d4"; groupTitleText = "VERSE 1"; }
+            else if (group.type === 'verse2') { groupColor = "#8b5cf6"; groupTitleText = "VERSE 2"; }
+            else if (group.type === 'pre') { groupColor = "#f59e0b"; groupTitleText = "PRE-CHORUS"; }
+            else if (group.type === 'chorus') { groupColor = "#ef4444"; groupTitleText = "CHORUS 1"; }
+            else if (group.type === 'chorus2') { groupColor = "#ec4899"; groupTitleText = "CHORUS 2"; }
+            else if (group.type === 'bridge') { groupColor = "#10b981"; groupTitleText = "BRIDGE"; }
+            else if (group.type === 'tag') { groupColor = "#f97316"; groupTitleText = "TAG"; }
+            else if (group.type === 'video') { groupColor = "#00e5ff"; groupTitleText = "VIDEO"; }
+            else if (group.type === 'audio') { groupColor = "#ffaa00"; groupTitleText = "AUDIO"; }
+            else if (group.type === 'photo') { groupColor = "#ff00aa"; groupTitleText = "PHOTO"; }
+            else if (group.type === 'presentation_slide') { groupColor = "#ff00aa"; groupTitleText = "PRESENTATION"; }
+            else if (group.type === 'remote_ppt_slide') { groupColor = "#ff00aa"; groupTitleText = "REMOTE PPT"; }
+            else if (group.type === 'scripture') { groupColor = "#10b981"; groupTitleText = `SCRIPTURE (AYAT ${group.verse || ''})`; }
+
+            groupBox.style.setProperty("--group-color", groupColor);
+
+            if (group.type !== 'normal') {
+                const groupHeader = document.createElement("div");
+                groupHeader.className = "grid-group-header";
+                groupHeader.innerText = groupTitleText;
+                groupBox.appendChild(groupHeader);
+            }
+
+            const groupContent = document.createElement("div");
+            groupContent.className = "grid-group-content";
+
+            group.items.forEach(({ item, idx }) => {
+                const box = createBoxElement(item, idx);
+                groupContent.appendChild(box);
+            });
+
+            groupBox.appendChild(groupContent);
+            container.appendChild(groupBox);
+        });
+    } else {
+        lyricsData.forEach((item, idx) => {
+            const box = createBoxElement(item, idx);
+            container.appendChild(box);
+        });
+    }
 
     if (currentIndex >= 0 && isShowing) highlightBox(currentIndex);
 }
@@ -1906,7 +2563,7 @@ function updateSettings() {
                 ws.send(JSON.stringify({ action: "update_display", payload: payload }));
             }
             wsThrottleTimer = null; // Lepas rem
-        }, 40);
+        }, 150); // 150ms throttle untuk mencegah CPU spike di layar utama saat drag slider
     }
 
     // 3. SIMPAN SETTINGAN BILINGUAL
@@ -2143,17 +2800,16 @@ function createControlIframe(src, id, className) {
 }
 
 function suspendMainPreview() {
-    const wrapper = document.getElementById('preview-wrapper');
-    if (!wrapper) return;
-    destroyIframeEl(document.getElementById('preview-frame'));
-    clearIframeContainer(wrapper);
-    wrapper.classList.add('preview-suspended');
+    // [USER REQUEST] Tidak perlu pause/freeze preview saat modal dibuka
+    // Do nothing so preview stays active
 }
 
 function restoreMainPreview() {
-    if (activeIframeModalId) return;
+    // [USER REQUEST] Tidak perlu restore karena preview tidak di-pause
+    // BUT we still need to create it initially if it doesn't exist!
     const wrapper = document.getElementById('preview-wrapper');
     if (!wrapper || document.getElementById('preview-frame')) return;
+    
     wrapper.classList.remove('preview-suspended');
     const iframe = createControlIframe('/display', 'preview-frame', 'preview-frame');
     wrapper.appendChild(iframe);
@@ -2203,7 +2859,7 @@ function enterModalIframeMode(modalId, onMount) {
 function mountTextEditPreview() {
     const wrapper = document.getElementById('modal-preview-wrapper');
     if (!wrapper || document.getElementById('modal-preview-frame')) return;
-    const iframe = createControlIframe('/display', 'modal-preview-frame', 'te-preview-frame');
+    const iframe = createControlIframe('/preview_display', 'modal-preview-frame', 'te-preview-frame');
     wrapper.appendChild(iframe);
     attachTextEditPreviewScaler();
 }
@@ -2308,7 +2964,7 @@ async function uploadFiles(input) {
 function openLTConfig() {
     enterModalIframeMode('lt-modal', () => {
         document.getElementById('lt-modal').style.display = 'flex';
-        loadModalOutputPreview('lt-modal', '/lowerthird', 'LOWER THIRD OUTPUT', 'left');
+        loadModalOutputPreview('lt-modal', '/preview_lt', 'LOWER THIRD OUTPUT', 'left');
         captureOutputModalSnapshot('lt');
         ensureOutputModalFooter('lt-modal', 'saveLTModal', 'cancelLTModal');
         movePresetPanelToPreview('lt-modal', 'lt-preset-select');
@@ -4188,19 +4844,102 @@ function cycleTag(idx, mode) {
 }
 
 // FITUR PASTE PINTAR (Bisa mendeteksi spasi antar bait)
+function parseSectionLabel(line, isStandaloneBlock) {
+    const clean = line.trim().toLowerCase();
+    // Remove enclosing brackets, parentheses, colons, and hyphens
+    const unwrapped = clean.replace(/^\[|\]$|^\(|\)$/g, '').replace(/[:\-]/g, ' ').replace(/\s+/g, ' ').trim();
+    
+    // Explicit mappings
+    if (unwrapped === 'verse 2' || unwrapped === 'v2') return 'verse2';
+    if (unwrapped === 'verse' || unwrapped === 'verse 1' || unwrapped === 'v1') return 'verse';
+    if (unwrapped === 'chorus 2' || unwrapped === 'c2' || unwrapped === 'reff 2') return 'chorus2';
+    if (unwrapped === 'chorus' || unwrapped === 'chorus 1' || unwrapped === 'c1' || unwrapped === 'refrain' || unwrapped === 'reff' || unwrapped === 'ref') return 'chorus';
+    if (unwrapped === 'pre chorus' || unwrapped === 'prechorus' || unwrapped === 'pre' || unwrapped === 'pc') return 'pre';
+    if (unwrapped === 'bridge' || unwrapped === 'br') return 'bridge';
+    if (unwrapped === 'outro' || unwrapped === 'tag' || unwrapped === 'ending') return 'tag';
+    
+    // Standalone or structured labels support short symbols
+    const hasStructure = (clean.startsWith('[') && clean.endsWith(']')) || clean.endsWith(':') || (clean.startsWith('(') && clean.endsWith(')'));
+    if (isStandaloneBlock || hasStructure) {
+        if (unwrapped === 'v') return 'verse';
+        if (unwrapped === 'c') return 'chorus';
+        if (unwrapped === 'b') return 'bridge';
+        if (unwrapped === 't' || unwrapped === 'o') return 'tag';
+    }
+    
+    return null;
+}
+
+// FITUR PASTE PINTAR (Bisa mendeteksi spasi antar bait & label bagian)
 async function smartBulkPaste(mode) {
+    let text = "";
     try {
-        const text = await navigator.clipboard.readText();
-        if (!text) return;
-        saveEditorState(); // 📸 BACKUP
-        const blocks = text.trim().split(/\n/);
-        const newSlides = blocks.filter(b => b.trim() !== "").map(b => ({ text: b.trim(), type: 'normal' }));
-        if (newSlides.length > 0) {
-            editorSlides = newSlides;
-            renderEditor(mode);
-            isFormDirty = true;
+        if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+            text = await navigator.clipboard.readText();
+        } else {
+            throw new Error("Clipboard API not available or blocked");
         }
-    } catch (err) { alert("Failed to read clipboard."); }
+    } catch (err) {
+        console.warn("Navigator clipboard read failed, falling back to manual paste dialog:", err);
+        text = await showCustomDialog("textarea", "Clipboard access blocked or not supported by browser.<br>Please paste your lyrics below:", "");
+    }
+
+    if (text === null || text.trim() === "") return;
+
+    saveEditorState(); // 📸 BACKUP
+
+    // Normalize line endings
+    text = text.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    let blocks = [];
+    if (text.includes('\n\n')) {
+        // split by double or more newlines (paragraphs/stanzas)
+        blocks = text.split(/\n\n+/);
+    } else {
+        // split by single newlines
+        blocks = text.split(/\n+/);
+    }
+
+    const newSlides = [];
+    let pendingType = 'normal';
+
+    for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i].trim();
+        if (block === "") continue;
+
+        const lines = block.split('\n');
+        
+        // Check if the block is a standalone section header
+        if (lines.length === 1) {
+            const detectedType = parseSectionLabel(lines[0], true);
+            if (detectedType) {
+                pendingType = detectedType;
+                continue;
+            }
+        }
+
+        // Check if the first line of the block is a section header
+        let slideText = block;
+        let slideType = pendingType;
+        pendingType = 'normal'; // reset
+
+        const detectedType = parseSectionLabel(lines[0], false);
+        if (detectedType) {
+            slideType = detectedType;
+            // Remove the first line
+            slideText = lines.slice(1).join('\n').trim();
+        }
+
+        if (slideText !== "") {
+            newSlides.push({ text: slideText, type: slideType });
+        }
+    }
+
+    if (newSlides.length > 0) {
+        editorSlides = newSlides;
+        renderEditor(mode);
+        isFormDirty = true;
+    }
 }
 
 // ==========================================
@@ -4371,8 +5110,11 @@ function showCustomDialog(type, message, defaultValue = "", currentSelected = ""
         let existingSelect = document.getElementById("dialog-select-dynamic");
         if (existingSelect) existingSelect.remove();
 
-        let selectEl = null;
+        let existingTextarea = document.getElementById("dialog-textarea-dynamic");
+        if (existingTextarea) existingTextarea.remove();
 
+        let selectEl = null;
+        let textareaEl = null;
 
         if (type === "prompt") {
             title.innerText = "📝 INPUT";
@@ -4421,6 +5163,32 @@ function showCustomDialog(type, message, defaultValue = "", currentSelected = ""
             });
             msg.appendChild(selectEl);
             setTimeout(() => selectEl.focus(), 100)
+
+        } else if (type === "textarea") {
+            // 🎯 TIPE BARU: TEXTAREA
+            title.innerText = "📋 PASTE LYRICS";
+            title.style.color = "#00e5ff";
+            overlay.querySelector('.modal-box').style.borderColor = "#00e5ff";
+            btnOk.style.background = "#00e5ff"; btnOk.style.color = "#000";
+            input.style.display = "none";
+
+            textareaEl = document.createElement("textarea");
+            textareaEl.id = "dialog-textarea-dynamic";
+            textareaEl.className = "compact-input";
+            textareaEl.placeholder = defaultValue || "Paste your lyrics here (Ctrl+V)...";
+            textareaEl.style.width = "100%";
+            textareaEl.style.height = "180px";
+            textareaEl.style.marginTop = "15px";
+            textareaEl.style.padding = "10px";
+            textareaEl.style.fontSize = "1.05em";
+            textareaEl.style.background = "#222";
+            textareaEl.style.color = "#fff";
+            textareaEl.style.border = "1px solid #444";
+            textareaEl.style.borderRadius = "4px";
+            textareaEl.style.resize = "vertical";
+
+            msg.appendChild(textareaEl);
+            setTimeout(() => textareaEl.focus(), 100);
         }
 
         const cleanup = () => {
@@ -4429,17 +5197,19 @@ function showCustomDialog(type, message, defaultValue = "", currentSelected = ""
             btnCancel.onclick = null;
             input.onkeydown = null;
             if (selectEl) selectEl.remove();
+            if (textareaEl) textareaEl.remove();
         };
 
         btnOk.onclick = () => {
             cleanup();
             if (type === "prompt") resolve(input.value);
             else if (type === "select") resolve(selectEl.value);
+            else if (type === "textarea") resolve(textareaEl.value);
             else resolve(true);
         };
         btnCancel.onclick = () => {
             cleanup();
-            resolve(type === "prompt" || type === "select" ? null : false);
+            resolve(type === "prompt" || type === "select" || type === "textarea" ? null : false);
         };
 
         input.onkeydown = (e) => {
@@ -4449,6 +5219,11 @@ function showCustomDialog(type, message, defaultValue = "", currentSelected = ""
         if (selectEl) {
             selectEl.onkeydown = (e) => {
                 if (e.key === "Enter") btnOk.click();
+                if (e.key === "Escape") btnCancel.click();
+            };
+        }
+        if (textareaEl) {
+            textareaEl.onkeydown = (e) => {
                 if (e.key === "Escape") btnCancel.click();
             };
         }
@@ -5715,7 +6490,8 @@ function attachTextEditPreviewScaler() {
         const frame = document.getElementById('modal-preview-frame');
         if (!frame) return;
         const currentWidth = entries[0].contentRect.width;
-        if (currentWidth > 0) {
+        if (currentWidth > 0 && Math.abs((window._lastIframeScaleWidth || 0) - currentWidth) > 1) {
+            window._lastIframeScaleWidth = currentWidth;
             frame.style.transform = `scale(${currentWidth / 1920})`;
         }
     });
@@ -5792,7 +6568,8 @@ function openTextEditModal(mode = 'current') {
     enterModalIframeMode('text-edit-modal', () => {
         mountTextEditPreview();
         if (modal) modal.classList.add('modal-active');
-        updateTextPreview(true);
+        // Saat baru buka modal, TIDAK PERLU broadcast ulang (menghindari CPU Spike massal di semua layar)
+        updateTextPreview(false); 
     });
 }
 
@@ -7373,6 +8150,10 @@ window.transformText = transformText;
 window.saveFullEdit = saveFullEdit;
 window.saveAndLoadNewSong = saveAndLoadNewSong;
 window.openFullEditModal = openFullEditModal;
+window.toggleGridDropdown = toggleGridDropdown;
+window.selectGridMode = selectGridMode;
+window.adjustGridBoxSize = adjustGridBoxSize;
+window.toggleGridGrouping = toggleGridGrouping;
 
 // ============================================================
 // ADVANCED OUTPUT: Custom Resolution & QR Code

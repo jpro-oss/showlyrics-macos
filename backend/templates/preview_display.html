@@ -10,13 +10,7 @@
 
 <body>
     <!-- 📹 MAIN CAMERA LAYER -->
-    {% if not is_editor %}
-    <iframe id="main-cam-iframe" src="/main_cam" class="cam-output-iframe"></iframe>
 
-    <iframe src="/background" id="frame-video" class="iframe-layer layer-video"></iframe>
-    <iframe src="/photo" id="frame-photo" class="iframe-layer layer-photo"></iframe>
-    <iframe src="/presentation" id="frame-presentation" class="iframe-layer layer-presentation"></iframe>
-    {% endif %}
 
     <div id="scene-container">
         <div id="layer-a" class="lyric-group">
@@ -36,9 +30,7 @@
         <div id="crawl-text" class="crawl-content"></div>
     </div>
 
-    {% if not is_editor %}
-    <iframe src="/scripture" id="scripture-frame" class="scripture-iframe"></iframe>
-    {% endif %}
+
     <script src="/static/display.js?v={{ VERSION }}"></script>
 </body>
 

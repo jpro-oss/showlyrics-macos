@@ -4,12 +4,31 @@ let currentActiveSender = null;
 window.remoteLivePhotoId = null;
 window.activeRemoteSenderIp = null;
 
+let mediaSortKey = localStorage.getItem("mediaSortKey") || "name";
+let mediaSortOrder = localStorage.getItem("mediaSortOrder") || "asc";
+
+function changeMediaSort(val) {
+    const parts = val.split('_');
+    mediaSortKey = parts[0];
+    mediaSortOrder = parts[1];
+    localStorage.setItem("mediaSortKey", mediaSortKey);
+    localStorage.setItem("mediaSortOrder", mediaSortOrder);
+
+    renderMediaGrid();
+    if (typeof bgDatabase !== 'undefined' && bgDatabase.videos && Object.keys(bgDatabase.videos).length > 0) {
+        renderBgGrid(currentActiveFolder);
+    }
+}
+window.changeMediaSort = changeMediaSort;
+
 function toggleBgLibrary() {
     const content = document.getElementById("bg-library-content");
     const icon = document.getElementById("bg-toggle-icon");
+    const resizer = document.getElementById("bg-library-resizer");
 
     if (content.style.display === "none" || content.style.display === "") {
         content.style.display = "flex";
+        if (resizer) resizer.style.display = "block";
         icon.innerText = "▼ COLLAPSE";
 
         if (currentMediaCategory === 'scripture') {
@@ -27,8 +46,103 @@ function toggleBgLibrary() {
         }
     } else {
         content.style.display = "none";
+        if (resizer) resizer.style.display = "none";
         icon.innerText = "▲ EXPAND";
     }
+}
+
+async function setupBgLibraryResizer() {
+    const content = document.getElementById("bg-library-content");
+    const resizer = document.getElementById("bg-library-resizer");
+    if (!content || !resizer) return;
+
+    // Dynamic bounds: Min 15% of screen height (at least 250px), Max 40% of screen height (at least 500px)
+    const getBgBounds = () => ({
+        min: Math.max(150, Math.round(window.innerHeight * 0.15)),
+        max: Math.max(550, Math.round(window.innerHeight * 0.40))
+    });
+
+    const clampHeight = (val) => {
+        const { min, max } = getBgBounds();
+        return Math.min(Math.max(val, min), max);
+    };
+
+    // Load last saved height from settings
+    try {
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+            const settings = await res.json();
+            if (settings.bg_library_height) {
+                const savedHeight = parseInt(settings.bg_library_height);
+                content.style.height = `${clampHeight(savedHeight)}px`;
+            } else {
+                // Apply dynamic default (~20% of viewport)
+                content.style.height = `${clampHeight(Math.round(window.innerHeight * 0.20))}px`;
+            }
+        }
+    } catch (err) {
+        console.warn("Failed to load bg library height:", err);
+    }
+
+    // Dragging logic
+    let isDragging = false;
+    let startY = 0;
+    let startHeight = 0;
+    let animationFrameId = null;
+
+    resizer.addEventListener('mousedown', (e) => {
+        // Double check display state
+        if (content.style.display === "none" || content.style.display === "") return;
+        e.preventDefault();
+        isDragging = true;
+        startY = e.clientY;
+        startHeight = content.offsetHeight;
+        document.body.classList.add('bg-library-resizing');
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        animationFrameId = requestAnimationFrame(() => {
+            const newHeight = startHeight - (e.clientY - startY);
+            content.style.height = `${clampHeight(newHeight)}px`;
+        });
+    });
+
+    document.addEventListener('mouseup', async () => {
+        if (!isDragging) return;
+        isDragging = false;
+        document.body.classList.remove('bg-library-resizing');
+
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        // Save to settings
+        const finalHeight = content.offsetHeight;
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bg_library_height: finalHeight })
+            });
+        } catch (err) {
+            console.warn("Failed to save bg library height:", err);
+        }
+    });
+
+    // Re-clamp on window resize
+    window.addEventListener('resize', () => {
+        const currentHeight = content.offsetHeight;
+        const clamped = clampHeight(currentHeight);
+        if (clamped !== currentHeight) {
+            content.style.height = `${clamped}px`;
+        }
+    });
 }
 
 
@@ -143,32 +257,59 @@ function filterBgGrid(folder) {
 function renderBgGrid(folderFilter) {
     const grid = document.getElementById("bg-grid-container");
     const title = document.getElementById("bg-active-folder-name");
+    if (!grid) return;
     grid.innerHTML = "";
 
     title.innerText = folderFilter === "ALL" ? "🌍 All Videos" : `📂 ${folderFilter.split('/').pop()}`;
 
-    for (const [id, bg] of Object.entries(bgDatabase.videos)) {
-        if (folderFilter !== "ALL" && bg.folder !== folderFilter) continue;
+    // Sync dropdown select value
+    const sortSelect = document.getElementById("media-sort-select");
+    if (sortSelect) {
+        sortSelect.value = `${mediaSortKey}_${mediaSortOrder}`;
+    }
 
+    const itemsArray = [];
+    for (const [id, bg] of Object.entries(bgDatabase.videos || {})) {
+        if (folderFilter !== "ALL" && bg.folder !== folderFilter) continue;
+        itemsArray.push({
+            id: id,
+            name: bg.name,
+            folder: bg.folder,
+            mtime: bg.mtime || 0
+        });
+    }
+
+    // Sort itemsArray
+    itemsArray.sort((a, b) => {
+        let compare = 0;
+        if (mediaSortKey === 'date') {
+            compare = (a.mtime || 0) - (b.mtime || 0);
+        } else {
+            compare = a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
+        }
+        return mediaSortOrder === 'desc' ? -compare : compare;
+    });
+
+    itemsArray.forEach(bg => {
         const card = document.createElement("div");
         card.style.cssText = "background: #222; border: 1px solid #444; border-radius: 4px; overflow: hidden; cursor: grab; position: relative;";
         card.draggable = true;
 
         card.innerHTML = `
-            <img src="/thumbs/${id}" onerror="this.src='/static/logo.png'" style="width: 100%; height: 65px; object-fit: cover; display: block; pointer-events: none;">
-            <div style="padding: 5px; font-size: 0.65em; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #aaa;">${bg.name}</div>
+            <img src="/thumbs/${bg.id}" onerror="this.src='/static/logo.png'" style="width: 100%; height: 65px; object-fit: cover; display: block; pointer-events: none;">
+            <div style="padding: 5px; font-size: 0.65em; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #aaa;" title="${bg.name}">${bg.name}</div>
         `;
 
-        card.oncontextmenu = (e) => showLibraryContextMenu(e, id, bg.name, 'video');
+        card.oncontextmenu = (e) => showLibraryContextMenu(e, bg.id, bg.name, 'video');
 
         card.ondragstart = (e) => {
-            e.dataTransfer.setData("text/plain", JSON.stringify({ action: "apply_bg", id: id }));
+            e.dataTransfer.setData("text/plain", JSON.stringify({ action: "apply_bg", id: bg.id }));
             card.style.opacity = "0.5";
         };
         card.ondragend = () => card.style.opacity = "1";
 
         grid.appendChild(card);
-    }
+    });
 }
 
 function previewBgVideo(id, name) {
@@ -493,8 +634,10 @@ function switchMediaCategory(event, category) {
 
     const content = document.getElementById("bg-library-content");
     const icon = document.getElementById("bg-toggle-icon");
+    const resizer = document.getElementById("bg-library-resizer");
     if (content && (content.style.display === "none" || content.style.display === "")) {
         content.style.display = "flex";
+        if (resizer) resizer.style.display = "block";
         if (icon) icon.innerText = "▼ COLLAPSE";
     }
 
@@ -866,6 +1009,12 @@ function renderMediaGrid() {
     if (!grid) return;
     grid.innerHTML = "";
 
+    // Sync dropdown select value
+    const sortSelect = document.getElementById("media-sort-select");
+    if (sortSelect) {
+        sortSelect.value = `${mediaSortKey}_${mediaSortOrder}`;
+    }
+
     const items = mediaDatabase.items || {};
     const itemsArray = Object.keys(items).map(key => {
         let obj = items[key];
@@ -881,6 +1030,17 @@ function renderMediaGrid() {
         grid.innerHTML = `<div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: #666; font-style: italic;">No files in ${currentMediaCategory.toUpperCase()} category</div>`;
         return;
     }
+
+    // Sort filteredItems
+    filteredItems.sort((a, b) => {
+        let compare = 0;
+        if (mediaSortKey === 'date') {
+            compare = (a.mtime || 0) - (b.mtime || 0);
+        } else {
+            compare = a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
+        }
+        return mediaSortOrder === 'desc' ? -compare : compare;
+    });
 
     filteredItems.forEach(item => {
         const box = document.createElement("div");
@@ -928,16 +1088,93 @@ loadCameraSettings();
 async function refreshCameraDevices() {
     const list = document.getElementById("cam-device-list");
     if (!list) return;
-    list.innerHTML = `<div style="padding:10px; color:#666; font-size:0.7em;">Scanning...</div>`;
+    list.innerHTML = `<div style="padding:10px; color:#666; font-size:0.7em;">🔍 Scanning cameras...</div>`;
 
     try {
-        await navigator.mediaDevices.getUserMedia({ video: true });
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        // 🎯 CHECK IF RUNNING IN ELECTRON
+        const isElectron = typeof window.electronAPI !== 'undefined';
 
+        let videoDevices = [];
+
+        if (isElectron) {
+            console.log("🎬 Electron detected - using navigator.mediaDevices directly");
+            try {
+                // Check if navigator.mediaDevices is available
+                if (!navigator.mediaDevices) {
+                    throw new Error("navigator.mediaDevices not available in Electron");
+                }
+                console.log("navigator.mediaDevices is available");
+
+                // 🎯 Try enumerateDevices first to see what's available
+                console.log("Attempting initial enumerateDevices...");
+                const initialDevices = await navigator.mediaDevices.enumerateDevices();
+                console.log("Initial devices enumerated:", initialDevices.length);
+                console.log("Initial devices:", initialDevices.map(d => ({ kind: d.kind, label: d.label || '(no label)', deviceId: d.deviceId })));
+
+                // 🎯 Call getUserMedia to trigger permission and get labels
+                let tempStream = null;
+                try {
+                    console.log("Attempting getUserMedia with video constraint...");
+                    tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    console.log("getUserMedia successful, stream tracks:", tempStream.getTracks().length);
+                    console.log("Stream tracks:", tempStream.getTracks().map(t => ({ kind: t.kind, label: t.label, enabled: t.enabled })));
+                } catch (getUserMediaErr) {
+                    console.error("getUserMedia failed:", getUserMediaErr);
+                    console.error("getUserMedia error name:", getUserMediaErr.name);
+                    console.error("getUserMedia error message:", getUserMediaErr.message);
+                    // Don't throw - try enumerateDevices anyway
+                }
+
+                // 🎯 Enumerate devices again after getUserMedia attempt
+                console.log("Attempting enumerateDevices after getUserMedia...");
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                console.log("Devices enumerated:", devices.length);
+                console.log("All devices:", devices.map(d => ({ kind: d.kind, label: d.label || '(no label)', deviceId: d.deviceId })));
+
+                // Filter for video input devices
+                videoDevices = devices.filter(d => d.kind === 'videoinput');
+                console.log("Video devices found:", videoDevices.length);
+                console.log("Video devices:", videoDevices.map(d => ({ label: d.label || '(no label)', deviceId: d.deviceId })));
+
+                // If still no video devices, try a different approach - check all devices
+                if (videoDevices.length === 0) {
+                    console.log("No videoinput devices found, checking all device kinds...");
+                    const videoinput = devices.filter(d => d.kind === 'videoinput');
+                    const audioinput = devices.filter(d => d.kind === 'audioinput');
+                    const audiooutput = devices.filter(d => d.kind === 'audiooutput');
+                    console.log("Device counts - videoinput:", videoinput.length, "audioinput:", audioinput.length, "audiooutput:", audiooutput.length);
+
+                    // Try to use any device that might be a camera
+                    if (devices.length > 0) {
+                        console.log("Some devices found, but no videoinput. Using all devices as fallback.");
+                        videoDevices = devices; // Use all devices as fallback
+                    }
+                }
+
+                // Stop the temporary stream to release camera
+                if (tempStream) {
+                    tempStream.getTracks().forEach(track => track.stop());
+                    console.log("Temp stream stopped");
+                }
+            } catch (electronErr) {
+                console.error("Electron camera access failed:", electronErr);
+                console.error("Error name:", electronErr.name);
+                console.error("Error message:", electronErr.message);
+                console.error("Error stack:", electronErr.stack);
+                list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">❌ Error: ${electronErr.message}</div>`;
+                return;
+            }
+        } else {
+            console.log("🌐 Browser mode detected - using navigator.mediaDevices");
+            videoDevices = await getCameraDevicesWeb();
+        }
+
+        // 🎯 RENDER CAMERA LIST
         list.innerHTML = "";
         if (videoDevices.length === 0) {
-            list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">No cameras found</div>`;
+            console.log("❌ No video devices found - showing error in UI");
+            list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">❌ No cameras found</div>
+                            <div style="padding:5px; color:#888; font-size:0.65em;">Check console for details</div>`;
             return;
         }
 
@@ -945,8 +1182,12 @@ async function refreshCameraDevices() {
             const item = document.createElement("div");
             item.className = "cam-device-item";
             let assignmentBadge = "";
-            if (cameraSettings.main.device_id === dev.deviceId && cameraSettings.main.show) { assignmentBadge += `<span class="cam-badge main">MAIN</span>`; }
-            if (cameraSettings.audience.device_id === dev.deviceId && cameraSettings.audience.show) { assignmentBadge += `<span class="cam-badge audience">AUDIENCE</span>`; }
+            if (cameraSettings.main.device_id === dev.deviceId && cameraSettings.main.show) {
+                assignmentBadge += `<span class="cam-badge main">MAIN</span>`;
+            }
+            if (cameraSettings.audience.device_id === dev.deviceId && cameraSettings.audience.show) {
+                assignmentBadge += `<span class="cam-badge audience">AUDIENCE</span>`;
+            }
 
             // Get camera name, fallback to generic name if not available
             const cameraName = dev.label && dev.label.trim() ? dev.label : `Camera ${idx + 1}`;
@@ -966,9 +1207,72 @@ async function refreshCameraDevices() {
         updateCameraAssignmentLabels();
     } catch (e) {
         console.error("Camera access error:", e);
-        list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">Camera Access Denied / Error</div>`;
+        list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">❌ Error: ${e.message}</div>`;
     }
 }
+
+// 🎯 HELPER: Get cameras using web API (browser)
+async function getCameraDevicesWeb() {
+    try {
+        // 🎯 CHECK IF RUNNING IN ELECTRON
+        const isElectron = typeof window.electronAPI !== 'undefined';
+        let mediaDevices = null;
+
+        if (isElectron) {
+            // Use navigator.mediaDevices directly in Electron
+            mediaDevices = navigator.mediaDevices;
+        } else {
+            // Use standard navigator.mediaDevices
+            mediaDevices = navigator.mediaDevices;
+        }
+
+        // Check if mediaDevices available
+        if (!mediaDevices) {
+            throw new Error("mediaDevices not supported");
+        }
+
+        // Request permission with timeout
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("getUserMedia timeout")), 5000)
+        );
+
+        const mediaPromise = mediaDevices.getUserMedia({ video: true });
+        await Promise.race([mediaPromise, timeoutPromise]);
+
+        // After permission granted, enumerate devices
+        const devices = await mediaDevices.enumerateDevices();
+        return devices.filter(d => d.kind === 'videoinput');
+    } catch (err) {
+        console.error("Web camera API error:", err);
+
+        // Try enumerate without getUserMedia (might work if already granted)
+        try {
+            const isElectron = typeof window.electronAPI !== 'undefined';
+            let mediaDevices = null;
+
+            if (isElectron) {
+                // Use navigator.mediaDevices directly in Electron
+                mediaDevices = navigator.mediaDevices;
+            } else {
+                mediaDevices = navigator.mediaDevices;
+            }
+
+            if (!mediaDevices) throw new Error("mediaDevices not available");
+
+            const devices = await mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            if (videoDevices.length > 0) return videoDevices;
+        } catch (e) {
+            console.error("Fallback enumerate failed:", e);
+        }
+
+        return [];
+    }
+}
+
+// Cache for successful constraints to speed up subsequent camera opens
+let successfulConstraintCache = null;
+let lastDeviceId = null;
 
 async function selectCameraForPreview(deviceId, element) {
     document.querySelectorAll(".cam-device-item").forEach(el => el.classList.remove("active"));
@@ -979,14 +1283,94 @@ async function selectCameraForPreview(deviceId, element) {
     const noPreview = document.getElementById("cam-no-preview");
 
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId }, width: 1280, height: 720 } });
+        console.log("🎬 Opening camera preview for device:", deviceId);
+
+        // 🎯 CHECK IF RUNNING IN ELECTRON
+        const isElectron = typeof window.electronAPI !== 'undefined';
+        let stream;
+        let lastError = null;
+
+        // 🎯 Clear cache if switching to a different camera
+        if (lastDeviceId && lastDeviceId !== deviceId) {
+            console.log("🔄 Different camera selected, clearing cache");
+            successfulConstraintCache = null;
+        }
+        lastDeviceId = deviceId;
+
+        // 🎯 Helper function with timeout (increased to 10 seconds)
+        const getUserMediaWithTimeout = async (constraints, timeout = 10000) => {
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("getUserMedia timeout")), timeout)
+            );
+            const mediaPromise = navigator.mediaDevices.getUserMedia(constraints);
+            return await Promise.race([mediaPromise, timeoutPromise]);
+        };
+
+        // 🎯 Try cached successful constraint first (if available and same device)
+        if (successfulConstraintCache && lastDeviceId === deviceId) {
+            try {
+                console.log("🎯 Trying cached successful constraint first");
+                stream = await getUserMediaWithTimeout(successfulConstraintCache, 5000);
+                console.log("✅ Success with cached constraint");
+                currentCamStream = stream;
+                video.srcObject = stream;
+                video.style.opacity = "1";
+                noPreview.style.display = "none";
+                window.lastSelectedCamId = deviceId;
+                console.log("Camera preview started successfully (cached)");
+                return;
+            } catch (err) {
+                console.warn("❌ Cached constraint failed, trying other options:", err.message);
+                successfulConstraintCache = null; // Clear cache if it fails
+            }
+        }
+
+        // 🎯 OPTIMIZED CONSTRAINT TESTING - Fewer attempts with longer timeout
+        // Start with most likely to work constraints first
+
+        const constraintAttempts = [
+            // Attempt 1: Exact device without resolution (most likely to work in Electron)
+            { name: "Exact device (no resolution)", constraints: { video: { deviceId: { exact: deviceId } } } },
+            // Attempt 2: Simplest - any camera (fallback)
+            { name: "Simple (any camera)", constraints: { video: true } },
+            // Attempt 3: Exact device with ideal resolution
+            { name: "Exact device with ideal resolution", constraints: { video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } } } }
+        ];
+
+        for (const attempt of constraintAttempts) {
+            try {
+                console.log(`🎯 Attempting: ${attempt.name}`);
+
+                stream = await getUserMediaWithTimeout(attempt.constraints, 10000);
+
+                console.log(`✅ Success with: ${attempt.name}`);
+                // Cache the successful constraint for future use
+                successfulConstraintCache = attempt.constraints;
+                lastError = null;
+                break; // Success - exit loop
+            } catch (err) {
+                console.warn(`❌ Failed with ${attempt.name}:`, err.message);
+                lastError = err;
+                // Continue to next attempt
+            }
+        }
+
+        if (!stream) {
+            throw lastError || new Error("All constraint attempts failed");
+        }
+
+        console.log("Camera stream obtained successfully");
         currentCamStream = stream;
         video.srcObject = stream;
         video.style.opacity = "1";
         noPreview.style.display = "none";
         window.lastSelectedCamId = deviceId;
+        console.log("Camera preview started successfully");
     } catch (e) {
-        showToast("Failed to open camera preview", "error", 1000);
+        console.error("Failed to open camera preview:", e);
+        console.error("Error name:", e.name);
+        console.error("Error message:", e.message);
+        showToast("Failed to open camera preview: " + e.message, "error", 2000);
     }
 }
 
@@ -1029,21 +1413,37 @@ function updateCamToggleButton(type, isShow) {
 
 async function updateCameraAssignmentLabels() {
     // We need to find the label for the current deviceId
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+    const isElectron = typeof window.electronAPI !== 'undefined';
+    let mediaDevices = null;
 
-    ['main', 'audience'].forEach(type => {
-        const span = document.getElementById(`cam-${type}-active-name`);
-        if (!span) return;
+    if (isElectron) {
+        // Use navigator.mediaDevices directly in Electron
+        mediaDevices = navigator.mediaDevices;
+    } else {
+        mediaDevices = navigator.mediaDevices;
+    }
 
-        if (cameraSettings[type].show && cameraSettings[type].device_id) {
-            const dev = videoDevices.find(d => d.deviceId === cameraSettings[type].device_id);
-            const name = dev ? (dev.label || 'Camera ' + dev.deviceId.substring(0, 5)) : 'Selected Camera';
-            span.innerText = `● ${name}`;
-        } else {
-            span.innerText = "";
-        }
-    });
+    try {
+        if (!mediaDevices) throw new Error("mediaDevices not available");
+
+        const devices = await mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        ['main', 'audience'].forEach(type => {
+            const span = document.getElementById(`cam-${type}-active-name`);
+            if (!span) return;
+
+            if (cameraSettings[type].show && cameraSettings[type].device_id) {
+                const dev = videoDevices.find(d => d.deviceId === cameraSettings[type].device_id);
+                const name = dev ? (dev.label || 'Camera ' + dev.deviceId.substring(0, 5)) : 'Selected Camera';
+                span.innerText = `● ${name}`;
+            } else {
+                span.innerText = "";
+            }
+        });
+    } catch (err) {
+        console.error("Error updating camera labels:", err);
+    }
 }
 
 async function updateCameraSettings(type) {
@@ -1238,6 +1638,7 @@ function resetCameraSetting(type, field) {
 
 // 🌐 MAIN WS LISTENER FOR REMOTE SYNC
 document.addEventListener('DOMContentLoaded', () => {
+    setupDragDropImport();
     // Wait a bit to ensure ws is defined in script.js
     setTimeout(() => {
         if (typeof ws !== 'undefined') {
@@ -1384,7 +1785,7 @@ window.enterVideoRemoteMode = async function (sender) {
                 const val = data.payload.value;
                 const isForcedSeek = data.payload.force === true;
                 const isManualSeek = data.payload.manual === true;
-                
+
                 if (typeof ws !== 'undefined' && ws.readyState === WebSocket.OPEN) {
                     if (cmd === "ftb") {
                         if (val) {
@@ -1493,6 +1894,232 @@ function applyRemoteVideo(videoItem, sender) {
             action: "take_video",
             video: videoItem
         }));
+    }
+}
+
+// ==========================================
+// --- DRAG & DROP MEDIA IMPORT SYSTEM ---
+// ==========================================
+function setupDragDropImport() {
+    const dropZone = document.getElementById("bg-library-content");
+    const overlay = document.getElementById("bg-drag-overlay");
+    if (!dropZone || !overlay) return;
+
+    const isDragDropAllowed = () => {
+        return (
+            typeof currentMediaCategory !== 'undefined' &&
+            currentMediaCategory !== 'scripture' &&
+            currentMediaCategory !== 'camera'
+        );
+    };
+
+    dropZone.addEventListener("dragenter", (e) => {
+        if (!isDragDropAllowed()) return;
+        e.preventDefault();
+        overlay.style.display = "flex";
+    });
+
+    dropZone.addEventListener("dragover", (e) => {
+        if (!isDragDropAllowed()) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+    });
+
+    dropZone.addEventListener("dragleave", (e) => {
+        if (!isDragDropAllowed()) return;
+        e.preventDefault();
+        // If cursor moves into a child element inside dropZone, do not hide overlay
+        if (e.relatedTarget && dropZone.contains(e.relatedTarget)) {
+            return;
+        }
+        overlay.style.display = "none";
+    });
+
+    dropZone.addEventListener("drop", async (e) => {
+        if (!isDragDropAllowed()) return;
+        e.preventDefault();
+        overlay.style.display = "none";
+
+        const files = e.dataTransfer.files;
+        if (!files || files.length === 0) return;
+
+        const paths = [];
+        for (let i = 0; i < files.length; i++) {
+            // Priority 1: webUtils through preload
+            // Priority 2: direct .path (if contextIsolation is false or we are in pywebview)
+            let filePath = "";
+            if (window.electronAPI && window.electronAPI.getFilePath) {
+                filePath = window.electronAPI.getFilePath(files[i]);
+            }
+            if (!filePath && files[i].path) {
+                filePath = files[i].path;
+            }
+
+            if (filePath) {
+                paths.push(filePath);
+            }
+        }
+
+        if (paths.length === 0) {
+            showToast("Silakan jalankan aplikasi via Launcher/Desktop App agar bisa Import Drag & Drop", "error", 4000);
+            return;
+        }
+
+        showToast("Inspecting dropped paths...", "loading");
+        try {
+            const res = await fetch("/api/media/inspect_paths", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paths: paths })
+            });
+            const data = await res.json();
+
+            if (data.status === "success") {
+                const filesList = data.files || [];
+                const foldersList = data.folders || [];
+
+                // Process files
+                if (filesList.length > 0) {
+                    await importIndividualFiles(filesList);
+                }
+
+                // Process folders
+                if (foldersList.length > 0) {
+                    await importFolders(foldersList);
+                }
+            } else {
+                showToast("Failed to inspect paths: " + data.message, "error", 3000);
+            }
+        } catch (err) {
+            console.error("Error inspecting paths:", err);
+            showToast("Failed to process drop", "error", 2000);
+        }
+    });
+}
+
+function getCategoryByExtension(filePath) {
+    const ext = "." + filePath.split('.').pop().toLowerCase();
+
+    // Check against category extensions
+    const photoExts = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
+    const audioExts = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
+    const presExts = [".pdf", ".pptx"];
+    const videoExts = [".mp4"]; // Only .mp4 allowed per request
+
+    if (photoExts.includes(ext)) return "photo";
+    if (audioExts.includes(ext)) return "audio";
+    if (presExts.includes(ext)) return "presentation";
+    if (videoExts.includes(ext)) return "video";
+    return null;
+}
+
+async function importIndividualFiles(files) {
+    // Group files by category
+    const grouped = {
+        video: [],
+        photo: [],
+        presentation: [],
+        audio: []
+    };
+
+    files.forEach(filePath => {
+        const cat = getCategoryByExtension(filePath);
+        if (cat) {
+            grouped[cat].push(filePath);
+        }
+    });
+
+    let totalImported = 0;
+    const activeFolder = (typeof currentActiveFolder !== 'undefined' && currentActiveFolder !== 'ALL') ? currentActiveFolder : 'Uncategorized';
+
+    // Import for each category that has files
+    for (const [category, filePaths] of Object.entries(grouped)) {
+        if (filePaths.length === 0) continue;
+
+        showToast(`Importing ${filePaths.length} file(s) into ${category.toUpperCase()}...`, "loading");
+        try {
+            const res = await fetch(`/api/media/${category}/add_files`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    folder_name: activeFolder,
+                    files: filePaths
+                })
+            });
+            const data = await res.json();
+            if (data.status === "success") {
+                totalImported += filePaths.length;
+
+                // Trigger watchers for thumbnails if needed
+                if ((category === "video" || category === "photo") && Array.isArray(data.created_ids) && data.created_ids.length > 0 && typeof window.startThumbRealtimeWatcher === "function") {
+                    window.startThumbRealtimeWatcher(data.created_ids, category);
+                }
+            } else {
+                showToast(`Failed to import files to ${category}: ${data.message}`, "error", 3000);
+            }
+        } catch (e) {
+            console.error(`Import error for category ${category}:`, e);
+        }
+    }
+
+    if (totalImported > 0) {
+        showToast(`Successfully imported ${totalImported} file(s)!`, "success", 2000);
+        // Refresh active category library view
+        loadMediaData(currentMediaCategory);
+    }
+}
+
+async function importFolders(folders) {
+    // Ask user via showCustomDialog
+    const categoryName = currentMediaCategory.toUpperCase();
+    const options = [
+        { value: "all", label: `📁 Import All Files` },
+        { value: "category", label: `📂 Import Only ${categoryName} files` }
+    ];
+
+    const decision = await showCustomDialog(
+        "select",
+        `You dropped folder(s). Select import mode:`,
+        options,
+        "category"
+    );
+
+    if (!decision) {
+        showToast("Folder import cancelled", "info", 1500);
+        return;
+    }
+
+    let foldersProcessed = 0;
+
+    for (const folder of folders) {
+        showToast(`Processing folder: ${folder.name}...`, "loading");
+
+        const targetCategories = decision === "all" ? ["video", "photo", "presentation", "audio"] : [currentMediaCategory];
+
+        for (const category of targetCategories) {
+            try {
+                const res = await fetch(`/api/media/${category}/add_folder?folder_path=${encodeURIComponent(folder.path)}`, {
+                    method: 'POST'
+                });
+                const data = await res.json();
+
+                if (data.status === "success") {
+                    // Trigger watchers for thumbnails if needed
+                    if ((category === "video" || category === "photo") && Array.isArray(data.created_ids) && data.created_ids.length > 0 && typeof window.startThumbRealtimeWatcher === "function") {
+                        window.startThumbRealtimeWatcher(data.created_ids, category);
+                    }
+                }
+            } catch (e) {
+                console.error(`Error importing folder ${folder.path} for category ${category}:`, e);
+            }
+        }
+        foldersProcessed++;
+    }
+
+    if (foldersProcessed > 0) {
+        showToast(`Folder import completed!`, "success", 2500);
+        // Refresh active category library view
+        loadMediaData(currentMediaCategory);
     }
 }
 

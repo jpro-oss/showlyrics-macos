@@ -1,0 +1,118 @@
+body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            background-color: transparent;
+        }
+
+        #lt-container {
+            position: absolute;
+            left: 0;
+            right: 0;
+            text-align: center;
+            padding: 20px 50px;
+            transition: all 0.3s ease-out;
+            opacity: 0;
+        }
+
+        .lt-text {
+            font-family: 'Montserrat', sans-serif;
+            /* Default */
+            font-weight: 900;
+            text-transform: uppercase;
+            color: #fff;
+            line-height: 1.2;
+            word-wrap: break-word;
+            text-shadow: 3px 3px 0px #000;
+            transition: opacity 0.5s ease;
+        }
+
+        .lt-active {
+            opacity: 1 !important;
+        }
+
+        /* DYNAMIC ALERT BAR */
+        #alert-crawl {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            background: rgba(139, 0, 0, 0.9);
+            color: #fff;
+            font-family: sans-serif;
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            display: none;
+            z-index: 999;
+            /* Paling atas */
+            padding: 10px 0;
+            /* Default font size, nanti di-override JS */
+            font-size: 2.5vw;
+        }
+
+        .crawl-content {
+            display: inline-block;
+            padding-left: 100%;
+            animation: crawl 15s linear infinite;
+        }
+
+        /* Di dalam <style> lowerthird.html */
+        .scripture-iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100% !important;
+            height: 100% !important;
+            border: none;
+            z-index: 9999;
+            pointer-events: none;
+        }
+
+        .cam-output-iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+            z-index: 0.5;
+            pointer-events: none;
+            background: transparent;
+        }
+
+        .iframe-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .layer-audio {
+            z-index: 0;
+        }
+
+        .layer-video {
+            z-index: 1;
+        }
+
+        .layer-photo {
+            z-index: 2;
+        }
+
+        .layer-lyrics {
+            z-index: 3;
+        }
+
+        @keyframes crawl {
+            0% {
+                transform: translateX(0);
+            }
+
+            100% {
+                transform: translateX(-100%);
+            }
+        }

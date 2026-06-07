@@ -27,10 +27,14 @@ try {
 
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-oop-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 
 // 2. Cegah CPU mengambil alih tugas render video (Meringankan beban prosesor)
 app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('enable-accelerated-video-decode');
+app.commandLine.appendSwitch('enable-hardware-overlays', 'preferred');
+app.commandLine.appendSwitch('force-high-performance-gpu');
 
 // 3. 🎯 FIX BUG VIDEO BERHENTI SAAT ALT-TAB ATAU MINIMIZE!
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -39,10 +43,15 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 // 🎯 FIX CRUSIAL WINDOWS OCCLUSION & SLEEPING BACKGROUND
 // Cegah Windows menghentikan engine render (freezing/patah-patah) saat window tertutup aplikasi lain atau sedang minimizer
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling');
+app.commandLine.appendSwitch('enable-features', 'OverlayFullscreenVideo,DirectCompositionVideoOverlays,DirectCompositionHardwareOverlays');
 // Bypass batasan browser terhadap background video
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-// 4. Batasi RAM untuk V8 Engine Javascript (Maksimal 2GB biar sisa RAM 8GB lega)
+// 4. 🎯 CAMERA PERMISSION FIXES FOR ELECTRON
+app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', 'http://localhost:18888');
+app.commandLine.appendSwitch('allow-http-camera-access');
+
+// 5. Batasi RAM untuk V8 Engine Javascript (Maksimal 2GB biar sisa RAM 8GB lega)
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=2048');
 
 
@@ -174,6 +183,29 @@ app.whenReady().then(() => {
     callback({ requestHeaders: details.requestHeaders });
   });
 
+  // 🎯 CAMERA PERMISSION HANDLER (Auto-grant camera & microphone access)
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    console.log(`[Default Session] Permission requested: ${permission}`);
+    if (permission === 'camera' || permission === 'microphone' || permission === 'mediaStream' || permission === 'video' || permission === 'audio' || permission === 'media') {
+      console.log(`[Default Session] Granting ${permission} permission for camera panel`);
+      callback(true); // Auto-grant permission
+    } else {
+      console.log(`[Default Session] Denying ${permission} permission`);
+      callback(false); // Deny other permissions
+    }
+  });
+
+  // 🎯 Set device permission handler for default session
+  session.defaultSession.setDevicePermissionHandler((details, callback) => {
+    console.log(`[Default Session] Device permission requested for:`, details.deviceType);
+    if (details.deviceType === 'camera' || details.deviceType === 'microphone') {
+      console.log(`[Default Session] Granting device permission for ${details.deviceType}`);
+      callback(true); // Auto-grant device permission
+    } else {
+      callback(false); // Deny other device permissions
+    }
+  });
+
   // 🚀 ANTI-SLEEP ENGINE: Tahan sistem OS dan GPU agar tidak iddle/sleep selama aplikasi ibadah on duty!
   powerSaveBlocker.start('prevent-display-sleep');
   powerSaveBlocker.start('prevent-app-suspension');
@@ -212,7 +244,34 @@ function createMainWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      sandbox: false,
+      webSecurity: false,
+      enableRemoteModule: false,
+      allowRunningInsecureContent: true
+    }
+  });
+
+  // 🎯 Set permission handler for this specific window's session
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    console.log(`[Window Session] Permission requested: ${permission}`);
+    if (permission === 'camera' || permission === 'microphone' || permission === 'mediaStream' || permission === 'video' || permission === 'audio' || permission === 'media') {
+      console.log(`[Window Session] Granting ${permission} permission`);
+      callback(true); // Auto-grant permission
+    } else {
+      console.log(`[Window Session] Denying ${permission} permission`);
+      callback(false); // Deny other permissions
+    }
+  });
+
+  // 🎯 Also set device permission handler for device access
+  mainWindow.webContents.session.setDevicePermissionHandler((details, callback) => {
+    console.log(`[Window Session] Device permission requested for:`, details.deviceType);
+    if (details.deviceType === 'camera' || details.deviceType === 'microphone') {
+      console.log(`[Window Session] Granting device permission for ${details.deviceType}`);
+      callback(true); // Auto-grant device permission
+    } else {
+      callback(false); // Deny other device permissions
     }
   });
 
@@ -548,4 +607,16 @@ ipcMain.on('open-external', (_event, url) => {
 // agar konten di-render pada resolusi target lalu di-stretch ke layar fisik.
 ipcMain.on('set-output-resolution', (_event, { type, mode, width, height }) => {
   setWindowResolution(type, mode, width, height);
-});
+});
+
+// 🎯 CAMERA PERMISSION HANDLER (Electron)
+ipcMain.handle('request-camera-permission', async () => {
+  try {
+    console.log("Camera permission requested from renderer");
+    // Permission will be auto-granted by setPermissionRequestHandler in app.on('ready')
+    return true;
+  } catch (err) {
+    console.error("Camera permission request failed:", err);
+    return false;
+  }
+});
