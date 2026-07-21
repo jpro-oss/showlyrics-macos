@@ -1,4 +1,4 @@
-name: Build ShowLyrics macOS (DMG)
+name: Build ShowLyrics macOS (Dual Arch)
 
 # Trigger: push ke branch main, atau manual dari GitHub Actions tab
 on:
@@ -7,26 +7,51 @@ on:
   workflow_dispatch:
     inputs:
       create_release:
-        description: 'Create GitHub Release with DMG?'
+        description: 'Create GitHub Release with both DMGs?'
         required: false
         default: 'false'
         type: choice
         options: ['true', 'false']
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MATRIX BUILD: arm64 (macos-14) + x86_64 (macos-13) secara paralel
+  # ═══════════════════════════════════════════════════════════════════════════
   build-macos:
-    name: Build macOS App (arm64 native)
-    runs-on: macos-14        # Apple Silicon M1 runner (ARM64 native)
-    timeout-minutes: 90      # Batas 90 menit untuk seluruh job
+    name: Build macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false   # Jika 1 arch gagal, arch lain tetap jalan
+      matrix:
+        include:
+          # Apple Silicon — macOS 14 Sonoma runner (ARM64 native)
+          - os: macos-14
+            arch: arm64
+            go_arch: arm64
+            ffmpeg_zip: ffmpeg81arm.zip
+            ffmpeg_fallback_url: "https://www.osxexperts.net/ffmpeg7arm.zip"
+            electron_arch: "--arm64"
+            artifact_suffix: "arm64"
+
+          # Intel Mac — macOS 13 Ventura runner (x86_64 native)
+          - os: macos-13
+            arch: x86_64
+            go_arch: amd64
+            ffmpeg_zip: ffmpeg80intel.zip
+            ffmpeg_fallback_url: "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip"
+            electron_arch: "--x64"
+            artifact_suffix: "x86_64"
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
 
     steps:
       # ─────────────────────────────────────────────────────────────
-      # 1. CHECKOUT SOURCE CODE
+      # 1. CHECKOUT
       # ─────────────────────────────────────────────────────────────
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1     # Shallow clone — lebih cepat
+          fetch-depth: 1
 
       # ─────────────────────────────────────────────────────────────
       # 2. SETUP TOOLS
@@ -35,9 +60,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # Catatan: cache pip dinonaktifkan untuk menghindari
-          # "No file matched" error jika requirements-macos.txt
-          # tidak ditemukan pada shallow checkout
           cache: 'pip'
           cache-dependency-path: 'backend/requirements-macos.txt'
 
@@ -54,51 +76,47 @@ jobs:
           cache-dependency-path: playback-engine/go.sum
 
       # ─────────────────────────────────────────────────────────────
-      # 3. BUILD GO PLAYBACK ENGINE (arm64 — native M1)
+      # 3. BUILD GO PLAYBACK ENGINE (arch sesuai matrix)
       # ─────────────────────────────────────────────────────────────
-      - name: Build Go Engine (arm64)
+      - name: Build Go Engine (${{ matrix.arch }})
         run: |
           cd playback-engine
-          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
+          GOOS=darwin GOARCH=${{ matrix.go_arch }} CGO_ENABLED=0 \
             go build -ldflags="-s -w" -o ../backend/playback-engine ./cmd/
           chmod +x ../backend/playback-engine
-          echo "playback-engine info:"
+          echo "=== Go Engine ==="
           file ../backend/playback-engine
           echo "Size: $(du -sh ../backend/playback-engine | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
-      # 4. SETUP FFMPEG (arm64 — langsung dari zip atau download)
+      # 4. SETUP FFMPEG (arch sesuai matrix)
       # ─────────────────────────────────────────────────────────────
-      - name: Setup FFmpeg macOS (arm64)
+      - name: Setup FFmpeg (${{ matrix.arch }})
         run: |
-          mkdir -p /tmp/ffmpeg-arm
+          mkdir -p /tmp/ffmpeg-extract
 
-          # Coba gunakan local zip file arm (ARM64) yang sudah ada di repo
-          if [ -f "ffmpeg81arm.zip" ]; then
-            echo "Using local ffmpeg81arm.zip from repository..."
-            unzip -j -o "ffmpeg81arm.zip" -d /tmp/ffmpeg-arm
-            echo "ARM64 ffmpeg extracted"
+          # Gunakan local zip jika ada di repo
+          if [ -f "${{ matrix.ffmpeg_zip }}" ]; then
+            echo "Using local ${{ matrix.ffmpeg_zip }} ..."
+            unzip -j -o "${{ matrix.ffmpeg_zip }}" -d /tmp/ffmpeg-extract
           fi
 
-          # Cek juga Intel zip sebagai fallback (berjalan via Rosetta)
-          if [ ! -f /tmp/ffmpeg-arm/ffmpeg ] && [ -f "ffmpeg80intel.zip" ]; then
-            echo "ARM zip tidak ada/gagal, menggunakan Intel ffmpeg via Rosetta..."
-            mkdir -p /tmp/ffmpeg-intel
-            unzip -j -o "ffmpeg80intel.zip" -d /tmp/ffmpeg-intel
-            cp /tmp/ffmpeg-intel/ffmpeg /tmp/ffmpeg-arm/ffmpeg
-          fi
-
-          # Download fallback jika keduanya tidak ada
-          if [ ! -f /tmp/ffmpeg-arm/ffmpeg ]; then
-            echo "Downloading FFmpeg arm64 dari osxexperts.net..."
-            curl -L --retry 3 "https://www.osxexperts.net/ffmpeg7arm.zip" \
-              -o /tmp/ffmpeg-arm64.zip
-            unzip -j -o /tmp/ffmpeg-arm64.zip -d /tmp/ffmpeg-arm
+          # Download fallback jika zip tidak ada atau gagal extract
+          if [ ! -f /tmp/ffmpeg-extract/ffmpeg ]; then
+            echo "Downloading FFmpeg ${{ matrix.arch }} dari fallback URL..."
+            curl -L --retry 3 "${{ matrix.ffmpeg_fallback_url }}" \
+              -o /tmp/ffmpeg-download.zip
+            unzip -j -o /tmp/ffmpeg-download.zip -d /tmp/ffmpeg-extract
           fi
 
           # Salin ke backend/
-          cp /tmp/ffmpeg-arm/ffmpeg backend/ffmpeg
-          chmod +x backend/ffmpeg
+          if [ -f /tmp/ffmpeg-extract/ffmpeg ]; then
+            cp /tmp/ffmpeg-extract/ffmpeg backend/ffmpeg
+            chmod +x backend/ffmpeg
+          else
+            echo "ERROR: FFmpeg tidak berhasil di-extract!"
+            exit 1
+          fi
 
           echo "=== FFmpeg verification ==="
           file backend/ffmpeg
@@ -108,17 +126,15 @@ jobs:
       # ─────────────────────────────────────────────────────────────
       # 5. VERIFY BINARIES DI BACKEND/
       # ─────────────────────────────────────────────────────────────
-      - name: Verify binaries in backend/
+      - name: Verify backend/ binaries
         run: |
-          echo "=== backend/ directory ==="
+          echo "=== backend/ listing ==="
           ls -lh backend/
-          echo ""
           for f in backend/ffmpeg backend/playback-engine; do
             if [ -f "$f" ]; then
-              echo "OK: $f ($(du -sh $f | cut -f1))"
-              file "$f"
+              echo "OK: $f | arch: $(file $f | grep -o 'arm64\|x86_64\|Mach-O')"
             else
-              echo "ERROR: $f NOT FOUND!"
+              echo "MISSING: $f"
               exit 1
             fi
           done
@@ -132,36 +148,35 @@ jobs:
           ICNS="src/app.icns"
 
           if [ -f "$ICNS" ]; then
-            echo "app.icns already exists, skipping."
+            echo "app.icns already exists, skip."
             exit 0
           fi
 
+          # Fallback placeholder jika tidak ada ico
           if [ ! -f "$ICO" ]; then
-            echo "WARNING: $ICO not found, akan dibuat placeholder"
-            # Buat PNG placeholder 512x512
+            echo "WARNING: $ICO not found, creating placeholder..."
             python3 -c "
           from PIL import Image
           img = Image.new('RGBA', (512, 512), (30, 30, 46, 255))
           img.save('/tmp/icon_src.png')
-          print('Placeholder created')
           "
             ICO="/tmp/icon_src.png"
           fi
 
-          # Convert ICO/PNG → PNG dengan sips
           PNG="/tmp/app_icon.png"
           sips -s format png "$ICO" --out "$PNG" 2>/dev/null || cp "$ICO" "$PNG"
 
-          # Build iconset
           ICONSET="/tmp/AppIcon.iconset"
           mkdir -p "$ICONSET"
           for sz in 16 32 64 128 256 512; do
-            sips -z $sz $sz "$PNG" --out "$ICONSET/icon_${sz}x${sz}.png" > /dev/null 2>&1
+            sips -z $sz $sz "$PNG" --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null 2>&1
             sz2=$((sz*2))
-            sips -z $sz2 $sz2 "$PNG" --out "$ICONSET/icon_${sz}x${sz}@2x.png" > /dev/null 2>&1
+            sips -z $sz2 $sz2 "$PNG" --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null 2>&1
           done
 
-          iconutil -c icns "$ICONSET" -o "$ICNS" && echo "app.icns created: $(du -sh $ICNS | cut -f1)" || echo "iconutil gagal, skip"
+          iconutil -c icns "$ICONSET" -o "$ICNS" \
+            && echo "app.icns created: $(du -sh $ICNS | cut -f1)" \
+            || echo "WARNING: iconutil gagal, electron-builder akan menggunakan default icon"
 
       # ─────────────────────────────────────────────────────────────
       # 7. INSTALL PYTHON DEPENDENCIES
@@ -170,52 +185,46 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           pip install -r backend/requirements-macos.txt
-          # Install PyInstaller versi terbaru yang stabil
           pip install "pyinstaller>=6.0.0,<7.0.0"
-          echo "=== Installed packages ==="
-          pip list | grep -E "PyInstaller|Pillow|av|fitz|uvicorn|fastapi"
+          echo "=== Key packages ==="
+          pip list | grep -E "PyInstaller|Pillow|PyAV|PyMuPDF|uvicorn|fastapi|pydantic"
 
       # ─────────────────────────────────────────────────────────────
-      # 8. BUILD PYTHON BACKEND WITH PYINSTALLER
-      #    target_arch=None → ikuti runner (arm64 di macos-14)
-      #    Berjalan via Rosetta 2 di Mac Intel secara otomatis
+      # 8. BUILD PYTHON BACKEND (PyInstaller — arch sesuai runner)
+      #    target_arch=None → ikuti arsitektur runner secara otomatis
+      #    macos-14 → arm64, macos-13 → x86_64
       # ─────────────────────────────────────────────────────────────
-      - name: Build Python Backend (PyInstaller arm64)
+      - name: Build Python Backend (PyInstaller ${{ matrix.arch }})
         working-directory: backend
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           echo "=== Pre-build check ==="
-          ls -lh ffmpeg playback-engine
+          file ffmpeg playback-engine
           echo ""
-          echo "Starting PyInstaller..."
-          pyinstaller ShowLyrics-macos.spec --clean --noconfirm
+          echo "=== Starting PyInstaller (${{ matrix.arch }}) ==="
+          ARCH=${{ matrix.arch }} pyinstaller ShowLyrics-macos.spec --clean --noconfirm
 
           echo ""
-          echo "=== PyInstaller output ==="
+          echo "=== Output ==="
           ls -lh dist/ShowLyrics/
-          echo ""
-          echo "=== bin/internal (sample) ==="
-          ls dist/ShowLyrics/internal/ | head -20
-          echo "Total size: $(du -sh dist/ShowLyrics/ | cut -f1)"
+          echo "Total: $(du -sh dist/ShowLyrics/ | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
-      # 9. SETUP BIN DIRECTORY
+      # 9. SETUP BIN/
       # ─────────────────────────────────────────────────────────────
-      - name: Setup bin/ directory for Electron
+      - name: Setup bin/ for Electron
         run: |
           rm -rf bin && mkdir -p bin
-
-          # Copy PyInstaller output ke bin/
           cp -r backend/dist/ShowLyrics/* bin/
-
-          # Pastikan semua binaries executable
           find bin/ -type f \( -name "ShowLyrics" -o -name "playback-engine" -o -name "ffmpeg" \) \
             -exec chmod +x {} \;
 
-          echo "=== bin/ structure ==="
+          echo "=== bin/ ==="
           ls -lh bin/
-          echo "=== bin/internal (sample 20 files) ==="
-          ls bin/internal/ 2>/dev/null | head -20
-          echo "Total bin size: $(du -sh bin/ | cut -f1)"
+          echo "=== bin/internal (sample) ==="
+          ls bin/internal/ 2>/dev/null | head -15
+          echo "Total: $(du -sh bin/ | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
       # 10. INSTALL NODE DEPENDENCIES
@@ -224,52 +233,67 @@ jobs:
         run: npm ci
 
       # ─────────────────────────────────────────────────────────────
-      # 11. BUILD ELECTRON APP (DMG)
+      # 11. BUILD ELECTRON DMG (arch sesuai matrix)
+      #     dist:arm64 / dist:x64 → DMG + ZIP per arsitektur
       # ─────────────────────────────────────────────────────────────
-      - name: Build Electron macOS App (DMG)
-        run: npm run dist
+      - name: Build Electron App (${{ matrix.arch }})
+        run: |
+          echo "Building Electron for ${{ matrix.arch }}..."
+          npm run dist ${{ matrix.electron_arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false   # Skip code signing
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       # ─────────────────────────────────────────────────────────────
       # 12. VERIFY OUTPUT
       # ─────────────────────────────────────────────────────────────
-      - name: Verify Build Output
+      - name: Verify Build Output (${{ matrix.arch }})
         run: |
           echo "=== dist/ artifacts ==="
           ls -lh dist/
           DMG_FILE=$(find dist/ -name "*.dmg" | head -1)
           if [ -n "$DMG_FILE" ]; then
-            echo "SUCCESS: $DMG_FILE ($(du -sh $DMG_FILE | cut -f1))"
+            echo "SUCCESS DMG: $DMG_FILE ($(du -sh $DMG_FILE | cut -f1))"
           else
             echo "ERROR: No DMG found!"
             exit 1
           fi
 
       # ─────────────────────────────────────────────────────────────
-      # 13. UPLOAD ARTIFACTS
+      # 13. UPLOAD ARTIFACTS (per-arch)
       # ─────────────────────────────────────────────────────────────
-      - name: Upload DMG Artifact
+      - name: Upload DMG (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
         with:
-          name: ShowLyricsApp-macOS-DMG
+          name: ShowLyricsApp-macOS-${{ matrix.artifact_suffix }}-DMG
           path: dist/*.dmg
           retention-days: 30
 
-      - name: Upload ZIP Artifact
+      - name: Upload ZIP (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
         with:
-          name: ShowLyricsApp-macOS-ZIP
+          name: ShowLyricsApp-macOS-${{ matrix.artifact_suffix }}-ZIP
           path: dist/*.zip
           retention-days: 30
           if-no-files-found: ignore
 
-      # ─────────────────────────────────────────────────────────────
-      # 14. (OPSIONAL) CREATE GITHUB RELEASE
-      # ─────────────────────────────────────────────────────────────
-      - name: Create GitHub Release
-        if: ${{ github.event.inputs.create_release == 'true' }}
+  # ═══════════════════════════════════════════════════════════════════════════
+  # (OPSIONAL) CREATE RELEASE — hanya jika workflow_dispatch create_release=true
+  # ═══════════════════════════════════════════════════════════════════════════
+  create-release:
+    name: Create GitHub Release
+    needs: build-macos
+    if: ${{ github.event.inputs.create_release == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets/
+          pattern: ShowLyricsApp-macOS-*-DMG
+
+      - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ github.run_number }}
@@ -277,7 +301,6 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            dist/*.dmg
-            dist/*.zip
+            release-assets/**/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

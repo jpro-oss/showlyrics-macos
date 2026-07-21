@@ -7,6 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --mac",
+    "dist:arm64": "electron-builder --mac --arm64",
+    "dist:x64": "electron-builder --mac --x64",
     "dist:dmg": "electron-builder --mac dmg",
     "dist:zip": "electron-builder --mac zip"
   },
@@ -18,21 +20,15 @@
     },
     "mac": {
       "target": [
-        {
-          "target": "dmg",
-          "arch": ["universal"]
-        },
-        {
-          "target": "zip",
-          "arch": ["universal"]
-        }
+        { "target": "dmg" },
+        { "target": "zip" }
       ],
       "icon": "src/app.icns",
       "category": "public.app-category.productivity",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "darkModeSupport": true,
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "11.0"
     },
     "dmg": {
       "title": "ShowLyricsApp ${version}",
