@@ -78,37 +78,47 @@ jobs:
           echo "Universal size: $(du -sh backend/playback-engine | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
-      # 4. DOWNLOAD FFMPEG (Universal macOS Static Build)
+      # 4. SETUP FFMPEG (Universal macOS Static Build)
       # ─────────────────────────────────────────────────────────────
-      - name: Download FFmpeg macOS
+      - name: Setup FFmpeg macOS (Local Zip or Download Fallback)
         run: |
-          # Download static FFmpeg build for macOS from evermeet.cx
-          echo "Downloading FFmpeg amd64..."
-          curl -L --retry 3 \
-            "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip" \
-            -o /tmp/ffmpeg-amd64.zip
-          unzip -j /tmp/ffmpeg-amd64.zip -d /tmp/ffmpeg-amd64
-          
-          echo "Downloading FFmpeg arm64..."
-          curl -L --retry 3 \
-            "https://www.osxexperts.net/ffmpeg7arm.zip" \
-            -o /tmp/ffmpeg-arm64.zip 2>/dev/null || true
+          mkdir -p /tmp/ffmpeg-intel /tmp/ffmpeg-arm
 
-          # Create universal binary if both available
-          if [ -f /tmp/ffmpeg-arm64/ffmpeg ]; then
-            echo "Creating universal FFmpeg..."
-            lipo -create \
-              /tmp/ffmpeg-amd64/ffmpeg \
-              /tmp/ffmpeg-arm64/ffmpeg \
-              -output backend/ffmpeg
+          # Check if local zip files exist in repo root
+          if [ -f "ffmpeg80intel.zip" ] && [ -f "ffmpeg81arm.zip" ]; then
+            echo "Using local FFmpeg zip files from repository..."
+            unzip -j -o "ffmpeg80intel.zip" -d /tmp/ffmpeg-intel
+            unzip -j -o "ffmpeg81arm.zip" -d /tmp/ffmpeg-arm
           else
-            echo "Using amd64 FFmpeg (arm64 not available from mirror)"
-            cp /tmp/ffmpeg-amd64/ffmpeg backend/ffmpeg
+            echo "Downloading FFmpeg amd64..."
+            curl -L --retry 3 "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip" -o /tmp/ffmpeg-amd64.zip
+            unzip -j -o /tmp/ffmpeg-amd64.zip -d /tmp/ffmpeg-intel
+            
+            echo "Downloading FFmpeg arm64..."
+            curl -L --retry 3 "https://www.osxexperts.net/ffmpeg7arm.zip" -o /tmp/ffmpeg-arm64.zip 2>/dev/null || true
+            if [ -f /tmp/ffmpeg-arm64.zip ]; then
+              unzip -j -o /tmp/ffmpeg-arm64.zip -d /tmp/ffmpeg-arm 2>/dev/null || true
+            fi
+          fi
+
+          # Create Universal Binary (Intel + ARM64)
+          if [ -f /tmp/ffmpeg-intel/ffmpeg ] && [ -f /tmp/ffmpeg-arm/ffmpeg ]; then
+            echo "Creating Universal Binary FFmpeg (Intel + ARM64)..."
+            lipo -create \
+              /tmp/ffmpeg-intel/ffmpeg \
+              /tmp/ffmpeg-arm/ffmpeg \
+              -output backend/ffmpeg
+          elif [ -f /tmp/ffmpeg-intel/ffmpeg ]; then
+            echo "Using Intel FFmpeg only..."
+            cp /tmp/ffmpeg-intel/ffmpeg backend/ffmpeg
+          elif [ -f /tmp/ffmpeg-arm/ffmpeg ]; then
+            echo "Using ARM64 FFmpeg only..."
+            cp /tmp/ffmpeg-arm/ffmpeg backend/ffmpeg
           fi
 
           chmod +x backend/ffmpeg
-          echo "FFmpeg version:"
-          backend/ffmpeg -version | head -1
+          echo "FFmpeg info:"
+          lipo -info backend/ffmpeg || true
           echo "FFmpeg size: $(du -sh backend/ffmpeg | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
