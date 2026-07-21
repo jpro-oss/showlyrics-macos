@@ -15,9 +15,9 @@ on:
 
 jobs:
   build-macos:
-    name: Build Universal macOS App
+    name: Build macOS App (arm64 native)
     runs-on: macos-14        # Apple Silicon M1 runner (ARM64 native)
-    timeout-minutes: 60      # Batas 60 menit untuk seluruh job
+    timeout-minutes: 90      # Batas 90 menit untuk seluruh job
 
     steps:
       # ─────────────────────────────────────────────────────────────
@@ -35,13 +35,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          # Catatan: cache pip dinonaktifkan untuk menghindari
+          # "No file matched" error jika requirements-macos.txt
+          # tidak ditemukan pada shallow checkout
           cache: 'pip'
           cache-dependency-path: 'backend/requirements-macos.txt'
 
-      - name: Setup Node.js 18
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
 
       - name: Setup Go 1.22
@@ -51,249 +54,201 @@ jobs:
           cache-dependency-path: playback-engine/go.sum
 
       # ─────────────────────────────────────────────────────────────
-      # 3. BUILD GO PLAYBACK ENGINE (Universal Binary)
+      # 3. BUILD GO PLAYBACK ENGINE (arm64 — native M1)
       # ─────────────────────────────────────────────────────────────
-      - name: Build Go Engine — Intel (amd64)
-        run: |
-          cd playback-engine
-          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 \
-            go build -ldflags="-s -w" -o ../backend/playback-engine-amd64 ./cmd/
-          echo "AMD64 size: $(du -sh ../backend/playback-engine-amd64 | cut -f1)"
-
-      - name: Build Go Engine — Apple Silicon (arm64)
+      - name: Build Go Engine (arm64)
         run: |
           cd playback-engine
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
-            go build -ldflags="-s -w" -o ../backend/playback-engine-arm64 ./cmd/
-          echo "ARM64 size: $(du -sh ../backend/playback-engine-arm64 | cut -f1)"
-
-      - name: Create Universal Go Binary
-        run: |
-          lipo -create \
-            backend/playback-engine-amd64 \
-            backend/playback-engine-arm64 \
-            -output backend/playback-engine
-          chmod +x backend/playback-engine
-          echo "Universal binary info:"
-          lipo -info backend/playback-engine
-          echo "Universal size: $(du -sh backend/playback-engine | cut -f1)"
+            go build -ldflags="-s -w" -o ../backend/playback-engine ./cmd/
+          chmod +x ../backend/playback-engine
+          echo "playback-engine info:"
+          file ../backend/playback-engine
+          echo "Size: $(du -sh ../backend/playback-engine | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
-      # 4. SETUP FFMPEG (Universal macOS Static Build)
+      # 4. SETUP FFMPEG (arm64 — langsung dari zip atau download)
       # ─────────────────────────────────────────────────────────────
-      - name: Setup FFmpeg macOS (Local Zip or Download Fallback)
+      - name: Setup FFmpeg macOS (arm64)
         run: |
-          mkdir -p /tmp/ffmpeg-intel /tmp/ffmpeg-arm
+          mkdir -p /tmp/ffmpeg-arm
 
-          # Check if local zip files exist in repo root
-          if [ -f "ffmpeg80intel.zip" ] && [ -f "ffmpeg81arm.zip" ]; then
-            echo "Using local FFmpeg zip files from repository..."
-            unzip -j -o "ffmpeg80intel.zip" -d /tmp/ffmpeg-intel
+          # Coba gunakan local zip file arm (ARM64) yang sudah ada di repo
+          if [ -f "ffmpeg81arm.zip" ]; then
+            echo "Using local ffmpeg81arm.zip from repository..."
             unzip -j -o "ffmpeg81arm.zip" -d /tmp/ffmpeg-arm
-          else
-            echo "Downloading FFmpeg amd64..."
-            curl -L --retry 3 "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip" -o /tmp/ffmpeg-amd64.zip
-            unzip -j -o /tmp/ffmpeg-amd64.zip -d /tmp/ffmpeg-intel
-            
-            echo "Downloading FFmpeg arm64..."
-            curl -L --retry 3 "https://www.osxexperts.net/ffmpeg7arm.zip" -o /tmp/ffmpeg-arm64.zip 2>/dev/null || true
-            if [ -f /tmp/ffmpeg-arm64.zip ]; then
-              unzip -j -o /tmp/ffmpeg-arm64.zip -d /tmp/ffmpeg-arm 2>/dev/null || true
-            fi
+            echo "ARM64 ffmpeg extracted"
           fi
 
-          # Create Universal Binary (Intel + ARM64)
-          if [ -f /tmp/ffmpeg-intel/ffmpeg ] && [ -f /tmp/ffmpeg-arm/ffmpeg ]; then
-            echo "Creating Universal Binary FFmpeg (Intel + ARM64)..."
-            lipo -create \
-              /tmp/ffmpeg-intel/ffmpeg \
-              /tmp/ffmpeg-arm/ffmpeg \
-              -output backend/ffmpeg
-          elif [ -f /tmp/ffmpeg-intel/ffmpeg ]; then
-            echo "Using Intel FFmpeg only..."
-            cp /tmp/ffmpeg-intel/ffmpeg backend/ffmpeg
-          elif [ -f /tmp/ffmpeg-arm/ffmpeg ]; then
-            echo "Using ARM64 FFmpeg only..."
-            cp /tmp/ffmpeg-arm/ffmpeg backend/ffmpeg
+          # Cek juga Intel zip sebagai fallback (berjalan via Rosetta)
+          if [ ! -f /tmp/ffmpeg-arm/ffmpeg ] && [ -f "ffmpeg80intel.zip" ]; then
+            echo "ARM zip tidak ada/gagal, menggunakan Intel ffmpeg via Rosetta..."
+            mkdir -p /tmp/ffmpeg-intel
+            unzip -j -o "ffmpeg80intel.zip" -d /tmp/ffmpeg-intel
+            cp /tmp/ffmpeg-intel/ffmpeg /tmp/ffmpeg-arm/ffmpeg
           fi
 
+          # Download fallback jika keduanya tidak ada
+          if [ ! -f /tmp/ffmpeg-arm/ffmpeg ]; then
+            echo "Downloading FFmpeg arm64 dari osxexperts.net..."
+            curl -L --retry 3 "https://www.osxexperts.net/ffmpeg7arm.zip" \
+              -o /tmp/ffmpeg-arm64.zip
+            unzip -j -o /tmp/ffmpeg-arm64.zip -d /tmp/ffmpeg-arm
+          fi
+
+          # Salin ke backend/
+          cp /tmp/ffmpeg-arm/ffmpeg backend/ffmpeg
           chmod +x backend/ffmpeg
-          echo "FFmpeg info:"
-          lipo -info backend/ffmpeg || true
-          echo "FFmpeg size: $(du -sh backend/ffmpeg | cut -f1)"
+
+          echo "=== FFmpeg verification ==="
+          file backend/ffmpeg
+          echo "Size: $(du -sh backend/ffmpeg | cut -f1)"
+          backend/ffmpeg -version 2>&1 | head -3
 
       # ─────────────────────────────────────────────────────────────
-      # 5. CONVERT ICON .ICO → .ICNS
+      # 5. VERIFY BINARIES DI BACKEND/
+      # ─────────────────────────────────────────────────────────────
+      - name: Verify binaries in backend/
+        run: |
+          echo "=== backend/ directory ==="
+          ls -lh backend/
+          echo ""
+          for f in backend/ffmpeg backend/playback-engine; do
+            if [ -f "$f" ]; then
+              echo "OK: $f ($(du -sh $f | cut -f1))"
+              file "$f"
+            else
+              echo "ERROR: $f NOT FOUND!"
+              exit 1
+            fi
+          done
+
+      # ─────────────────────────────────────────────────────────────
+      # 6. CONVERT ICON .ICO → .ICNS
       # ─────────────────────────────────────────────────────────────
       - name: Convert app.ico to app.icns
         run: |
-          python3 << 'EOF'
-          import subprocess
-          import os
-          import shutil
+          ICO="backend/app.ico"
+          ICNS="src/app.icns"
 
-          ico_path = "backend/app.ico"
-          out_icns = "src/app.icns"
+          if [ -f "$ICNS" ]; then
+            echo "app.icns already exists, skipping."
+            exit 0
+          fi
 
-          if os.path.exists(out_icns):
-              print(f"app.icns already exists, skipping conversion.")
-              exit(0)
+          if [ ! -f "$ICO" ]; then
+            echo "WARNING: $ICO not found, akan dibuat placeholder"
+            # Buat PNG placeholder 512x512
+            python3 -c "
+          from PIL import Image
+          img = Image.new('RGBA', (512, 512), (30, 30, 46, 255))
+          img.save('/tmp/icon_src.png')
+          print('Placeholder created')
+          "
+            ICO="/tmp/icon_src.png"
+          fi
 
-          if not os.path.exists(ico_path):
-              print(f"WARNING: {ico_path} not found, creating placeholder icns")
-              # Create minimal placeholder using PIL
-              try:
-                  from PIL import Image
-                  img = Image.new("RGBA", (512, 512), (30, 30, 46, 255))
-                  img.save("/tmp/app_placeholder.png")
-                  ico_path = "/tmp/app_placeholder.png"
-              except Exception as e:
-                  print(f"PIL not available yet: {e}")
-                  exit(0)
-
-          # Convert ICO → PNG using sips
-          png_path = "/tmp/app_icon.png"
-          result = subprocess.run(
-              ["sips", "-s", "format", "png", ico_path, "--out", png_path],
-              capture_output=True, text=True
-          )
-          
-          if result.returncode != 0 or not os.path.exists(png_path):
-              print(f"sips failed: {result.stderr}")
-              # Try with Python Pillow
-              try:
-                  from PIL import Image
-                  img = Image.open(ico_path)
-                  img = img.convert("RGBA")
-                  img.save(png_path, "PNG")
-                  print("Converted with Pillow")
-              except Exception as e:
-                  print(f"Pillow also failed: {e}")
-                  exit(0)
+          # Convert ICO/PNG → PNG dengan sips
+          PNG="/tmp/app_icon.png"
+          sips -s format png "$ICO" --out "$PNG" 2>/dev/null || cp "$ICO" "$PNG"
 
           # Build iconset
-          iconset_dir = "/tmp/AppIcon.iconset"
-          os.makedirs(iconset_dir, exist_ok=True)
-          
-          sizes = [
-              (16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"),
-              (128, "128x128"), (256, "128x128@2x"), (256, "256x256"),
-              (512, "256x256@2x"), (512, "512x512"), (1024, "512x512@2x")
-          ]
-          
-          for size, name in sizes:
-              subprocess.run([
-                  "sips", "-z", str(size), str(size),
-                  png_path, "--out", f"{iconset_dir}/icon_{name}.png"
-              ], capture_output=True)
+          ICONSET="/tmp/AppIcon.iconset"
+          mkdir -p "$ICONSET"
+          for sz in 16 32 64 128 256 512; do
+            sips -z $sz $sz "$PNG" --out "$ICONSET/icon_${sz}x${sz}.png" > /dev/null 2>&1
+            sz2=$((sz*2))
+            sips -z $sz2 $sz2 "$PNG" --out "$ICONSET/icon_${sz}x${sz}@2x.png" > /dev/null 2>&1
+          done
 
-          result = subprocess.run(
-              ["iconutil", "-c", "icns", iconset_dir, "-o", out_icns],
-              capture_output=True, text=True
-          )
-          
-          if result.returncode == 0 and os.path.exists(out_icns):
-              print(f"app.icns created: {os.path.getsize(out_icns)} bytes")
-          else:
-              print(f"iconutil failed: {result.stderr}")
-              # Fallback: copy PNG as-is and let electron-builder handle it
-              shutil.copy(png_path, out_icns.replace(".icns", ".png"))
-          EOF
+          iconutil -c icns "$ICONSET" -o "$ICNS" && echo "app.icns created: $(du -sh $ICNS | cut -f1)" || echo "iconutil gagal, skip"
 
       # ─────────────────────────────────────────────────────────────
-      # 6. INSTALL PYTHON DEPENDENCIES
+      # 7. INSTALL PYTHON DEPENDENCIES
       # ─────────────────────────────────────────────────────────────
       - name: Install Python Dependencies
         run: |
           python3 -m pip install --upgrade pip
           pip install -r backend/requirements-macos.txt
-          pip install pyinstaller
-          echo "PyInstaller version: $(pyinstaller --version)"
+          # Install PyInstaller versi terbaru yang stabil
+          pip install "pyinstaller>=6.0.0,<7.0.0"
+          echo "=== Installed packages ==="
+          pip list | grep -E "PyInstaller|Pillow|av|fitz|uvicorn|fastapi"
 
       # ─────────────────────────────────────────────────────────────
-      # 7. BUILD PYTHON BACKEND WITH PYINSTALLER
+      # 8. BUILD PYTHON BACKEND WITH PYINSTALLER
+      #    target_arch=None → ikuti runner (arm64 di macos-14)
+      #    Berjalan via Rosetta 2 di Mac Intel secara otomatis
       # ─────────────────────────────────────────────────────────────
-      - name: Build Python Backend (PyInstaller universal2)
+      - name: Build Python Backend (PyInstaller arm64)
         working-directory: backend
         run: |
-          # Verify required binaries exist
-          for f in ffmpeg playback-engine; do
-            if [ ! -f "$f" ]; then
-              echo "ERROR: $f not found in backend/!"
-              exit 1
-            fi
-            echo "OK: $f ($(du -sh $f | cut -f1))"
-          done
-          
-          echo "Starting PyInstaller build..."
+          echo "=== Pre-build check ==="
+          ls -lh ffmpeg playback-engine
+          echo ""
+          echo "Starting PyInstaller..."
           pyinstaller ShowLyrics-macos.spec --clean --noconfirm
-          
-          echo "PyInstaller output:"
+
+          echo ""
+          echo "=== PyInstaller output ==="
           ls -lh dist/ShowLyrics/
+          echo ""
+          echo "=== bin/internal (sample) ==="
+          ls dist/ShowLyrics/internal/ | head -20
           echo "Total size: $(du -sh dist/ShowLyrics/ | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
-      # 8. SETUP BIN DIRECTORY
+      # 9. SETUP BIN DIRECTORY
       # ─────────────────────────────────────────────────────────────
-      - name: Setup bin/ directory for Electron packaging
+      - name: Setup bin/ directory for Electron
         run: |
-          rm -rf bin
-          mkdir -p bin
-          
-          # Copy PyInstaller output to bin/
+          rm -rf bin && mkdir -p bin
+
+          # Copy PyInstaller output ke bin/
           cp -r backend/dist/ShowLyrics/* bin/
-          
-          # Ensure all binaries have execute permission
-          find bin/ -type f -name "ShowLyrics" -exec chmod +x {} \;
-          find bin/ -type f -name "playback-engine" -exec chmod +x {} \;
-          find bin/ -type f -name "ffmpeg" -exec chmod +x {} \;
-          
-          echo "bin/ structure:"
-          ls -la bin/
-          echo "bin/internal (first 20 files):"
-          ls bin/internal/ | head -20
+
+          # Pastikan semua binaries executable
+          find bin/ -type f \( -name "ShowLyrics" -o -name "playback-engine" -o -name "ffmpeg" \) \
+            -exec chmod +x {} \;
+
+          echo "=== bin/ structure ==="
+          ls -lh bin/
+          echo "=== bin/internal (sample 20 files) ==="
+          ls bin/internal/ 2>/dev/null | head -20
           echo "Total bin size: $(du -sh bin/ | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
-      # 9. INSTALL NODE DEPENDENCIES
+      # 10. INSTALL NODE DEPENDENCIES
       # ─────────────────────────────────────────────────────────────
       - name: Install Node Dependencies
         run: npm ci
 
       # ─────────────────────────────────────────────────────────────
-      # 10. BUILD ELECTRON APP (DMG + ZIP)
+      # 11. BUILD ELECTRON APP (DMG)
       # ─────────────────────────────────────────────────────────────
-      - name: Build Electron macOS App
+      - name: Build Electron macOS App (DMG)
         run: npm run dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Skip code signing (kita distribusi tanpa Apple Developer cert)
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_IDENTITY_AUTO_DISCOVERY: false   # Skip code signing
 
       # ─────────────────────────────────────────────────────────────
-      # 11. VERIFY OUTPUT
+      # 12. VERIFY OUTPUT
       # ─────────────────────────────────────────────────────────────
       - name: Verify Build Output
         run: |
-          echo "=== Build Artifacts ==="
+          echo "=== dist/ artifacts ==="
           ls -lh dist/
-          
           DMG_FILE=$(find dist/ -name "*.dmg" | head -1)
-          ZIP_FILE=$(find dist/ -name "*.zip" | head -1)
-          
           if [ -n "$DMG_FILE" ]; then
-            echo "DMG: $DMG_FILE ($(du -sh $DMG_FILE | cut -f1))"
+            echo "SUCCESS: $DMG_FILE ($(du -sh $DMG_FILE | cut -f1))"
           else
-            echo "ERROR: No DMG file found!"
+            echo "ERROR: No DMG found!"
             exit 1
-          fi
-          
-          if [ -n "$ZIP_FILE" ]; then
-            echo "ZIP: $ZIP_FILE ($(du -sh $ZIP_FILE | cut -f1))"
           fi
 
       # ─────────────────────────────────────────────────────────────
-      # 12. UPLOAD ARTIFACTS (dapat didownload dari GitHub Actions tab)
+      # 13. UPLOAD ARTIFACTS
       # ─────────────────────────────────────────────────────────────
       - name: Upload DMG Artifact
         uses: actions/upload-artifact@v4
@@ -308,10 +263,10 @@ jobs:
           name: ShowLyricsApp-macOS-ZIP
           path: dist/*.zip
           retention-days: 30
+          if-no-files-found: ignore
 
       # ─────────────────────────────────────────────────────────────
-      # 13. (OPSIONAL) CREATE GITHUB RELEASE
-      # Aktifkan dengan: workflow_dispatch → create_release = true
+      # 14. (OPSIONAL) CREATE GITHUB RELEASE
       # ─────────────────────────────────────────────────────────────
       - name: Create GitHub Release
         if: ${{ github.event.inputs.create_release == 'true' }}

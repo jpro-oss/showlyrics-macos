@@ -1,19 +1,10 @@
 # ShowLyrics-macos.spec
 # ════════════════════════════════════════════════════════════════════════════
-# PyInstaller SPEC FILE untuk macOS — Equivalent & Optimized
-# dari perintah Windows + macOS adaptasi penuh
-#
-# Keunggulan spec file vs command line:
-#   - collect_all() lebih powerful dari --collect-all
-#   - Kontrol penuh atas UPX, strip, target_arch
-#   - Bisa di-extend tanpa command terlalu panjang
-#   - Source control friendly
+# PyInstaller SPEC FILE untuk macOS — Fully macOS Native (arm64)
+# Build di macOS arm64 runner (macos-14) — berjalan via Rosetta di Intel
 #
 # Build command (jalankan dari folder backend/ di macOS):
 #   pyinstaller ShowLyrics-macos.spec --clean --noconfirm
-#
-# Atau gunakan script:
-#   chmod +x build-pyinstaller-macos.sh && ./build-pyinstaller-macos.sh
 # ════════════════════════════════════════════════════════════════════════════
 
 # -*- mode: python ; coding: utf-8 -*-
@@ -24,15 +15,16 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_dat
 assert sys.platform == 'darwin', "Spec ini hanya untuk macOS! Gunakan ShowLyrics.spec untuk Windows."
 
 # ─── KOLEKSI DEPENDENCY (collect_all = binaries + datas + hiddenimports) ─────
-av_datas, av_binaries, av_hiddenimports = collect_all('av')
-fitz_datas, fitz_binaries, fitz_hiddenimports = collect_all('fitz')
+av_datas, av_binaries, av_hiddenimports         = collect_all('av')
+fitz_datas, fitz_binaries, fitz_hiddenimports   = collect_all('fitz')
 uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = collect_all('uvicorn')
 fastapi_datas, fastapi_binaries, fastapi_hiddenimports = collect_all('fastapi')
 pydantic_datas, pydantic_binaries, pydantic_hiddenimports = collect_all('pydantic')
 crypto_datas, crypto_binaries, crypto_hiddenimports = collect_all('cryptography')
 requests_datas, requests_binaries, requests_hiddenimports = collect_all('requests')
 psutil_datas, psutil_binaries, psutil_hiddenimports = collect_all('psutil')
-pptx_datas, pptx_binaries, pptx_hiddenimports = collect_all('pptx')
+pptx_datas, pptx_binaries, pptx_hiddenimports   = collect_all('pptx')
+pil_datas, pil_binaries, pil_hiddenimports       = collect_all('PIL')
 
 # ─── ANALYSIS ────────────────────────────────────────────────────────────────
 a = Analysis(
@@ -40,18 +32,20 @@ a = Analysis(
     pathex=['.'],
     binaries=(
         av_binaries + fitz_binaries + psutil_binaries +
-        pydantic_binaries + crypto_binaries + requests_binaries
+        pydantic_binaries + crypto_binaries + requests_binaries +
+        pil_binaries
     ),
     datas=[
         # ── macOS Binaries (tanpa .exe) ───────────────────────────────────
         ('ffmpeg',          '.'),            # FFmpeg macOS static binary
-        ('playback-engine', '.'),            # Go engine macOS (universal2)
+        ('playback-engine', '.'),            # Go engine macOS (arm64)
         # ── Application Assets ───────────────────────────────────────────
         ('templates',       'templates'),   # Jinja2 templates
         ('static',          'static'),      # CSS, JS, images, wm.js
         # ── Collected Data ───────────────────────────────────────────────
     ] + av_datas + fitz_datas + fastapi_datas + uvicorn_datas +
-      pydantic_datas + crypto_datas + requests_datas + psutil_datas + pptx_datas,
+      pydantic_datas + crypto_datas + requests_datas + psutil_datas +
+      pptx_datas + pil_datas,
 
     hiddenimports=[
         # ── App Modules ───────────────────────────────────────────────────
@@ -99,6 +93,7 @@ a = Analysis(
 
         # ── Media ─────────────────────────────────────────────────────────
         'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont',
+        'PIL.ImageOps', 'PIL.ImageFilter',
         'av', 'av.container', 'av.stream',
         'fitz',
 
@@ -116,6 +111,7 @@ a = Analysis(
     ] + av_hiddenimports + fitz_hiddenimports + uvicorn_hiddenimports +
       fastapi_hiddenimports + pydantic_hiddenimports + crypto_hiddenimports +
       requests_hiddenimports + psutil_hiddenimports + pptx_hiddenimports +
+      pil_hiddenimports +
       collect_submodules('uvicorn') + collect_submodules('pydantic'),
 
     hookspath=[],
@@ -134,7 +130,7 @@ a = Analysis(
         # ── Stdlib tidak terpakai (kurangi ukuran binary) ─────────────────
         'test', 'unittest', 'pdb', 'doctest',
         'email', 'xmlrpc', 'html.server',
-        'xml', 'plistlib',
+        'plistlib',
     ],
 
     win_no_prefer_redirects=False,
@@ -155,12 +151,14 @@ exe = EXE(
     name='ShowLyrics',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,                     # Strip debug symbols — kurangi ukuran
-    upx=False,                      # UPX tidak kompatibel dengan macOS universal2
+    strip=False,                    # Jangan strip — bisa menyebabkan masalah di macOS arm64
+    upx=False,                      # UPX tidak kompatibel dengan macOS
     console=False,                  # No console window (headless FastAPI server)
     disable_windowed_traceback=False,
     argv_emulation=False,           # PENTING: False untuk server app (bukan GUI)
-    target_arch='universal2',       # Intel (x86_64) + Apple Silicon (arm64)
+    target_arch=None,               # None = ikuti arsitektur runner (arm64 di macos-14)
+                                    # CATATAN: universal2 gagal karena pip wheel tidak fat binary
+                                    # App berjalan di Apple Silicon native, Intel via Rosetta 2
     codesign_identity=None,         # No Apple signing (unsigned distribution)
     entitlements_file=None,
 )
@@ -171,7 +169,7 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=True,
+    strip=False,
     upx=False,
     upx_exclude=[],
     name='ShowLyrics',
