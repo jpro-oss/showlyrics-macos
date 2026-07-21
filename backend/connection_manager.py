@@ -22,6 +22,7 @@ class ConnectionManager:
             "audio": {"ts": 0.0, "value": None},
         }
         self.last_video_sync = {"value": 0.0, "ts": 0.0, "playing": True}
+        self._msg_seq = 0  # Sequence counter — anti-replay untuk verifikasi nonce di frontend
         
         # New mathematical timeline system
         self.video_timeline = {
@@ -30,7 +31,8 @@ class ConnectionManager:
             "started_at": 0.0,
             "paused_position": 0.0,
             "playback_rate": 1.0,
-            "duration": 0.0
+            "duration": 0.0,
+            "behavior": "loop"
         }
 
         # State defaults
@@ -45,6 +47,10 @@ class ConnectionManager:
         self.audio_state        = {"url": ""}
         self.photo_state        = {"url": ""}
         self.presentation_state = {"url": ""}
+        self.alert_state = None
+        self.stage_msg_state = None
+        self.stage_countdown_state = None
+        self.stage_rundown_state = None
 
         # Load layer config dari app_settings
         app_settings = load_json(APP_SETTINGS_FILE)
@@ -74,7 +80,12 @@ class ConnectionManager:
             pos = self.video_timeline["paused_position"] + elapsed * self.video_timeline["playback_rate"]
             dur = self.video_timeline["duration"]
             if dur > 0.0:
-                pos = pos % dur
+                behavior = self.video_timeline.get("behavior", "loop")
+                if behavior == "loop" or not behavior:
+                    pos = pos % dur
+                else:
+                    if pos >= dur:
+                        pos = dur
             return round(pos, 3)
         else:
             return round(self.video_timeline["paused_position"], 3)
@@ -116,11 +127,97 @@ class ConnectionManager:
                 self.video_timeline["started_at"] = time.time()
             else:
                 self.video_timeline["playback_rate"] = new_rate
+        elif command == "loop":
+            is_loop = value if isinstance(value, bool) else (value == "loop" or value == "true")
+            self.video_timeline["behavior"] = "loop" if is_loop else "once_hold"
+        elif command == "update_behavior":
+            self.video_timeline["behavior"] = value or "loop"
+
+    def send_go_command(self, action: str, payload: dict = None):
+        """Send a playback command to the Go Playback Engine and update local state."""
+        import urllib.request
+        import json
+        url = "http://localhost:18899/command"
+        data = {"action": action, **(payload or {})}
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=1.0) as response:
+                res_data = response.read()
+                state = json.loads(res_data.decode("utf-8"))
+                self.video_timeline["media_id"] = state.get("media_id", "")
+                self.video_timeline["playing"] = state.get("playing", False)
+                self.video_timeline["started_at"] = float(state.get("started_at", 0)) / 1000.0
+                self.video_timeline["paused_position"] = state.get("paused_position", 0.0)
+                self.video_timeline["playback_rate"] = state.get("playback_rate", 1.0)
+                self.video_timeline["duration"] = state.get("duration", 0.0)
+                self.video_timeline["behavior"] = state.get("behavior", "loop")
+        except Exception as e:
+            print(f"[GO BRIDGE] Error sending command {action} to Go: {e}")
+
+    async def send_go_command_async(self, action: str, payload: dict = None):
+        """Async wrapper untuk send_go_command — jalankan di executor agar tidak memblokir event loop."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.send_go_command, action, payload)
+
+    def sync_state_from_go(self):
+        """Query Go engine to populate the initial timeline state with retry fallback."""
+        import urllib.request
+        import json
+        import time
+        url = "http://localhost:18899/state"
+        for attempt in range(15):
+            try:
+                with urllib.request.urlopen(url, timeout=1.0) as response:
+                    res_data = response.read()
+                    state = json.loads(res_data.decode("utf-8"))
+                    self.video_timeline["media_id"] = state.get("media_id", "")
+                    self.video_timeline["playing"] = state.get("playing", False)
+                    self.video_timeline["started_at"] = float(state.get("started_at", 0)) / 1000.0
+                    self.video_timeline["paused_position"] = state.get("paused_position", 0.0)
+                    self.video_timeline["playback_rate"] = state.get("playback_rate", 1.0)
+                    self.video_timeline["duration"] = state.get("duration", 0.0)
+                    self.video_timeline["behavior"] = state.get("behavior", "loop")
+                    
+                    if self.video_timeline["media_id"]:
+                        self.bg_state = {
+                            "url": f"/api/stream_video/{self.video_timeline['media_id']}",
+                            "playing": self.video_timeline["playing"],
+                            "start_time": self.video_timeline["paused_position"],
+                            "media_id": self.video_timeline["media_id"],
+                            "playback_rate": self.video_timeline["playback_rate"],
+                            "behavior": self.video_timeline["behavior"]
+                        }
+                    
+                    # Sync initial bg_config to Go Playback Engine
+                    try:
+                        self.send_go_command("update_bg_config", {"payload": self.bg_config})
+                        print("[GO BRIDGE] Successfully synchronized initial bg config to Go")
+                    except Exception as config_err:
+                        print(f"[GO BRIDGE] Error syncing initial bg config to Go: {config_err}")
+
+                    break
+            except Exception as e:
+                if attempt == 14:
+                    print(f"[GO BRIDGE] Error syncing state from Go on startup: {e}")
+                else:
+                    # Exponential backoff: 0.1s, 0.2s, 0.4s, ... max 2s per attempt
+                    wait = min(0.1 * (2 ** attempt), 2.0)
+                    time.sleep(wait)
 
 
     def _sign(self, data: dict) -> dict:
-        """Tambahkan session nonce ke setiap pesan keluar."""
-        return {**data, "_nonce": WS_SESSION_NONCE}
+        """Tambahkan session nonce + sequence number ke setiap pesan keluar.
+        
+        _nonce: statis per-session, diverifikasi oleh wm.js
+        _seq  : selalu naik, cegah replay attack (pesan lama di-replay)
+        """
+        self._msg_seq += 1
+        return {**data, "_nonce": WS_SESSION_NONCE, "_seq": self._msg_seq}
 
     def _payload_signature(self, payload: dict) -> str:
         try:
@@ -207,6 +304,23 @@ class ConnectionManager:
         except Exception as e:
             print(f"Error loading FB default: {e}")
 
+        # Stage Rundown default
+        try:
+            from config import RUNDOWN_PRESETS_FILE
+            rundown_data = load_json(RUNDOWN_PRESETS_FILE)
+            def_name = rundown_data.get("default")
+            if def_name and def_name in rundown_data.get("presets", {}):
+                print(f" -> Rundown Default Loaded: {def_name}")
+                self.stage_rundown_state = {
+                    "presetName": def_name,
+                    "items": rundown_data["presets"][def_name].get("items", []),
+                    "activeIndex": -1,
+                    "status": "stopped",
+                    "transitionMode": rundown_data["presets"][def_name].get("transitionMode", "auto")
+                }
+        except Exception as e:
+            print(f"Error loading Rundown default: {e}")
+
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
@@ -218,6 +332,11 @@ class ConnectionManager:
         asyncio.ensure_future(self._send_license_status_when_ready(websocket))
 
         await websocket.send_json(self._sign({"type": "update_bg_config", "payload": self.bg_config}))
+
+        # Sync bg config ke Go secara async (tidak block connect)
+        asyncio.ensure_future(
+            self.send_go_command_async("update_bg_config", {"payload": self.bg_config})
+        )
 
         if self.lt_state:
             await websocket.send_json(self._sign({"type": "update_lt_config", "config": self.lt_state}))
@@ -264,6 +383,42 @@ class ConnectionManager:
             "layers_lt":   self.layer_config_lt,
         }))
 
+        # Kirim alert_state ke client baru
+        if self.alert_state:
+            await websocket.send_json(self._sign({"type": "alert", "data": self.alert_state}))
+
+        # Kirim stage_msg_state ke client baru
+        if self.stage_msg_state:
+            await websocket.send_json(self._sign({"type": "stage_msg", "data": self.stage_msg_state}))
+
+        # Kirim stage_countdown_state ke client baru
+        if self.stage_countdown_state:
+            state = self.stage_countdown_state
+            if state.get("action") == "start":
+                elapsed = time.time() - state.get("start_time", 0.0)
+                remaining = max(0.0, state.get("total_seconds", 0.0) - elapsed)
+                await websocket.send_json(self._sign({
+                    "type": "stage_countdown",
+                    "data": {"action": "start", "seconds": int(remaining)}
+                }))
+            else:
+                await websocket.send_json(self._sign({
+                    "type": "stage_countdown",
+                    "data": {"action": "stop"}
+                }))
+
+        # Kirim stage_rundown_state ke client baru
+        if self.stage_rundown_state:
+            await websocket.send_json(self._sign({"type": "stage_rundown", "data": self.stage_rundown_state}))
+
+        # Kirim status network guard saat ini ke client baru
+        try:
+            import network_guard
+            asyncio.create_task(network_guard.send_status_to_client(websocket, self._sign))
+        except Exception as e:
+            print(f"[WS] Error checking network status for startup client: {e}")
+
+
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
@@ -272,11 +427,15 @@ class ConnectionManager:
         """
         Tunggu startup license check selesai sebelum kirim status.
         Mencegah flicker watermark saat server baru restart (max 8 detik).
+        Early-exit jika klien disconnect sebelum check selesai.
         """
         max_wait = 80  # 80 × 0.1s = 8 detik
         for _ in range(max_wait):
             if license_check.LICENSE_CHECK_DONE:
                 break
+            # Early-exit jika klien sudah disconnect — tidak perlu tunggu sampai selesai
+            if websocket not in self.active_connections:
+                return
             await asyncio.sleep(0.1)
         try:
             if websocket in self.active_connections:
@@ -301,7 +460,7 @@ class ConnectionManager:
 
         async def send_to_one(conn):
             try:
-                await asyncio.wait_for(conn.send_json(signed), timeout=5.0)
+                await asyncio.wait_for(conn.send_json(signed), timeout=2.0)
             except Exception:
                 self.disconnect(conn)
                 try:
@@ -309,23 +468,4 @@ class ConnectionManager:
                 except Exception:
                     pass
 
-        # gather() menjalankan semua send secara concurrent (bukan sequential)
-        # Total waktu = max(individual_timeouts) = max 5.0s, bukan sum
-        # Bounded task count = jumlah koneksi aktif saat ini
         await asyncio.gather(*[send_to_one(c) for c in sockets], return_exceptions=True)
-
-    async def sync_broadcaster(self):
-        while True:
-            await asyncio.sleep(1.0)  # 1s is sufficient — clients tolerate up to 400ms drift
-            if self.bg_state.get("url") and self.video_timeline["playing"]:
-                # Capture position and timestamp atomically (same tick)
-                server_now_ms = time.time() * 1000
-                current_val = self.get_video_position()
-                await self.broadcast({
-                    "type": "heartbeat",
-                    "media_id": self.video_timeline["media_id"],
-                    "server_time": server_now_ms,
-                    "position": current_val,
-                    "playing": True,
-                    "playback_rate": self.video_timeline["playback_rate"]
-                })

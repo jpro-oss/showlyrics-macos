@@ -313,9 +313,10 @@ function renderBgGrid(folderFilter) {
 }
 
 function previewBgVideo(id, name) {
+    closeBgPreview(); // Force cleanup of any previous decoders first!
     document.getElementById("bg-preview-title").innerText = name;
     const container = document.getElementById("bg-video-container");
-    container.innerHTML = `<video src="/api/stream_video/${id}" style="max-height: 70vh; max-width: 90vw;" autoplay loop controls></video>`;
+    container.innerHTML = `<video src="/api/stream_video/${id}" style="max-height: 70vh; max-width: 90vw;" autoplay loop muted controls></video>`;
     document.getElementById("bg-preview-modal").style.display = "flex";
 }
 
@@ -326,8 +327,11 @@ function closeBgPreview() {
     const vid = container.querySelector('video');
     if (vid) {
         vid.pause();
+        vid.src = ""; // Reset src to empty to stop active download/decode streams
         vid.removeAttribute('src');
-        vid.load();
+        try {
+            vid.load(); // Force browser to cancel pending loads and release GPU decoders
+        } catch (_) {}
     }
     container.innerHTML = "";
 }
@@ -784,15 +788,73 @@ async function connectToMediaSender(sender) {
     }
 }
 
+async function connectManualSender() {
+    const ipInput = document.getElementById("manual-sender-ip");
+    const ip = ipInput ? ipInput.value.trim() : "";
+    if (!ip) {
+        showToast("Please enter an IP address", "error", 2000);
+        return;
+    }
+    
+    let targetIp = ip;
+    let targetPort = 18889;
+    if (ip.includes(":")) {
+        const parts = ip.split(":");
+        targetIp = parts[0];
+        targetPort = parseInt(parts[1]) || 18889;
+    }
+    
+    showToast(`Connecting to ${targetIp}:${targetPort}...`, "loading");
+    
+    try {
+        const res = await fetch('/api/senders/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip: targetIp, port: targetPort })
+        });
+        const data = await res.json();
+        
+        if (data.status === "success") {
+            showToast(`Connected to ${data.sender.device_name}`, "success", 2000);
+            
+            const listRes = await fetch('/api/senders/list');
+            discoveredSenders = await listRes.json();
+            renderSenderList();
+            
+            const s = data.sender;
+            if (currentMediaCategory === 'presentation') {
+                if (typeof window.enterPPTRemoteMode === 'function') {
+                    window.enterPPTRemoteMode(s);
+                }
+            } else if (currentMediaCategory === 'photo') {
+                if (typeof enterPhotoRemoteMode === 'function') {
+                    enterPhotoRemoteMode(s);
+                }
+            } else if (currentMediaCategory === 'video') {
+                if (typeof enterVideoRemoteMode === 'function') {
+                    enterVideoRemoteMode(s);
+                }
+            }
+            if (ipInput) ipInput.value = "";
+        } else {
+            showToast(data.message, "error", 3000);
+        }
+    } catch (e) {
+        showToast("Manual connection failed", "error", 3000);
+    }
+}
+window.connectManualSender = connectManualSender;
+
 window.enterPhotoRemoteMode = async function (sender) {
     currentActiveSender = sender;
     currentActiveFolder = "ALL";
     const title = document.getElementById("bg-active-folder-name");
     if (title) title.innerText = `🌐 REMOTE PHOTO: ${sender.device_name}`;
 
-    // Fetch photos from sender
+    // Fetch photos from sender with token
     try {
-        const res = await fetch(`http://${sender.ip}:${sender.ws_port}/api/photos`);
+        const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+        const res = await fetch(`http://${sender.ip}:${sender.ws_port}/api/photos${tokenParam}`);
         const data = await res.json();
 
         // Handle dictionary structure from sender
@@ -803,7 +865,8 @@ window.enterPhotoRemoteMode = async function (sender) {
     }
 
     // Connect WebSocket
-    const wsUrl = `ws://${sender.ip}:${sender.ws_port}/ws`;
+    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+    const wsUrl = `ws://${sender.ip}:${sender.ws_port}/ws${tokenParam}`;
     if (window.senderWs) {
         try { window.senderWs.close(); } catch (e) { }
     }
@@ -825,7 +888,8 @@ window.enterPhotoRemoteMode = async function (sender) {
                 window.remoteLivePhotoId = photo.id;
                 window.activeRemoteSenderIp = senderIp;
 
-                const fullUrl = `${baseUrl}/api/photos/file/${photo.id}`;
+                const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+                const fullUrl = `${baseUrl}/api/photos/file/${photo.id}${tokenParam}`;
 
                 // Update Main App State
                 if (typeof ws !== 'undefined' && ws.readyState === WebSocket.OPEN) {
@@ -838,6 +902,9 @@ window.enterPhotoRemoteMode = async function (sender) {
                             sender_id: senderIp
                         }
                     }));
+                }
+                if (typeof createOrUpdateFloatingPlayer === 'function') {
+                    createOrUpdateFloatingPlayer('photo', photo.name || 'Remote Photo');
                 }
 
                 // Update UI immediately if we are in remote grid
@@ -862,7 +929,8 @@ window.enterPhotoRemoteMode = async function (sender) {
                         }));
                     } else if (window.remoteLivePhotoId) {
                         const restoreBaseUrl = `http://${sender.ip}:${sender.ws_port}`;
-                        const fullUrl = `${restoreBaseUrl}/api/photos/file/${window.remoteLivePhotoId}`;
+                        const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+                        const fullUrl = `${restoreBaseUrl}/api/photos/file/${window.remoteLivePhotoId}${tokenParam}`;
                         ws.send(JSON.stringify({
                             action: "update_photo",
                             payload: {
@@ -891,13 +959,14 @@ function renderRemotePhotoGrid(photos, sender) {
     }
 
     const baseUrl = `http://${sender.ip}:${sender.ws_port}`;
+    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
 
     // photos is now guaranteed to be an array
     photos.forEach(photo => {
         const box = document.createElement("div");
         box.className = "bg-media-card";
 
-        const thumbUrl = `${baseUrl}/api/photos/thumb/${photo.id}`;
+        const thumbUrl = `${baseUrl}/api/photos/thumb/${photo.id}${tokenParam}`;
         const thumbHtml = `<div class="bg-media-thumb-wrap"><img src="${thumbUrl}" class="bg-media-thumb" onerror="this.src='/static/logo.png'"></div>`;
 
         if (window.remoteLivePhotoId === photo.id && sender.ip === window.activeRemoteSenderIp) {
@@ -918,7 +987,8 @@ function renderRemotePhotoGrid(photos, sender) {
 
 function applyRemotePhoto(photo, sender) {
     const baseUrl = `http://${sender.ip}:${sender.ws_port}`;
-    const fullUrl = `${baseUrl}/api/photos/file/${photo.id}`;
+    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+    const fullUrl = `${baseUrl}/api/photos/file/${photo.id}${tokenParam}`;
 
     window.remoteLivePhotoId = photo.id;
     window.activeRemoteSenderIp = sender.ip;
@@ -932,6 +1002,9 @@ function applyRemotePhoto(photo, sender) {
             sender_id: sender.ip
         }
     }));
+    if (typeof createOrUpdateFloatingPlayer === 'function') {
+        createOrUpdateFloatingPlayer('photo', photo.name || 'Remote Photo');
+    }
 
     // Update UI
     renderRemotePhotoGrid(window.lastRemotePhotos || [], sender);
@@ -1721,9 +1794,10 @@ window.enterVideoRemoteMode = async function (sender) {
     const title = document.getElementById("bg-active-folder-name");
     if (title) title.innerText = `🌐 REMOTE VIDEO: ${sender.device_name}`;
 
-    // Fetch videos from sender
+    // Fetch videos from sender with token
     try {
-        const res = await fetch(`http://${sender.ip}:${sender.ws_port}/api/videos`);
+        const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+        const res = await fetch(`http://${sender.ip}:${sender.ws_port}/api/videos${tokenParam}`);
         const data = await res.json();
 
         // Handle dictionary structure from sender
@@ -1734,7 +1808,8 @@ window.enterVideoRemoteMode = async function (sender) {
     }
 
     // Connect WebSocket
-    const wsUrl = `ws://${sender.ip}:${sender.ws_port}/ws`;
+    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+    const wsUrl = `ws://${sender.ip}:${sender.ws_port}/ws${tokenParam}`;
     if (window.senderWs) {
         try { window.senderWs.close(); } catch (e) { }
     }
@@ -1756,7 +1831,8 @@ window.enterVideoRemoteMode = async function (sender) {
                 window.remoteLiveVideoId = videoItem.id;
                 window.activeRemoteSenderIp = senderIp;
 
-                const fullUrl = `${baseUrl}/api/videos/file/${videoItem.id}`;
+                const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+                const fullUrl = `${baseUrl}/api/videos/file/${videoItem.id}${tokenParam}`;
 
                 // Update Main App Background State
                 if (typeof ws !== 'undefined' && ws.readyState === WebSocket.OPEN) {
@@ -1766,9 +1842,15 @@ window.enterVideoRemoteMode = async function (sender) {
                             url: fullUrl,
                             behavior: "loop",
                             source: "remote_sender",
-                            sender_id: senderIp
+                            sender_id: senderIp,
+                            video_id: videoItem.id,
+                            duration: videoItem.duration,
+                            name: videoItem.name
                         }
                     }));
+                }
+                if (typeof createOrUpdateFloatingPlayer === 'function') {
+                    createOrUpdateFloatingPlayer('video', videoItem.name || 'Remote Video');
                 }
 
                 // Update UI immediately if we are in remote grid
@@ -1799,10 +1881,11 @@ window.enterVideoRemoteMode = async function (sender) {
                             }));
                         } else if (window.remoteLiveVideoId) {
                             const restoreBaseUrl = `http://${sender.ip}:${sender.ws_port}`;
+                            const tokenParam = sender.token ? `?auth=${sender.token}` : '';
                             ws.send(JSON.stringify({
                                 action: "update_background",
                                 payload: {
-                                    url: `${restoreBaseUrl}/api/videos/file/${window.remoteLiveVideoId}`,
+                                    url: `${restoreBaseUrl}/api/videos/file/${window.remoteLiveVideoId}${tokenParam}`,
                                     behavior: "loop",
                                     source: "remote_sender",
                                     sender_id: sender.ip
@@ -1841,12 +1924,13 @@ function renderRemoteVideoGrid(videos, sender) {
     }
 
     const baseUrl = `http://${sender.ip}:${sender.ws_port}`;
+    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
 
     videos.forEach(video => {
         const box = document.createElement("div");
         box.className = "bg-media-card";
 
-        const thumbUrl = `${baseUrl}/api/videos/thumb/${video.id}`;
+        const thumbUrl = `${baseUrl}/api/videos/thumb/${video.id}${tokenParam}`;
         const thumbHtml = `<div class="bg-media-thumb-wrap"><img src="${thumbUrl}" class="bg-media-thumb" onerror="this.src='/static/logo.png'"></div>`;
 
         if (window.remoteLiveVideoId === video.id && sender.ip === window.activeRemoteSenderIp) {
@@ -1866,7 +1950,8 @@ function renderRemoteVideoGrid(videos, sender) {
 
 function applyRemoteVideo(videoItem, sender) {
     const baseUrl = `http://${sender.ip}:${sender.ws_port}`;
-    const fullUrl = `${baseUrl}/api/videos/file/${videoItem.id}`;
+    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+    const fullUrl = `${baseUrl}/api/videos/file/${videoItem.id}${tokenParam}`;
 
     window.remoteLiveVideoId = videoItem.id;
     window.activeRemoteSenderIp = sender.ip;
@@ -1877,7 +1962,10 @@ function applyRemoteVideo(videoItem, sender) {
             url: fullUrl,
             behavior: "loop",
             source: "remote_sender",
-            sender_id: sender.ip
+            sender_id: sender.ip,
+            video_id: videoItem.id,
+            duration: videoItem.duration,
+            name: videoItem.name
         }
     }));
     if (typeof createOrUpdateFloatingPlayer === 'function') {
@@ -1905,7 +1993,26 @@ function setupDragDropImport() {
     const overlay = document.getElementById("bg-drag-overlay");
     if (!dropZone || !overlay) return;
 
-    const isDragDropAllowed = () => {
+    window.isDraggingInternalMedia = false;
+
+    window.addEventListener("dragstart", () => {
+        window.isDraggingInternalMedia = true;
+    });
+
+    window.addEventListener("dragend", () => {
+        window.isDraggingInternalMedia = false;
+    });
+
+    const isDragDropAllowed = (e) => {
+        if (window.isDraggingInternalMedia) {
+            return false;
+        }
+        if (!e || !e.dataTransfer || !e.dataTransfer.types) return false;
+        const typesArr = Array.from(e.dataTransfer.types);
+        if (!typesArr.includes("Files")) {
+            return false;
+        }
+
         return (
             typeof currentMediaCategory !== 'undefined' &&
             currentMediaCategory !== 'scripture' &&
@@ -1914,19 +2021,19 @@ function setupDragDropImport() {
     };
 
     dropZone.addEventListener("dragenter", (e) => {
-        if (!isDragDropAllowed()) return;
+        if (!isDragDropAllowed(e)) return;
         e.preventDefault();
         overlay.style.display = "flex";
     });
 
     dropZone.addEventListener("dragover", (e) => {
-        if (!isDragDropAllowed()) return;
+        if (!isDragDropAllowed(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
     });
 
     dropZone.addEventListener("dragleave", (e) => {
-        if (!isDragDropAllowed()) return;
+        if (!isDragDropAllowed(e)) return;
         e.preventDefault();
         // If cursor moves into a child element inside dropZone, do not hide overlay
         if (e.relatedTarget && dropZone.contains(e.relatedTarget)) {
@@ -1936,7 +2043,7 @@ function setupDragDropImport() {
     });
 
     dropZone.addEventListener("drop", async (e) => {
-        if (!isDragDropAllowed()) return;
+        if (!isDragDropAllowed(e)) return;
         e.preventDefault();
         overlay.style.display = "none";
 
@@ -1965,7 +2072,6 @@ function setupDragDropImport() {
             return;
         }
 
-        showToast("Inspecting dropped paths...", "loading");
         try {
             const res = await fetch("/api/media/inspect_paths", {
                 method: "POST",

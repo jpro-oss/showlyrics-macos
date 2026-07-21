@@ -55,8 +55,8 @@
     transition: all 0.2s ease;
     border: 1px solid transparent;
     color: var(--text-muted);
-    font-size: 0.78em;
-    min-height: 35px;
+    font-size: 0.75em;
+    min-height: 30px;
     /* Ensure consistent height */
     box-sizing: border-box;
 }
@@ -90,9 +90,7 @@
     padding: 15px;
     display: none;
     z-index: 9999;
-    box-shadow: 0 10px 40px rgba(0, 229, 255, 0.15);
     width: 280px;
-    backdrop-filter: blur(10px);
 }
 
 .fp-header {
@@ -146,7 +144,7 @@
 }
 
 .fp-btn:hover {
-    filter: brightness(1.2);
+    opacity: 0.85;
 }
 
 .fp-btn-replay {
@@ -275,6 +273,10 @@
     justify-content: center;
 }
 
+.ppt-preview-modal.show-flex {
+    display: flex !important;
+}
+
 .ppt-preview-content {
     display: flex;
     align-items: center;
@@ -354,7 +356,6 @@
     font-size: 1.5em;
     font-weight: bold;
     z-index: 100;
-    backdrop-filter: blur(5px);
     border-radius: inherit;
 }
 
@@ -379,7 +380,6 @@
     justify-content: space-between;
     align-items: center;
     border-top: 1px solid var(--accent);
-    backdrop-filter: blur(10px);
     z-index: 20;
 }
 
@@ -406,18 +406,14 @@
     transform: translate(-50%, -50%);
     border-radius: 999px;
     background: rgba(6, 182, 212, 0.75);
-    /* More visible cyan */
-    box-shadow: 0 0 6px rgba(6, 182, 212, 0.4);
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, width 0.2s ease;
 }
 
 .bg-library-resizer:hover::after,
 body.bg-library-resizing .bg-library-resizer::after {
     background: var(--accent);
-    /* Full cyan on hover/drag */
     width: 140px;
-    height: 6px;
-    box-shadow: 0 0 12px var(--accent-glow);
+    height: 5px;
 }
 
 body.bg-library-resizing {
@@ -448,7 +444,8 @@ body.bg-library-resizing #bg-library-resizer {
     display: flex;
     width: 100%;
     height: 100%;
-    position: relative; /* Crucial for absolute overlay */
+    position: relative;
+    /* Crucial for absolute overlay */
 }
 
 /* Drag & Drop Overlay styling */
@@ -465,7 +462,8 @@ body.bg-library-resizing #bg-library-resizer {
     align-items: center;
     justify-content: center;
     z-index: 999;
-    pointer-events: none; /* Let drag events pass through to avoid flicker */
+    pointer-events: none;
+    /* Let drag events pass through to avoid flicker */
     box-sizing: border-box;
 }
 
@@ -479,7 +477,7 @@ body.bg-library-resizing #bg-library-resizer {
     font-size: 3em;
     display: block;
     margin-bottom: 15px;
-    animation: bounce 1.5s infinite;
+    /* animation disabled */
 }
 
 .bg-drag-text {
@@ -496,8 +494,15 @@ body.bg-library-resizing #bg-library-resizer {
 }
 
 @keyframes bounce {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-10px); }
+
+    0%,
+    100% {
+        /* transform removed */
+    }
+
+    50% {
+        transform: translateY(-10px);
+    }
 }
 
 .bg-folder-sidebar {
@@ -656,7 +661,6 @@ body.bg-library-resizing #bg-library-resizer {
 
 .media-sort-select:focus {
     border-color: var(--accent, #00e5ff);
-    box-shadow: 0 0 6px var(--accent-glow);
 }
 
 .bg-view-hint {
@@ -691,13 +695,11 @@ body.bg-library-resizing #bg-library-resizer {
     overflow: hidden;
     cursor: grab;
     position: relative;
-    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+    transition: border-color 0.15s ease;
 }
 
 .bg-media-card:hover {
     border-color: var(--accent);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .bg-media-thumb-wrap {
@@ -713,13 +715,9 @@ body.bg-library-resizing #bg-library-resizer {
     height: 100%;
     object-fit: cover;
     display: block;
-    transition: transform 0.3s ease;
-    will-change: transform;
 }
 
-.bg-media-card:hover .bg-media-thumb {
-    transform: scale(1.05);
-}
+/* .bg-media-card:hover .bg-media-thumb scale removed - heavy GPU */
 
 .bg-media-label {
     padding: 5px 8px;
@@ -744,7 +742,6 @@ body.bg-library-resizing #bg-library-resizer {
     font-weight: 800;
     padding: 2px 6px;
     border-radius: 4px;
-    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
     z-index: 10;
 }
 
@@ -843,8 +840,7 @@ body.bg-library-resizing #bg-library-resizer {
 }
 
 .btn-scr-search-new:hover {
-    filter: brightness(1.1);
-    transform: translateY(-1px);
+    opacity: 0.9;
 }
 
 /* ADDITIONAL CLASSES */
@@ -866,7 +862,7 @@ body.bg-library-resizing #bg-library-resizer {
     border-radius: var(--radius-sm);
     padding: 6px 12px;
     cursor: pointer;
-    font-size: 0.75em;
+    font-size: 0.7.bg-folder-itemem;
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
@@ -963,9 +959,7 @@ body.bg-library-resizing #bg-library-resizer {
 }
 
 .btn-action:hover {
-    filter: brightness(1.2);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    opacity: 0.88;
 }
 
 .scr-input-row {
@@ -1060,7 +1054,6 @@ body.bg-library-resizing #bg-library-resizer {
     background: var(--accent);
     color: #000;
     border-color: var(--accent);
-    transform: translateY(-1px);
 }
 
 /* PREVIEW WRAPPER */
@@ -1096,7 +1089,6 @@ body.bg-library-resizing #bg-library-resizer {
     display: flex;
     width: 100%;
     height: 100%;
-    animation: camFadeIn 0.3s ease;
 }
 
 .cam-sidebar {
@@ -1144,7 +1136,6 @@ body.bg-library-resizing #bg-library-resizer {
     border-color: var(--accent);
     color: var(--accent);
     font-weight: bold;
-    box-shadow: inset 0 0 10px rgba(0, 229, 255, 0.1);
 }
 
 .cam-preview-area {
@@ -1250,7 +1241,7 @@ body.bg-library-resizing #bg-library-resizer {
     border: 1px solid #333;
     font-weight: 800;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
     font-size: 0.75em;
     background: rgba(255, 255, 255, 0.05);
     color: #666;
@@ -1267,20 +1258,9 @@ body.bg-library-resizing #bg-library-resizer {
     background: #ff4444;
     color: #fff;
     border-color: #ff6666;
-    box-shadow: 0 4px 15px rgba(255, 68, 68, 0.4);
 }
 
-@keyframes camFadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(5px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
+/* camFadeIn animation removed - GPU heavy, panel shows instantly */
 
 .cam-badge {
     font-size: 0.6em;
@@ -1444,13 +1424,11 @@ body.bg-library-resizing #bg-library-resizer {
 .cam-device-item:hover {
     background: rgba(70, 70, 70, 0.9);
     border-color: var(--accent);
-    box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.4);
 }
 
 .cam-device-item.active {
-    background: rgba(var(--accent-rgb), 0.25);
+    background: rgba(var(--accent-rgb), 0.2);
     border-color: var(--accent);
-    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.6);
 }
 
 .btn-cam-refresh {
@@ -1474,12 +1452,10 @@ body.bg-library-resizing #bg-library-resizer {
     background: #3a3a3a;
     border-color: var(--accent);
     color: var(--accent);
-    box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.3);
 }
 
 .btn-cam-refresh:active {
     background: #1a1a1a;
-    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.5);
 }
 
 .cam-badge {

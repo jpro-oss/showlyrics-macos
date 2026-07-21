@@ -1,0 +1,37 @@
+# ShowLyrics macOS — Python Dependencies
+# Install dengan: pip install -r requirements-macos.txt
+# Python 3.10+ direkomendasikan
+#
+# Catatan: av (PyAV) membutuhkan FFmpeg tersedia di sistem.
+# Install via Homebrew: brew install ffmpeg
+# Atau gunakan ffmpeg binary yang sudah tersedia di folder backend/
+
+# ─── Core Framework ────────────────────────────────────────────────
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# ─── Media Processing ──────────────────────────────────────────────
+av>=11.0.0            # PyAV: video thumbnail & metadata via FFmpeg
+Pillow>=10.0.0        # Image processing, PPTX slide thumbnails
+PyMuPDF>=1.23.0       # PDF rendering (fitz), PPTX fallback export
+
+# ─── Presentation (PPTX) ───────────────────────────────────────────
+python-pptx>=0.6.21   # PPTX parsing (fallback jika LibreOffice tidak ada)
+                      # Untuk kualitas terbaik, install LibreOffice:
+                      # brew install --cask libreoffice
+
+# ─── Data & Storage ────────────────────────────────────────────────
+cryptography>=41.0.0  # Enkripsi license data (Fernet)
+requests>=2.31.0      # HTTP untuk Firebase license validation
+
+# ─── System & Process ──────────────────────────────────────────────
+psutil>=5.9.0         # System info untuk diagnostics
+
+# ─── OSC (Open Sound Control) ──────────────────────────────────────
+python-osc>=1.8.0     # OSC sender/receiver
+
+# ─── WebSocket Support (sudah di uvicorn[standard]) ────────────────
+websockets>=11.0.0    # Diperlukan oleh uvicorn untuk WebSocket
+
+# ─── Build Tools (untuk PyInstaller) ───────────────────────────────
+pyinstaller>=6.0.0    # Build standalone binary

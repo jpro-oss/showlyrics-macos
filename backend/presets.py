@@ -7,6 +7,7 @@ from config import (
     DISPLAY_PRESETS_FILE,
     FB_PRESETS_FILE,
     ALERT_PRESETS_FILE,
+    RUNDOWN_PRESETS_FILE,
 )
 
 router = APIRouter()
@@ -155,5 +156,47 @@ async def delete_alert_preset(name: str):
     if "presets" in data and name in data["presets"]:
         del data["presets"][name]
         save_json(ALERT_PRESETS_FILE, data)
+        return {"status": "success"}
+    return {"status": "not_found"}
+
+# --- RUNDOWN PRESET APIs ---
+
+@router.get("/api/rundown_presets")
+async def get_rundown_presets():
+    return load_json(RUNDOWN_PRESETS_FILE)
+
+@router.post("/api/rundown_presets")
+async def save_rundown_preset(payload: Dict[str, Any]):
+    data = load_json(RUNDOWN_PRESETS_FILE)
+    if "presets" not in data: data["presets"] = {}
+    if "default" not in data: data["default"] = ""
+    
+    name = payload.get("name")
+    config = payload.get("config")
+    
+    data["presets"][name] = config
+    if payload.get("is_default"):
+        data["default"] = name
+        
+    save_json(RUNDOWN_PRESETS_FILE, data)
+    return {"status": "success"}
+
+@router.post("/api/rundown_presets/default/{name}")
+async def set_default_rundown_preset(name: str):
+    data = load_json(RUNDOWN_PRESETS_FILE)
+    if "presets" in data and name in data["presets"]:
+        data["default"] = name
+        save_json(RUNDOWN_PRESETS_FILE, data)
+        return {"status": "success"}
+    return {"status": "not_found"}
+
+@router.delete("/api/rundown_presets/{name}")
+async def delete_rundown_preset(name: str):
+    data = load_json(RUNDOWN_PRESETS_FILE)
+    if "presets" in data and name in data["presets"]:
+        del data["presets"][name]
+        if data.get("default") == name:
+            data["default"] = ""
+        save_json(RUNDOWN_PRESETS_FILE, data)
         return {"status": "success"}
     return {"status": "not_found"}

@@ -269,3 +269,37 @@ async def save_global_sub_settings(payload: Dict[str, Any]):
     data["global_sub_lang"] = payload
     save_json(DISPLAY_PRESETS_FILE, data)
     return {"status": "success"}
+
+
+# ------------------------------------------------------------------
+# NETWORK GUARD — Manual Retry Check
+# ------------------------------------------------------------------
+
+import asyncio as _asyncio
+
+
+@router.post("/api/network/retry-check")
+async def retry_network_check():
+    """
+    Dipanggil dari frontend ketika user klik 'Coba Lagi' di modal CDN blocked.
+    Re-evaluasi koneksi CDN (3 retry — akurat) dan broadcast hasilnya ke semua client.
+
+    CDN check first:
+      - CDN OK   → ONLINE_FULL → reset strike → dismiss modal (broadcast "network_restored")
+      - CDN fail → cek 4 fallback → tentukan status baru → broadcast sesuai
+
+    Return JSON untuk frontend agar bisa update tombol Coba Lagi.
+    """
+    import network_guard
+    status = await _asyncio.to_thread(network_guard.evaluate_connectivity, False)
+    return {
+        "status":         status.status.value,
+        "cdn_ok":         status.cdn_reachable,
+        "internet_score": (
+            f"{status.internet.score}/{status.internet.total}"
+            if status.internet else "0/4"
+        ),
+        "cdn_latency_ms": status.cdn_latency_ms,
+        "blocked_reason": status.blocked_reason,
+    }
+

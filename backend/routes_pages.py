@@ -5,12 +5,35 @@
 # ============================================================
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.templating import Jinja2Templates
 from config import get_resource_path
 import time
 
 router = APIRouter()
+
+
+# ─── wm.js dari RAM — immune terhadap file replacement attack ─────────────────
+# Route ini HARUS terdaftar SEBELUM app.mount("/static", StaticFiles(...)) di main.py
+# agar explicit route ini menang vs StaticFiles. Urutan sudah diperbaiki di main.py.
+import file_integrity
+
+@router.get("/static/wm.js")
+async def serve_wm_js():
+    """Serve wm.js dari RAM — file replacement attack tidak berguna."""
+    content = file_integrity.get_wm_js()
+    if content:
+        return Response(
+            content=content,
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"}
+        )
+    # Fallback ke disk jika RAM belum diisi (misal startup belum selesai)
+    return FileResponse(
+        get_resource_path("static/wm.js"),
+        media_type="application/javascript"
+    )
+
 
 @router.get("/sw.js")
 async def get_service_worker():

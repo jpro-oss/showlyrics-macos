@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="static/styles.css?v={{ VERSION }}">
     <link rel="stylesheet" href="static/bg.css?v={{ VERSION }}">
     <link rel="stylesheet" href="static/ppt_remote.css?v={{ VERSION }}">
+
 </head>
 
 <body oncontextmenu="return false;">
@@ -172,7 +173,7 @@
                                 </select>
                                 <div class="se-divider"></div>
                                 <button onclick="smartBulkPaste('edit')" class="se-btn se-btn-accent"
-                                    title="Smart Paste from Clipboard">📋 PASTE</button>
+                                    title="Smart Paste from Clipboard">📋 QUICK CLIPBOARD</button>
                             </div>
                         </div>
                         <div id="edit-editor-rows" class="editor-container"></div>
@@ -265,14 +266,27 @@
                                 <div style="padding:15px; color:#666; font-size:0.75em; text-align:center;">Click
                                     refresh to scan network...</div>
                             </div>
+                            <div class="bg-sidebar-actions" style="margin-top: 5px; padding: 4px 10px; border-top: 1px solid rgba(255,255,255,0.05);">
+                                <div style="display: flex; background: rgba(0,0,0,0.2); border: 1px solid #333; border-radius: 4px; overflow: hidden; height: 24px; align-items: center;">
+                                    <input type="text" id="manual-sender-ip" placeholder="Manual IP (e.g. 192.168.x.x)" 
+                                        style="flex: 1; background: transparent; border: none; color: #ccc; padding: 0 8px; font-size: 0.75em; outline: none; height: 100%; min-width: 0; box-sizing: border-box;"
+                                        onkeydown="if(event.key==='Enter') connectManualSender()">
+                                    <button onclick="connectManualSender()" 
+                                        style="background: #3a3a3a; color: #00e5ff; border: none; border-left: 1px solid #333; padding: 0 8px; font-size: 0.7em; font-weight: bold; cursor: pointer; height: 100%; box-sizing: border-box; flex-shrink: 0; line-height: 22px; transition: all 0.2s;"
+                                        onmouseover="this.style.background='#555'; this.style.color='#fff';" 
+                                        onmouseout="this.style.background='#3a3a3a'; this.style.color='#00e5ff';">CONNECT</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
                     <div class="bg-main-view">
                         <div class="bg-view-header">
-                            <span id="bg-active-folder-name" class="bg-active-name" title="All Videos">📂 All Videos</span>
+                            <span id="bg-active-folder-name" class="bg-active-name" title="All Videos">📂 All
+                                Videos</span>
                             <div class="bg-view-hint">Right-Click = Preview | Drag & Drop = Apply</div>
-                            <select id="media-sort-select" class="media-sort-select" onchange="changeMediaSort(this.value)">
+                            <select id="media-sort-select" class="media-sort-select"
+                                onchange="changeMediaSort(this.value)">
                                 <option value="name_asc">🔤 A-Z</option>
                                 <option value="name_desc">🔤 Z-A</option>
                                 <option value="date_desc">📅 Newest</option>
@@ -312,6 +326,16 @@
                             <button class="btn-scr-import" onclick="importBible()">➕ Import Bible XML</button>
                             <input type="file" id="bible-upload-input" accept=".xml" class="te-hidden"
                                 onchange="handleBibleUpload(event)">
+                        </div>
+
+                        <!-- Scripture Translation Context Menu -->
+                        <div id="scr-translation-ctx-menu" class="custom-context-menu" style="display: none;">
+                            <div class="ctx-menu-item" onclick="renameTranslationAction()">
+                                <span class="ctx-icon">✏️</span> Rename
+                            </div>
+                            <div class="ctx-menu-item ctx-danger" onclick="deleteTranslationAction()">
+                                <span class="ctx-icon">🗑️</span> Delete
+                            </div>
                         </div>
 
                     </div>
@@ -958,7 +982,19 @@
             </div>
 
             <div class="preview-container">
-
+                <div class="preview-header">
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                        <span class="live-dot"></span>
+                        LIVE PREVIEW
+                    </span>
+                    <select id="preview-mode-select" class="compact-input"
+                        style="width: auto; font-size: 10px; padding: 2px 6px; border: 1px solid #444; background: #222; color: #fff; cursor: pointer; text-transform: uppercase;"
+                        onchange="changePreviewMode()">
+                        <option value="main">🖥️ MAIN</option>
+                        <option value="lt">📺 AUDIENCE</option>
+                        <option value="fb">🎤 STAGE</option>
+                    </select>
+                </div>
                 <div id="preview-wrapper" class="preview-wrapper"></div>
             </div>
 
@@ -1115,7 +1151,8 @@
                                 style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
                                 onchange="loadSelectedAlertPreset()"></select>
                             <button class="btn-preset-star" onclick="loadSelectedAlertPreset()" title="Load Preset"
-                                style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂</button>
+                                style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂
+                                LOAD</button>
                             <button class="btn-preset-del" onclick="deleteAlertPreset()" title="Delete Preset"
                                 style="padding: 0 12px; flex: none;">🗑️</button>
                         </div>
@@ -1141,6 +1178,29 @@
                         <input type="color" id="alert-color" value="#8b0000" title="Background Color"
                             style="height: 30px; width: 40px; cursor: pointer; border: 1px solid #444; border-radius: 4px; padding: 0;"
                             onchange="updateLiveAlert()">
+                    </div>
+
+                    <!-- New Font Settings Row -->
+                    <div class="control-row" style="margin-top: 5px;">
+                        <div style="flex: 1.5; display: flex; flex-direction: column;">
+                            <label style="color: #aaa; font-size: 0.7em; margin-bottom: 3px;">Font</label>
+                            <input type="text" id="alert-font-select" list="alert-font-datalist"
+                                placeholder="Search Font..." class="compact-input"
+                                style="font-size: 0.8em; padding: 6px;" onchange="updateLiveAlert()">
+                            <datalist id="alert-font-datalist"></datalist>
+                        </div>
+                        <div style="flex: 0.8; display: flex; flex-direction: column;">
+                            <label style="color: #aaa; font-size: 0.7em; margin-bottom: 3px;">Size (px)</label>
+                            <input type="number" id="alert-font-size" value="28" class="compact-input"
+                                style="background: #111; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; font-size: 0.8em;"
+                                onchange="updateLiveAlert()">
+                        </div>
+                        <div style="flex: 0.6; display: flex; flex-direction: column;">
+                            <label style="color: #aaa; font-size: 0.7em; margin-bottom: 3px;">Text Color</label>
+                            <input type="color" id="alert-text-color" value="#ffffff" title="Text Color"
+                                style="height: 30px; width: 100%; cursor: pointer; border: 1px solid #444; border-radius: 4px; padding: 0;"
+                                onchange="updateLiveAlert()">
+                        </div>
                     </div>
 
                     <div class="control-row"
@@ -1230,7 +1290,8 @@
                             style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
                             onchange="loadSelectedLTPreset()"></select>
                         <button class="btn-preset-star" onclick="loadSelectedLTPreset()" title="Load Preset"
-                            style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂</button>
+                            style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂
+                            LOAD</button>
                         <button class="btn-preset-del" onclick="deleteLTPreset()" title="Delete Preset"
                             style="padding: 0 12px; flex: none;">🗑️</button>
                     </div>
@@ -1239,7 +1300,8 @@
                             title="Update Preset Ini (Overwrite)">💾 SAVE</button>
                         <button class="btn-preset-saveas" onclick="saveAsLTPreset()" title="Buat Preset Baru">➕ SAVE
                             AS</button>
-                        <button class="btn-preset-star" onclick="setLTDefault()" title="Set as Startup Default" style="flex: 2;">⭐ SET AS</button>
+                        <button class="btn-preset-star" onclick="setLTDefault()" title="Set as Startup Default"
+                            style="flex: 2;">⭐ SET AS</button>
                     </div>
                 </div>
 
@@ -1311,6 +1373,38 @@
 
                     <div>
                         <label
+                            style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">🔤
+                            TEXT ALIGN & H-PADDING (Left/Right Align)</label>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <div
+                                style="display: flex; background: #111; border: 1px solid #444; border-radius: 6px; overflow: hidden; flex: 1;">
+                                <button id="btn-lt-align-left" class="preset-btn"
+                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0;"
+                                    onclick="setLTAlign('left')">LEFT</button>
+                                <button id="btn-lt-align-center" class="preset-btn"
+                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0; background: #007bff; color: white;"
+                                    onclick="setLTAlign('center')">CENTER</button>
+                                <button id="btn-lt-align-right" class="preset-btn"
+                                    style="border: none; border-radius: 0; margin: 0; padding: 8px 0;"
+                                    onclick="setLTAlign('right')">RIGHT</button>
+                            </div>
+
+                            <div
+                                style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 6px; overflow: hidden; height: 35px;">
+                                <span
+                                    style="font-size: 0.75em; color: #666; padding: 0 5px 0 10px; font-weight: bold;">PAD:</span>
+                                <input type="number" id="lt-pad-x"
+                                    style="width: 50px; height: 100%; padding: 0; text-align: center; background: transparent; border: none; color: white; font-weight: bold; outline: none;"
+                                    value="50" onchange="markLtCustom(); sendLTConfig()">
+                                <span style="font-size: 0.75em; color: #666; padding-right: 10px;">px</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr style="border: none; border-top: 1px dashed #333; margin: 0;">
+
+                    <div>
+                        <label
                             style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">🌑
                             TEXT SHADOW (X / Y / BLUR / COLOR)</label>
                         <div style="display: flex; gap: 8px; margin-bottom: 15px;">
@@ -1367,64 +1461,419 @@
                         </div>
                     </div>
 
+                    <hr style="border: none; border-top: 1px dashed #333; margin: 0;">
+
+                    <div>
+                        <label
+                            style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">🎫
+                            BANNER BACKGROUND</label>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <div style="flex: 1.5;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">MODE</label>
+                                <select id="lt-banner-mode" class="compact-input"
+                                    style="font-size: 0.85em; padding: 6px; border: 1px solid #444; width: 100%; background: #222; color: #fff; outline: none; cursor: pointer;"
+                                    onchange="toggleLtBannerUI(); markLtCustom(); sendLTConfig()">
+                                    <option value="none">Disabled</option>
+                                    <option value="text">Fit to Text</option>
+                                    <option value="full">Full Screen</option>
+                                    <option value="custom">Custom Width</option>
+                                </select>
+                            </div>
+                            <div id="lt-banner-width-container" style="flex: 1.5; display: none;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">WIDTH</label>
+                                <div
+                                    style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 5px; height: 33px;">
+                                    <input type="number" id="lt-banner-width" value="80" min="10" max="100"
+                                        class="compact-input"
+                                        style="border: none; padding: 0; background: transparent; text-align: center; font-size: 0.9em; width: 100%; outline: none;"
+                                        onchange="markLtCustom(); sendLTConfig()">
+                                    <span style="color: #666; font-size: 0.8em; margin-left: 3px;">%</span>
+                                </div>
+                            </div>
+                            <div style="flex: 1;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold; text-align: center;">COLOR</label>
+                                <input type="color" id="lt-banner-color" value="#000000" title="Banner Color"
+                                    style="width: 100%; height: 33px; padding: 0; border: 1px solid #444; border-radius: 4px; cursor: pointer;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                            <div style="flex: 1.5;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">OPACITY</label>
+                                <div
+                                    style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 5px; height: 33px;">
+                                    <input type="number" id="lt-banner-opacity" value="50" min="0" max="100"
+                                        class="compact-input"
+                                        style="border: none; padding: 0; background: transparent; text-align: center; font-size: 0.9em; width: 100%; outline: none;"
+                                        onchange="markLtCustom(); sendLTConfig()">
+                                    <span style="color: #666; font-size: 0.8em; margin-left: 3px;">%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Padding controls in another row -->
+                        <div id="lt-banner-padding-row"
+                            style="display: flex; gap: 10px; margin-top: 10px; display: none;">
+                            <div style="flex: 1;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">PAD
+                                    VERT (px)</label>
+                                <input type="number" id="lt-banner-pad-y" value="10" min="0" max="100"
+                                    class="compact-input"
+                                    style="text-align: center; font-size: 0.85em; background: #222; border: 1px solid #444;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                            <div style="flex: 1;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">PAD
+                                    HORIZ (px)</label>
+                                <input type="number" id="lt-banner-pad-x" value="20" min="0" max="100"
+                                    class="compact-input"
+                                    style="text-align: center; font-size: 0.85em; background: #222; border: 1px solid #444;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                            <div style="flex: 1;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">RADIUS
+                                    (px)</label>
+                                <input type="number" id="lt-banner-radius" value="8" min="0" max="100"
+                                    class="compact-input"
+                                    style="text-align: center; font-size: 0.85em; background: #222; border: 1px solid #444;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                            </div>
+                        </div>
+                    </div>
+
                     <input type="hidden" id="lt-pos-mode" value="bottom">
+                    <input type="hidden" id="lt-align" value="center">
                 </div>
             </div>
         </div>
     </div>
 
     <div id="fb-modal" class="modal-overlay">
-        <div class="modal-box" style="width: 400px;">
-            <div class="modal-header">
+        <div class="modal-box"
+            style="width: 500px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; padding: 0;">
+            <div class="modal-header" style="padding: 15px 20px; flex-shrink: 0;">
                 <span class="modal-title">STAGE DISPLAY CONFIG</span>
                 <button class="close-btn" onclick="safeCloseModal('fb-modal')">✖</button>
             </div>
-            <div class="preset-action-panel" style="margin-bottom: 15px; background: #181818;">
-                <div class="preset-action-header" style="border-bottom: none; padding-bottom: 0;">
-                    <span class="preset-action-label" style="font-weight: bold; font-size: 0.8em; color: #ffc107;">🎤
-                        SAVED PRESETS</span>
-                    <small id="fb-default-status" style="color: #888; font-size: 0.85em; font-style: italic;">Default:
-                        None</small>
+            <div style="flex: 1; overflow-y: auto; padding: 0 20px 20px 20px;">
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; background: rgba(0, 229, 255, 0.1); border: 1px solid #00e5ff; padding: 8px 12px; border-radius: 6px; margin-bottom: 20px;">
+                    <span style="font-size: 0.8em; color: #00e5ff; font-weight: bold; letter-spacing: 1px;">🟢 EQUIPPED
+                        PRESET:</span>
+                    <span id="fb-active-badge" style="font-size: 0.9em; color: #fff; font-weight: bold;">- Custom /
+                        Unsaved -</span>
                 </div>
-                <div style="display: flex; gap: 6px; margin-top: 5px;">
-                    <select id="fb-preset-select" class="compact-input"
-                        style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
-                        onchange="loadSelectedFBPreset()"></select>
-                    <button class="btn-preset-star" onclick="loadSelectedFBPreset()" title="Load Preset"
-                        style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂</button>
-                    <button class="btn-preset-del" onclick="deleteFBPreset()" title="Delete Preset"
-                        style="padding: 0 12px; flex: none;">🗑️</button>
+                <div class="preset-action-panel" style="margin-bottom: 15px; background: #181818;">
+                    <div class="preset-action-header" style="border-bottom: none; padding-bottom: 0;">
+                        <span class="preset-action-label"
+                            style="font-weight: bold; font-size: 0.8em; color: #ffc107;">🎤
+                            SAVED PRESETS</span>
+                        <small id="fb-default-status"
+                            style="color: #888; font-size: 0.85em; font-style: italic;">Default:
+                            None</small>
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 5px;">
+                        <select id="fb-preset-select" class="compact-input"
+                            style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444;"
+                            onchange="loadSelectedFBPreset()"></select>
+                        <button class="btn-preset-star" onclick="loadSelectedFBPreset()" title="Load Preset"
+                            style="background: #28a745; border-color: #28a745; padding: 0 12px; flex: none;">📂
+                            LOAD</button>
+                        <button class="btn-preset-del" onclick="deleteFBPreset()" title="Delete Preset"
+                            style="padding: 0 12px; flex: none;">🗑️</button>
+                    </div>
+                    <div class="preset-action-btn-group" style="margin-top: 6px;">
+                        <button class="btn-preset-save" onclick="overwriteFBPreset()"
+                            title="Update Preset Ini (Overwrite)">💾 SAVE</button>
+                        <button class="btn-preset-saveas" onclick="saveAsFBPreset()" title="Buat Preset Baru">➕ SAVE
+                            AS</button>
+                        <button class="btn-preset-star" onclick="setDefaultFBPreset()" title="Set as Startup Default"
+                            style="flex: 2;">⭐ SET AS</button>
+                    </div>
                 </div>
-                <div class="preset-action-btn-group" style="margin-top: 6px;">
-                    <button class="btn-preset-save" onclick="overwriteFBPreset()"
-                        title="Update Preset Ini (Overwrite)">💾 SAVE</button>
-                    <button class="btn-preset-saveas" onclick="saveAsFBPreset()" title="Buat Preset Baru">➕ SAVE
-                        AS</button>
-                    <button class="btn-preset-star" onclick="setDefaultFBPreset()" title="Set as Startup Default" style="flex: 2;">⭐ SET AS</button>
+                <label>Layout Mode</label>
+                <div class="lt-control-row">
+                    <button class="preset-btn" onclick="setFBLayout('split')">SPLIT (Standard)</button>
+                    <button class="preset-btn" onclick="setFBLayout('full')">FULL (Max Text)</button>
+                </div>
+                <input type="hidden" id="fb-layout" value="split">
+                <hr style="border-color: #333; margin: 15px 0;">
+                <div class="lt-control-row">
+                    <div style="flex:1">
+                        <label>Max Text Size</label>
+                        <div style="display:flex; gap:5px; align-items:center;">
+                            <input type="number" id="fb-curr-size" value="250" onchange="markFbCustom(); sendFBConfig()"
+                                style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            <label
+                                style="font-size: 0.8em; color: #fff; display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; user-select: none;">
+                                <input type="checkbox" id="fb-curr-auto" onchange="markFbCustom(); sendFBConfig()"
+                                    checked> AUTO
+                            </label>
+                        </div>
+                    </div>
+                    <div style="flex:1"><label>Color</label><input type="color" id="fb-curr-color" value="#ffffff"
+                            style="height:30px; width:100%" onchange="markFbCustom(); sendFBConfig()"></div>
+                </div>
+                <div class="lt-control-row">
+                    <div style="flex:1">
+                        <label>Max Next Size (px)</label>
+                        <div style="display:flex; gap:5px; align-items:center;">
+                            <input type="number" id="fb-next-size" value="100" onchange="markFbCustom(); sendFBConfig()"
+                                style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            <label
+                                style="font-size: 0.8em; color: #fff; display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; user-select: none;">
+                                <input type="checkbox" id="fb-next-auto" onchange="markFbCustom(); sendFBConfig()"
+                                    checked> AUTO
+                            </label>
+                        </div>
+                    </div>
+                    <div style="flex:1"><label>Color</label><input type="color" id="fb-next-color" value="#888888"
+                            style="height:30px; width:100%" onchange="markFbCustom(); sendFBConfig()"></div>
+                </div>
+                <label>Background Color</label>
+                <input type="color" id="fb-bg-color" value="#000000" style="width:100%; height:30px;"
+                    onchange="markFbCustom(); sendFBConfig()">
+
+                <hr style="border-color: #333; margin: 15px 0;">
+
+                <!-- STAGE RUNDOWN TIMER PANEL -->
+                <div style="margin-bottom: 5px;">
+                    <span style="font-weight: bold; font-size: 0.9em; color: #00e5ff; letter-spacing: 1px;">⏱️ STAGE
+                        RUNDOWN TIMER</span>
+                </div>
+
+                <!-- Preset Section for Rundown -->
+                <div class="preset-action-panel"
+                    style="margin-top: 8px; margin-bottom: 15px; background: #181818; padding: 10px; border-radius: 4px; border: 1px solid #333;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <span style="font-size: 0.75em; color: #ffc107; font-weight: bold;">RUNDOWN PRESETS</span>
+                        <small id="rundown-default-status"
+                            style="color: #888; font-size: 0.8em; font-style: italic;">Default: None</small>
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                        <select id="rundown-preset-select" class="compact-input"
+                            style="flex:1; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
+                            onchange="loadSelectedRundownPreset()"></select>
+                        <button class="btn-preset-star" onclick="loadSelectedRundownPreset()" title="Load Preset"
+                            style="background: #28a745; border: 1px solid #28a745; color: #fff; padding: 0 12px; cursor: pointer; border-radius: 4px; flex: none;">📂
+                            LOAD</button>
+                        <button class="btn-preset-del" onclick="deleteRundownPreset()" title="Delete Preset"
+                            style="background: #dc3545; border: 1px solid #dc3545; color: #fff; padding: 0 12px; cursor: pointer; border-radius: 4px; flex: none;">🗑️</button>
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 6px;">
+                        <button onclick="newRundownPreset()"
+                            style="flex: 1; padding: 5px; font-size: 0.8em; background: #007bff; border: 1px solid #0069d9; color: #fff; cursor: pointer; border-radius: 4px; font-weight: bold;">✨
+                            NEW</button>
+                        <button onclick="saveRundownPreset()"
+                            style="flex: 1; padding: 5px; font-size: 0.8em; background: #333; border: 1px solid #555; color: #fff; cursor: pointer; border-radius: 4px;">💾
+                            SAVE</button>
+                        <button onclick="saveAsRundownPreset()"
+                            style="flex: 1; padding: 5px; font-size: 0.8em; background: #333; border: 1px solid #555; color: #fff; cursor: pointer; border-radius: 4px;">➕
+                            SAVE AS</button>
+                        <button onclick="setDefaultRundownPreset()"
+                            style="flex: 1.5; padding: 5px; font-size: 0.8em; background: #555; border: 1px solid #777; color: #fff; cursor: pointer; border-radius: 4px;">⭐
+                            SET DEFAULT</button>
+                    </div>
+                </div>
+
+                <!-- Rundown Style Editor Section -->
+                <div class="preset-action-panel"
+                    style="margin-top: 8px; margin-bottom: 15px; background: #181818; padding: 10px; border-radius: 4px; border: 1px solid #333;">
+                    <div onclick="toggleRundownStyleCollapse()"
+                        style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
+                        <span style="font-size: 0.75em; color: #00e5ff; font-weight: bold; letter-spacing: 0.5px;">⚙️
+                            RUNDOWN STYLE SETTING</span>
+                        <span id="rundown-style-collapse-icon" style="font-size: 0.8em; color: #888;">▼</span>
+                    </div>
+                    <div id="rundown-style-collapse-content"
+                        style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px; border-top: 1px solid #2d2d2d; padding-top: 8px;">
+                        <!-- Mini Toast Styling -->
+                        <div>
+                            <span
+                                style="font-size: 0.72em; color: #ff9800; font-weight: bold; display: block; margin-bottom: 4px;">MINI
+                                TOAST STYLE</span>
+                            <div style="display: flex; gap: 6px; align-items: center;">
+                                <div style="flex: 1;">
+                                    <label
+                                        style="font-size: 0.65em; color: #888; display: block; margin-bottom: 2px; font-weight: bold;">TIMER
+                                        (PX)</label>
+                                    <input type="number" id="rundown-mini-timer-size" value="110" min="10" max="300"
+                                        class="compact-input"
+                                        style="width:100%; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
+                                        oninput="syncRundownStyleFromUI(); sendRundownState();">
+                                </div>
+                                <div style="flex: 1.2;">
+                                    <label
+                                        style="font-size: 0.65em; color: #888; display: block; margin-bottom: 2px; font-weight: bold;">TITLE
+                                        (PX)</label>
+                                    <div style="display: flex; gap: 4px; align-items: center;">
+                                        <input type="number" id="rundown-mini-title-size" value="80" min="10" max="300"
+                                            class="compact-input"
+                                            style="width: 55px; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
+                                            oninput="syncRundownStyleFromUI(); sendRundownState();">
+                                        <label
+                                            style="font-size: 0.75em; color: #fff; display: flex; align-items: center; gap: 2px; cursor: pointer; margin: 0; user-select: none;">
+                                            <input type="checkbox" id="rundown-mini-title-auto"
+                                                onchange="toggleRundownTitleAuto(); syncRundownStyleFromUI(); sendRundownState();"
+                                                checked> AUTO
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Full Toast Styling -->
+                        <div style="border-top: 1px solid #222; padding-top: 6px;">
+                            <span
+                                style="font-size: 0.72em; color: #ff9800; font-weight: bold; display: block; margin-bottom: 4px;">FULL
+                                TOAST STYLE</span>
+                            <div style="display: flex; gap: 6px; align-items: center;">
+                                <div style="flex: 1;">
+                                    <label
+                                        style="font-size: 0.65em; color: #888; display: block; margin-bottom: 2px; font-weight: bold;">TIMER
+                                        (PX)</label>
+                                    <input type="number" id="rundown-full-timer-size" value="190" min="10" max="500"
+                                        class="compact-input"
+                                        style="width:100%; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
+                                        oninput="syncRundownStyleFromUI(); sendRundownState();">
+                                </div>
+                                <div style="flex: 1.2;">
+                                    <label
+                                        style="font-size: 0.65em; color: #888; display: block; margin-bottom: 2px; font-weight: bold;">TITLE
+                                        (PX)</label>
+                                    <div style="display: flex; gap: 4px; align-items: center;">
+                                        <input type="number" id="rundown-full-title-size" value="190" min="10" max="300"
+                                            class="compact-input"
+                                            style="width: 55px; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
+                                            oninput="syncRundownStyleFromUI(); sendRundownState();">
+                                        <label
+                                            style="font-size: 0.75em; color: #fff; display: flex; align-items: center; gap: 2px; cursor: pointer; margin: 0; user-select: none;">
+                                            <input type="checkbox" id="rundown-full-title-auto"
+                                                onchange="toggleRundownTitleAuto(); syncRundownStyleFromUI(); sendRundownState();"
+                                                checked> AUTO
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Overtime Flashing -->
+                        <div style="border-top: 1px solid #333; padding-top: 8px; margin-top: 4px;">
+                            <div
+                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <label
+                                    style="font-size: 0.75em; color: #fff; display: flex; align-items: center; gap: 4px; cursor: pointer; margin: 0; user-select: none; font-weight: bold;">
+                                    <input type="checkbox" id="rundown-overtime-flash"
+                                        onchange="syncRundownStyleFromUI(); sendRundownState();" checked> OVERTIME FLASH
+                                </label>
+                                <input type="color" id="rundown-overtime-flash-color" value="#ff4081"
+                                    style="width: 40px; height: 22px; padding: 0; border: 1px solid #444; background: transparent; cursor: pointer;"
+                                    oninput="syncRundownStyleFromUI(); sendRundownState();">
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 2px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <span style="font-size: 0.65em; color: #888; font-weight: bold;">FLASH SPEED</span>
+                                    <span id="rundown-overtime-flash-speed-val"
+                                        style="font-size: 0.75em; color: #ffc107; font-weight: bold;">1.0s</span>
+                                </div>
+                                <input type="range" id="rundown-overtime-flash-speed" min="0.1" max="2.0" step="0.1"
+                                    value="1.0" style="width: 100%; cursor: pointer;"
+                                    oninput="document.getElementById('rundown-overtime-flash-speed-val').innerText = this.value + 's'; syncRundownStyleFromUI(); sendRundownState();"
+                                    onchange="syncRundownStyleFromUI(); sendRundownState();">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Active Item Banner -->
+                <div id="rundown-active-banner"
+                    style="background: rgba(255, 152, 0, 0.1); border: 1px solid #ff9800; padding: 10px; border-radius: 6px; margin-bottom: 15px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.8em; color: #ff9800; font-weight: bold;">ACTIVE RUNDOWN</span>
+                        <span id="rundown-active-status"
+                            style="font-size: 0.75em; padding: 2px 6px; border-radius: 3px; background: #555; color: #fff; font-weight: bold; text-transform: uppercase;">STOPPED</span>
+                    </div>
+                    <div id="rundown-active-title"
+                        style="font-size: 1.1em; color: #fff; font-weight: bold; margin-top: 5px;">- None -</div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                        <div id="rundown-active-time"
+                            style="font-family: monospace; font-size: 1.5em; color: #00e5ff; font-weight: bold;">
+                            00:00:00</div>
+                        <div style="display: flex; gap: 4px;">
+                            <button onclick="adjustRundownTime(1)"
+                                style="padding: 4px 8px; background: #222; border: 1px solid #444; color: #00e5ff; font-size: 0.8em; cursor: pointer; border-radius: 4px; font-weight: bold;">➕
+                                1 Min</button>
+                            <button onclick="adjustRundownTime(-1)"
+                                style="padding: 4px 8px; background: #222; border: 1px solid #444; color: #ff4081; font-size: 0.8em; cursor: pointer; border-radius: 4px; font-weight: bold;">➖
+                                1 Min</button>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-top: 10px;">
+                        <button id="rundown-play-pause-btn" onclick="toggleActiveRundown()"
+                            style="flex: 2; padding: 6px; font-weight: bold; background: #28a745; border: none; color: #fff; cursor: pointer; border-radius: 4px; font-size: 0.85em;">▶
+                            START</button>
+                        <button onclick="stopActiveRundown()"
+                            style="flex: 1; padding: 6px; font-weight: bold; background: #dc3545; border: none; color: #fff; cursor: pointer; border-radius: 4px; font-size: 0.85em;">⏹
+                            STOP</button>
+                    </div>
+                </div>
+
+                <!-- Transition Settings & Add Item Form -->
+                <div
+                    style="background: #1e1e1e; padding: 10px; border-radius: 6px; border: 1px solid #333; margin-bottom: 15px;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 0.8em; color: #aaa; font-weight: bold;">TRANSITION MODE</span>
+                        <select id="rundown-transition-select" onchange="toggleRundownTransitionMode()"
+                            style="background: #2b2b2b; color: #fff; border: 1px solid #444; padding: 2px 6px; font-size: 0.8em; border-radius: 4px; cursor: pointer;">
+                            <option value="auto">Auto-Next (Auto transition)</option>
+                            <option value="confirm">Manual Confirm (Overtime)</option>
+                        </select>
+                    </div>
+                    <hr style="border-color: #333; margin: 8px 0;">
+                    <span
+                        style="font-size: 0.8em; color: #aaa; font-weight: bold; display: block; margin-bottom: 5px;">ADD
+                        NEW ITEM</span>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <input type="text" id="rundown-new-name" placeholder="Item Name (e.g. Praise & Worship)"
+                            style="background: #2b2b2b; color: #fff; border: 1px solid #444; padding: 6px; font-size: 0.85em; border-radius: 4px;">
+                        <div style="display: flex; gap: 6px;">
+                            <select id="rundown-new-mode"
+                                onchange="document.getElementById('rundown-new-val').placeholder = this.value === 'duration' ? 'Duration (mins) e.g. 15' : 'Target Clock e.g. 19:30';"
+                                style="flex: 1; background: #2b2b2b; color: #fff; border: 1px solid #444; padding: 6px; font-size: 0.85em; border-radius: 4px; cursor: pointer;">
+                                <option value="duration">Duration (Min)</option>
+                                <option value="clock">Current Clock (Target)</option>
+                            </select>
+                            <input type="text" id="rundown-new-val" placeholder="Duration (mins) e.g. 15"
+                                style="flex: 1.2; background: #2b2b2b; color: #fff; border: 1px solid #444; padding: 6px; font-size: 0.85em; border-radius: 4px;">
+                            <button onclick="addRundownItem()"
+                                style="flex: 0.6; background: #00e5ff; color: #000; border: none; font-weight: bold; cursor: pointer; border-radius: 4px; font-size: 0.85em;">Add</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Rundown Item List -->
+                <div
+                    style="background: #111; border: 1px solid #333; border-radius: 6px; padding: 10px; max-height: 200px; overflow-y: auto;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <span style="font-size: 0.75em; color: #888; font-weight: bold;">RUNDOWN ITEMS LIST</span>
+                        <button onclick="clearRundownList()"
+                            style="background: transparent; border: none; color: #ff4081; font-size: 0.75em; cursor: pointer; padding: 0; font-weight: bold;">Clear
+                            All</button>
+                    </div>
+                    <div id="rundown-items-container" style="display: flex; flex-direction: column; gap: 4px;">
+                        <div style="color: #666; font-size: 0.8em; text-align: center; padding: 10px 0;">No rundown
+                            items added.</div>
+                    </div>
                 </div>
             </div>
-            <label>Layout Mode</label>
-            <div class="lt-control-row">
-                <button class="preset-btn" onclick="setFBLayout('split')">SPLIT (Standard)</button>
-                <button class="preset-btn" onclick="setFBLayout('full')">FULL (Max Text)</button>
-            </div>
-            <input type="hidden" id="fb-layout" value="split">
-            <hr style="border-color: #333; margin: 15px 0;">
-            <div class="lt-control-row">
-                <div style="flex:1"><label>Max Text Size (Auto-Fit)</label><input type="number" id="fb-curr-size"
-                        value="250" onchange="sendFBConfig()"></div>
-                <div style="flex:1"><label>Color</label><input type="color" id="fb-curr-color" value="#ffffff"
-                        style="height:30px; width:100%" onchange="sendFBConfig()"></div>
-            </div>
-            <div class="lt-control-row">
-                <div style="flex:1"><label>Max Next Size (px)</label><input type="number" id="fb-next-size" value="100"
-                        onchange="sendFBConfig()"></div>
-                <div style="flex:1"><label>Color</label><input type="color" id="fb-next-color" value="#888888"
-                        style="height:30px; width:100%" onchange="sendFBConfig()"></div>
-            </div>
-            <label>Background Color</label>
-            <input type="color" id="fb-bg-color" value="#000000" style="width:100%; height:30px;"
-                onchange="sendFBConfig()">
         </div>
     </div>
 
@@ -1464,7 +1913,7 @@
                             </select>
                             <div class="se-divider"></div>
                             <button onclick="smartBulkPaste('add')" class="se-btn se-btn-accent"
-                                title="Smart Paste from Clipboard">📋 PASTE</button>
+                                title="Smart Paste from Clipboard">📋 QUICK CLIPBOARD</button>
                         </div>
                     </div>
                     <div id="add-editor-rows" class="editor-container"></div>
@@ -1821,7 +2270,8 @@
                                         <option value="worship-letter-golden-hour">Golden Hour Letters</option>
                                         <option value="worship-letter-deep-focus">Deep Focus Letters</option>
                                         <option value="worship-letter-veil-cascade">Veil Cascade Letters</option>
-                                        <option value="worship-letter-cinematic-breathe">Cinematic Breathe Letters</option>
+                                        <option value="worship-letter-cinematic-breathe">Cinematic Breathe Letters
+                                        </option>
                                     </optgroup>
 
                                     <optgroup label="Word Transition">
@@ -1893,11 +2343,13 @@
                             </div>
 
                             <div class="te-control">
-                                <label class="te-label">MOTION SPEED</label>
+                                <label class="te-label">MOTION DRIFT SPEED</label>
                                 <select id="speed-input" class="te-select" onchange="updateTextPreview()">
-                                    <option value="15s">Fast</option>
-                                    <option value="30s" selected>Normal</option>
+                                    <option value="120s">Very Slow</option>
                                     <option value="60s">Slow</option>
+                                    <option value="30s" selected>Normal</option>
+                                    <option value="15s">Fast</option>
+                                    <option value="6s">Very Fast</option>
                                 </select>
                             </div>
                             <div class="te-control">
@@ -1916,13 +2368,20 @@
                         <div class="te-grid-utility-2">
                             <div class="te-control">
                                 <label class="te-label">FONT SIZE <span class="te-val"
-                                        id="val-font-size">5vw</span></label>
-                                <input type="range" id="font-size-input" class="te-slider" min="2" max="15" step="0.5"
-                                    value="5" oninput="updateTextPreview()">
+                                        id="val-font-size">96px</span></label>
+                                <input type="range" id="font-size-input" class="te-slider" min="30" max="250" step="2"
+                                    value="96" oninput="updateTextPreview()">
                             </div>
                             <div class="te-control">
-                                <label class="te-label">X-PADDING <span class="te-val" id="val-pad">10%</span></label>
-                                <input type="range" id="pad-input" class="te-slider" min="0" max="45" value="10"
+                                <label class="te-label">TEXT WRAP <span class="te-val"
+                                        id="val-text-wrap">80%</span></label>
+                                <input type="range" id="text-wrap-input" class="te-slider" min="10" max="100" value="80"
+                                    oninput="updateTextPreview()">
+                            </div>
+                            <div class="te-control">
+                                <label class="te-label">MARGIN X <span class="te-val"
+                                        id="val-margin-x">10%</span></label>
+                                <input type="range" id="margin-x-input" class="te-slider" min="0" max="25" value="10"
                                     oninput="updateTextPreview()">
                             </div>
                             <div class="te-control">
@@ -1964,7 +2423,7 @@
                                         <option value="bottom">Bottom</option>
                                     </select>
                                     <input type="number" id="te-vmargin" class="te-input" value="5" min="0" max="50"
-                                        style="flex: 1;" title="Margin (vh)" oninput="updateTextPreview()">
+                                        style="flex: 1;" title="Margin (%)" oninput="updateTextPreview()">
                                 </div>
                             </div>
                         </div>
@@ -2050,7 +2509,7 @@
         </div>
     </div>
 
-    <div id="save-progress-modal" class="modal-overlay" style="z-index: 10000; display: none;"
+    <div id="save-progress-modal" class="modal-overlay" style="z-index: 100100; display: none;"
         onclick="forceCloseToast(event)">
         <div class="modal-box"
             style="width: 320px; text-align: center; border: 2px solid #00e5ff; background: #1a1a1a; box-shadow: 0 15px 40px rgba(0,0,0,0.8);">
@@ -2139,16 +2598,22 @@
                     blackout hotkeys, lyrics tagging keys, and live jump triggers.</small>
             </div>
 
-            <div class="control-group">
-                <label class="settings-output-label">🔗 OUTPUT LINKS</label>
-                <div id="output-links-container" class="settings-output-links">
-                    <a id="output-link-display" href="#" target="_blank"
-                        class="settings-output-link link-display">DISPLAY</a>
-                    <a id="output-link-lowerthird" href="#" target="_blank"
-                        class="settings-output-link link-lowerthird">LOWERTHIRD</a>
-                    <a id="output-link-foldback" href="#" target="_blank"
-                        class="settings-output-link link-foldback">FOLDBACK</a>
+            <div class="control-group" style="margin-top: 15px;">
+                <label style="color: #aaa; font-weight: bold; margin-bottom: 8px; display: block;">📂 BACKUP & RESTORE
+                    DATA</label>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn-action"
+                        style="background: #10b981; border-color: #10b981; color: white; flex: 1; display: flex; align-items: center; justify-content: center; height: 38px; box-sizing: border-box; padding: 0; font-size: 0.85em;"
+                        onclick="exportShowLyricsData()">📤 EXPORT DATA</button>
+                    <label for="import-showlyrics-file" class="btn-action"
+                        style="background: #f59e0b; border-color: #f59e0b; color: white; flex: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; height: 38px; box-sizing: border-box; padding: 0; font-size: 0.85em;">📥
+                        IMPORT DATA</label>
                 </div>
+                <input type="file" id="import-showlyrics-file" accept=".showlyrics" style="display: none;"
+                    onchange="importShowLyricsData(event)">
+                <small style="color: #888; font-size: 0.65em; display: block; margin-top: 5px;">Export all database
+                    files, presets, and settings to a single backup bundle, or load data from an existing
+                    bundle.</small>
             </div>
 
             <div class="control-group">
@@ -2164,6 +2629,86 @@
 
                     <button class="btn-action btn-activate" onclick="activateShowLyrics()">ACTIVATE DEVICE</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- IMPORT CONFIRM MODAL -->
+    <div id="import-confirm-modal" class="modal-overlay" style="z-index: 100200; display: none;">
+        <div class="modal-box"
+            style="width: 420px; border: 1px solid rgba(139, 92, 246, 0.3); background: #15161a; box-shadow: 0 15px 40px rgba(0,0,0,0.8); display: flex; flex-direction: column; padding: 20px;">
+            <div class="modal-header"
+                style="margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; align-items: center;">
+                <span class="modal-title"
+                    style="color: #8b5cf6; font-size: 1.1em; font-weight: bold; letter-spacing: 0.5px;">📥 IMPORT
+                    DATABASE BUNDLE</span>
+                <button class="close-btn" onclick="closeImportConfirmModal()">✖</button>
+            </div>
+
+            <div style="flex: 1; text-align: center; margin-bottom: 20px;">
+                <div style="font-size: 3em; margin-bottom: 10px;">📦</div>
+                <div
+                    style="background: rgba(139, 92, 246, 0.08); border: 1px solid rgba(139, 92, 246, 0.2); padding: 12px; border-radius: 6px; font-size: 0.75em; color: #c084fc; line-height: 1.4; text-align: left;">
+                    How would you like to restore this backup file?<br><br>
+                    🟢 <strong style="color: #10b981;">APPEND</strong>: Merge new data (songs, presets, schedules) with
+                    your current library without deleting existing items.<br><br>
+                    🟡 <strong style="color: #f59e0b;">REPLACE</strong>: Overwrite all your current settings and library
+                    with the backup data.
+                </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button class="btn-action"
+                    style="background: #10b981; border-color: #10b981; color: white; padding: 10px; font-weight: bold; font-size: 0.85em;"
+                    onclick="executeImport('append')">➕ APPEND DATA</button>
+                <button class="btn-action"
+                    style="background: #f59e0b; border-color: #f59e0b; color: white; padding: 10px; font-weight: bold; font-size: 0.85em;"
+                    onclick="executeImport('replace')">🔄 REPLACE ALL DATA</button>
+                <button class="btn-action"
+                    style="background: #374151; border-color: #374151; color: white; padding: 10px; font-size: 0.85em;"
+                    onclick="closeImportConfirmModal()">✖ CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- REPLACE CONFIRM MODAL -->
+    <div id="import-replace-confirm-modal" class="modal-overlay" style="z-index: 100210; display: none;">
+        <div class="modal-box"
+            style="width: 420px; border: 1px solid rgba(239, 68, 68, 0.3); background: #15161a; box-shadow: 0 15px 40px rgba(0,0,0,0.8); display: flex; flex-direction: column; padding: 20px;">
+            <div class="modal-header"
+                style="margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; align-items: center;">
+                <span class="modal-title"
+                    style="color: #ef4444; font-size: 1.1em; font-weight: bold; letter-spacing: 0.5px;">⚠️ WARNING:
+                    REPLACE DATA</span>
+                <button class="close-btn" onclick="closeReplaceConfirmModal()">✖</button>
+            </div>
+
+            <div style="flex: 1; text-align: center; margin-bottom: 20px;">
+                <div style="font-size: 3em; margin-bottom: 10px;">⚠️</div>
+                <div
+                    style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); padding: 12px; border-radius: 6px; font-size: 0.75em; color: #fca5a5; line-height: 1.4; text-align: left; margin-bottom: 15px;">
+                    This action will delete all existing library items, presets, and settings on this device and replace
+                    them with the backup.<br><br>
+                    <strong>This action cannot be undone.</strong>
+                </div>
+
+                <p style="color: #aaa; font-size: 0.75em; margin: 15px 0 8px 0; text-align: left; font-weight: bold;">
+                    Type <span
+                        style="color: #fff; letter-spacing: 0.5px; background: rgba(255, 255, 255, 0.1); padding: 2px 6px; border-radius: 4px;">REPLACE</span>
+                    in the box below to proceed:
+                </p>
+                <input type="text" id="import-replace-confirm-input" class="compact-input"
+                    style="width: 100%; text-align: center; font-weight: bold; font-size: 1.1em; border-color: #ef4444; background: #0c0d0f; color: #fff; border-radius: 6px; padding: 10px; box-sizing: border-box;"
+                    placeholder="REPLACE" autocomplete="off">
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-action"
+                    style="background: #ef4444; border-color: #ef4444; color: white; padding: 10px; font-weight: bold; flex: 1; font-size: 0.85em;"
+                    onclick="executeReplaceImport()">YES, REPLACE</button>
+                <button class="btn-action"
+                    style="background: #374151; border-color: #374151; color: white; padding: 10px; flex: 1; font-size: 0.85em;"
+                    onclick="closeReplaceConfirmModal()">CANCEL</button>
             </div>
         </div>
     </div>
@@ -2205,7 +2750,7 @@
 
 
 
-    <div id="multi-player-container" class="multi-player-container"></div>
+
 
     <div id="ppt-preview-modal" class="ppt-preview-modal">
         <button class="ppt-preview-close" onclick="closePPTPreview()">✖</button>
@@ -2327,8 +2872,8 @@
                             </div>
                             <div class="scr-row"><label>Title Font & Size (px):</label>
                                 <div class="scr-flex-gap-5"><input type="text" id="scr-disp-title-font"
-                                        class="scr-input"><input type="number" id="scr-disp-title-size"
-                                        class="scr-input scr-input-sm"></div>
+                                        list="scr-font-datalist" placeholder="Search Font..." class="scr-input"><input
+                                        type="number" id="scr-disp-title-size" class="scr-input scr-input-sm"></div>
                             </div>
                             <div class="padding-explicit-grid">
                                 <div class="pad-label-group"><span class="pad-explicit-label">Title Pad Top</span><input
@@ -2347,14 +2892,15 @@
                             <hr style="border-color:rgba(255,255,255,0.06); margin:10px 0;">
 
                             <div class="scr-row"><label>Verse Color & Auto-Fit:</label>
-                                <div class="scr-flex-gap-5"><input type="color" id="scr-disp-body-color"
-                                        class="scr-color-picker"><label class="scr-chk-wrap"><input type="checkbox"
-                                            id="scr-disp-body-auto"> AUTO</label></div>
+                                <div class="scr-flex-gap-5" style="width: 215px; justify-content: space-between;"><input
+                                        type="color" id="scr-disp-body-color" class="scr-color-picker"><label
+                                        class="scr-chk-wrap"><input type="checkbox" id="scr-disp-body-auto">
+                                        AUTO</label></div>
                             </div>
                             <div class="scr-row"><label>Verse Font & Size (px):</label>
                                 <div class="scr-flex-gap-5"><input type="text" id="scr-disp-body-font"
-                                        class="scr-input"><input type="number" id="scr-disp-body-size"
-                                        class="scr-input scr-input-sm"></div>
+                                        list="scr-font-datalist" placeholder="Search Font..." class="scr-input"><input
+                                        type="number" id="scr-disp-body-size" class="scr-input scr-input-sm"></div>
                             </div>
                             <div class="padding-explicit-grid">
                                 <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad Top</span><input
@@ -2450,8 +2996,8 @@
                             </div>
                             <div class="scr-row"><label>Title Font & Size (px):</label>
                                 <div class="scr-flex-gap-5"><input type="text" id="scr-lt-title-font"
-                                        class="scr-input"><input type="number" id="scr-lt-title-size"
-                                        class="scr-input scr-input-sm"></div>
+                                        list="scr-font-datalist" placeholder="Search Font..." class="scr-input"><input
+                                        type="number" id="scr-lt-title-size" class="scr-input scr-input-sm"></div>
                             </div>
                             <div class="padding-explicit-grid">
                                 <div class="pad-label-group"><span class="pad-explicit-label">Title Pad Top</span><input
@@ -2470,14 +3016,15 @@
                             <hr style="border-color:rgba(255,255,255,0.06); margin:10px 0;">
 
                             <div class="scr-row"><label>Verse Color & Auto-Fit:</label>
-                                <div class="scr-flex-gap-5"><input type="color" id="scr-lt-body-color"
-                                        class="scr-color-picker"><label class="scr-chk-wrap"><input type="checkbox"
-                                            id="scr-lt-body-auto"> AUTO</label></div>
+                                <div class="scr-flex-gap-5" style="width: 215px; justify-content: space-between;"><input
+                                        type="color" id="scr-lt-body-color" class="scr-color-picker"><label
+                                        class="scr-chk-wrap"><input type="checkbox" id="scr-lt-body-auto"> AUTO</label>
+                                </div>
                             </div>
                             <div class="scr-row"><label>Verse Font & Size (px):</label>
                                 <div class="scr-flex-gap-5"><input type="text" id="scr-lt-body-font"
-                                        class="scr-input"><input type="number" id="scr-lt-body-size"
-                                        class="scr-input scr-input-sm"></div>
+                                        list="scr-font-datalist" placeholder="Search Font..." class="scr-input"><input
+                                        type="number" id="scr-lt-body-size" class="scr-input scr-input-sm"></div>
                             </div>
                             <div class="padding-explicit-grid">
                                 <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad Top</span><input
@@ -2511,6 +3058,7 @@
                         onclick="saveAllScrPresets()">Save</button>
                 </div>
             </div>
+            <datalist id="scr-font-datalist"></datalist>
         </div>
     </div>
 
@@ -2551,7 +3099,8 @@
                     <div class="adv-out-label" style="color:#00e5ff;">&#x1F5A5;&#xFE0F; MAIN</div>
                     <div class="adv-out-qr-wrap">
                         <div id="qr-main" class="adv-out-qr-container"></div>
-                        <div id="qr-url-main" class="adv-out-url">Loading...</div>
+                        <div id="qr-url-main" class="adv-out-url" onclick="copyOutputUrl('qr-url-main')"
+                            title="Click to copy">Loading...</div>
                     </div>
                     <div class="adv-out-res-box">
                         <div class="adv-out-res-label">&#x1F4D0; RESOLUTION</div>
@@ -2592,7 +3141,8 @@
                     <div class="adv-out-label" style="color:#a855f7;">&#x1F4FA; AUDIENCE</div>
                     <div class="adv-out-qr-wrap">
                         <div id="qr-lt" class="adv-out-qr-container"></div>
-                        <div id="qr-url-lt" class="adv-out-url">Loading...</div>
+                        <div id="qr-url-lt" class="adv-out-url" onclick="copyOutputUrl('qr-url-lt')"
+                            title="Click to copy">Loading...</div>
                     </div>
                     <div class="adv-out-res-box">
                         <div class="adv-out-res-label">&#x1F4D0; RESOLUTION</div>
@@ -2631,7 +3181,8 @@
                     <div class="adv-out-label" style="color:#f59e0b;">&#x1F3A4; STAGE</div>
                     <div class="adv-out-qr-wrap">
                         <div id="qr-fb" class="adv-out-qr-container"></div>
-                        <div id="qr-url-fb" class="adv-out-url">Loading...</div>
+                        <div id="qr-url-fb" class="adv-out-url" onclick="copyOutputUrl('qr-url-fb')"
+                            title="Click to copy">Loading...</div>
                     </div>
                     <div class="adv-out-res-box">
                         <div class="adv-out-res-label">&#x1F4D0; RESOLUTION</div>
@@ -2676,6 +3227,16 @@
         </div>
     </div>
     <!-- /ADVANCED OUTPUT MODAL -->
+
+    <!-- Floating Bottom-Right Stack Container (for Toast Notifications and Floating Media Players) -->
+    <div id="bottom-right-stack"
+        style="position: fixed; bottom: 20px; right: 20px; z-index: 99999; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 10px; pointer-events: none;">
+        <!-- 1. Floating Media Player Container (bottom) -->
+        <div id="multi-player-container" class="multi-player-container" style="pointer-events: auto;"></div>
+        <!-- 2. Stage Rundown Toast Container (stacked above the media player if both are active) -->
+        <div id="rundown-toast-container"
+            style="display: flex; flex-direction: column; gap: 10px; width: 340px; pointer-events: auto;"></div>
+    </div>
 
     <!-- QR Code Generator (pure JS) -->
     <script src="static/qrcode.min.js?v={{ VERSION }}"></script>

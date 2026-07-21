@@ -10,6 +10,11 @@
             z-index: 9999;
             pointer-events: none;
             /* Klik tembus ke layar bawah */
+            background: transparent !important;
+            will-change: transform;
+            transform: translate3d(0, 0, 0);
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
         }
 
         .cam-output-iframe {
@@ -22,6 +27,10 @@
             z-index: 1;
             pointer-events: none;
             background: transparent;
+            will-change: transform;
+            transform: translate3d(0, 0, 0);
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
         }
 
         :root {
@@ -31,7 +40,8 @@
             --loop-handoff-ms: 800ms;
             --loop-handoff-ease: cubic-bezier(0.16, 1, 0.3, 1);
             --main-font: 'Montserrat', sans-serif;
-            --main-font-size: 5vw;
+            --main-font-size: 96px; /* 5vw fallback on 1920px canvas */
+            --motion-drift-speed: 30s;
             /* <--- INI TAMBAHANNYA */
         }
 
@@ -42,7 +52,21 @@
             height: 100vh;
             overflow: hidden;
             user-select: none;
-            perspective: 1000px;
+            /* perspective removed – caused compound 3D context for entire page */
+        }
+
+        .scale-wrapper {
+            width: 1920px;
+            height: 1080px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(1);
+            transform-origin: center center;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 10;
+            contain: layout style;
         }
 
         #scene-container {
@@ -50,52 +74,52 @@
             height: 100%;
             position: relative;
             z-index: 10;
-            will-change: transform;
+            /* will-change removed – not needed on static container */
         }
 
         .move-in {
-            animation: moveZoomIn 20s linear infinite alternate;
+            animation: moveZoomIn var(--motion-drift-speed, 30s) ease-out forwards;
         }
 
         .move-out {
-            animation: moveZoomOut 20s linear infinite alternate;
+            animation: moveZoomOut var(--motion-drift-speed, 30s) ease-out forwards;
         }
 
         .move-stay {
-            animation: moveDrift 15s ease-in-out infinite alternate;
+            animation: none;
         }
 
         @keyframes moveZoomIn {
             0% {
-                transform: scale(1);
+                transform: scale(0.78);
             }
 
             100% {
-                transform: scale(1.15);
+                transform: scale(1.10);
             }
         }
 
         @keyframes moveZoomOut {
             0% {
-                transform: scale(1.15);
+                transform: scale(1.14);
             }
 
             100% {
-                transform: scale(1);
+                transform: scale(0.85);
             }
         }
 
         @keyframes moveDrift {
             0% {
-                transform: scale(1);
+                transform: scale(1.03) translate(-4px, -2px);
             }
 
             50% {
-                transform: scale(1.05);
+                transform: scale(1.06) translate(4px, 2px);
             }
 
             100% {
-                transform: scale(1);
+                transform: scale(1.03) translate(-4px, -2px);
             }
         }
 
@@ -116,10 +140,12 @@
             pointer-events: none;
             transition: opacity var(--fade-speed, 0.5s) ease;
             box-sizing: border-box;
+            contain: layout style;
         }
 
         .lyric-group.active {
             opacity: 1;
+            transition: none !important;
         }
 
         .lyric-group.lyric-exiting {
@@ -127,7 +153,7 @@
             transition: opacity var(--lyric-exit-ms, 0.5s) ease !important;
         }
 
-        .lyric-group:not(.active) {
+        .lyric-group:not(.active):not(.lyric-exiting) {
             animation-play-state: paused;
         }
 
@@ -141,8 +167,45 @@
             pointer-events: none;
         }
 
+        /* ============================== */
+        /* MOTION LOOP PLAY-STATE CONTROL */
+        /* (Previously runtime-injected via JS blendStyle – now in CSS for zero-delay load) */
+        /* ============================== */
+        [class*='loop-']:not(.loop-ready) .lyric-wrapper,
+        [class*='loop-']:not(.loop-ready) .lyric-text,
+        [class*='loop-']:not(.loop-ready) .word,
+        [class*='loop-']:not(.loop-ready) .char {
+            animation-play-state: paused !important;
+        }
+
+        [class*='loop-'].loop-ready .lyric-wrapper,
+        [class*='loop-'].loop-ready .lyric-text,
+        [class*='loop-'].loop-ready .word,
+        [class*='loop-'].loop-ready .char {
+            animation-play-state: running !important;
+        }
+
         .compositing-active {
-            will-change: transform, opacity, filter;
+            will-change: opacity, transform;
+        }
+
+        .lyric-zoom-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            overflow: visible;
+            min-height: 0;
+            transform-origin: center center;
+            will-change: transform;
+        }
+
+        .lyric-wrapper,
+        .lyric-text,
+        .lyric-ghost {
+            /* No transition here – layer opacity/visibility is managed by .lyric-group.
+               Any transition on these elements would fight with FX animation keyframes
+               that start from opacity:0 and cause all effects to look like plain fades. */
         }
 
         .lyric-wrapper {
@@ -177,7 +240,6 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            transform: translateZ(0);
         }
 
         .lyric-text {
@@ -187,7 +249,6 @@
             line-height: 1;
             word-wrap: break-word;
             overflow-wrap: break-word;
-            transform: translateZ(0);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -203,21 +264,6 @@
             height: 100%;
             z-index: 1;
             pointer-events: none;
-            transform: translateZ(0);
-        }
-
-        @keyframes breathe {
-
-            0%,
-            100% {
-                opacity: 0.4;
-                transform: scale(1);
-            }
-
-            50% {
-                opacity: 0.7;
-                transform: scale(1.02);
-            }
         }
 
         /* ============================== */
@@ -225,12 +271,14 @@
         /* ============================== */
         .theme-default {
             color: var(--main-color);
-            text-shadow: 0 0 25px rgba(255, 255, 255, 0.9), 0 0 50px var(--main-color), 0 0 100px var(--main-color), 0 0 150px var(--main-color);
+            text-shadow: 0 0 15px rgba(255, 255, 255, 0.9), 0 0 30px var(--main-color), 0 0 45px var(--main-color);
         }
 
         .theme-box-black {
             background-color: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(12px);
+            backdrop-filter: blur(2px);
+            contain: layout style;
+            isolation: isolate;
             color: #fff;
             text-shadow: 0 0 20px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 255, 255, 0.6);
             padding: 25px 60px;
@@ -242,8 +290,10 @@
 
         .theme-frosted {
             background: rgba(255, 255, 255, 0.2);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            contain: layout style;
+            isolation: isolate;
             border: 2px solid rgba(255, 255, 255, 0.4);
             color: #fff;
             border-radius: 15px;
@@ -295,14 +345,14 @@
 
         .theme-heaven {
             color: #fff;
-            text-shadow: 0 0 25px rgba(255, 255, 255, 0.9), 0 0 50px rgba(0, 150, 255, 0.8), 0 0 100px rgba(0, 150, 255, 0.6);
+            text-shadow: 0 0 15px rgba(255, 255, 255, 0.9), 0 0 30px rgba(0, 150, 255, 0.8), 0 0 45px rgba(0, 150, 255, 0.6);
         }
 
         .theme-gold {
             background: linear-gradient(to bottom, #fbf5b7 0%, #bf953f 50%, #b38728 51%, #fbf5b7 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent !important;
-            filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.8)) drop-shadow(0 0 40px rgba(255, 180, 0, 0.6));
+            text-shadow: 0 0 12px rgba(255, 215, 0, 0.7), 0 0 25px rgba(255, 180, 0, 0.5);
             color: transparent !important;
         }
 
@@ -321,7 +371,7 @@
             background: linear-gradient(180deg, #ffcc00 0%, #ff6666 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent !important;
-            filter: drop-shadow(0 0 25px rgba(255, 100, 0, 0.8)) drop-shadow(0 0 50px rgba(200, 50, 0, 0.6));
+            text-shadow: 0 0 15px rgba(255, 100, 0, 0.7), 0 0 30px rgba(200, 50, 0, 0.5);
             color: transparent !important;
         }
 
@@ -334,14 +384,14 @@
             background: linear-gradient(180deg, #a8ff78 0%, #78ffd6 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent !important;
-            filter: drop-shadow(0 0 20px rgba(0, 255, 100, 0.8)) drop-shadow(0 0 40px rgba(0, 150, 50, 0.6));
+            text-shadow: 0 0 12px rgba(0, 255, 100, 0.7), 0 0 25px rgba(0, 150, 50, 0.5);
             color: transparent !important;
         }
 
         .theme-neon {
             color: transparent;
             -webkit-text-stroke: 2px #00ffcc;
-            filter: drop-shadow(0 0 15px #00ffcc) drop-shadow(0 0 30px #00ffcc) drop-shadow(0 0 60px #00ffcc);
+            text-shadow: 0 0 10px #00ffcc, 0 0 25px rgba(0, 255, 204, 0.6);
         }
 
         .theme-fire {
@@ -366,7 +416,7 @@
             background: linear-gradient(135deg, #8EC5FC 0%, #E0C3FC 50%, #ff9a9e 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent !important;
-            filter: drop-shadow(0 0 20px rgba(200, 200, 255, 0.8)) drop-shadow(0 0 40px rgba(255, 150, 200, 0.6));
+            text-shadow: 0 0 12px rgba(200, 200, 255, 0.7), 0 0 25px rgba(255, 150, 200, 0.5);
             color: transparent !important;
         }
 
@@ -464,46 +514,11 @@
         /* MASTER ANTI-GAP FIX: ALL EFFECTS */
         /* Suppress height expansion pada bilingual */
         /* ============================== */
-        .fx-bloom .lyric-wrapper,
-        .fx-bloom .bilingual-line,
-        .fx-smoke .lyric-wrapper,
-        .fx-smoke .bilingual-line,
-        .fx-light .lyric-wrapper,
-        .fx-light .bilingual-line,
-        .fx-softfocus .lyric-wrapper,
-        .fx-softfocus .bilingual-line,
-        .fx-float .lyric-wrapper,
-        .fx-float .bilingual-line,
-        .fx-punch .lyric-wrapper,
-        .fx-punch .bilingual-line,
-        .fx-elastic .lyric-wrapper,
-        .fx-elastic .bilingual-line,
-        .fx-flashpop .lyric-wrapper,
-        .fx-flashpop .bilingual-line,
-        .fx-whip .lyric-wrapper,
-        .fx-whip .bilingual-line,
-        .fx-gdrop .lyric-wrapper,
-        .fx-gdrop .bilingual-line,
-        .fx-dust .lyric-wrapper,
-        .fx-dust .bilingual-line,
-        .fx-lens .lyric-wrapper,
-        .fx-lens .bilingual-line,
-        .fx-wipe .lyric-wrapper,
-        .fx-wipe .bilingual-line,
-        .fx-abyss .lyric-wrapper,
-        .fx-abyss .bilingual-line,
-        .fx-aurora .lyric-wrapper,
-        .fx-aurora .bilingual-line,
-        .fx-rgb .lyric-wrapper,
-        .fx-rgb .bilingual-line,
-        .fx-shake .lyric-wrapper,
-        .fx-shake .bilingual-line,
-        .fx-smash .lyric-wrapper,
-        .fx-smash .bilingual-line,
-        .fx-slash .lyric-wrapper,
-        .fx-slash .bilingual-line,
-        .fx-terminal .lyric-wrapper,
-        .fx-terminal .bilingual-line {
+        :is(.fx-bloom, .fx-smoke, .fx-light, .fx-softfocus, .fx-float,
+            .fx-punch, .fx-elastic, .fx-flashpop, .fx-whip, .fx-gdrop,
+            .fx-dust, .fx-lens, .fx-wipe, .fx-abyss, .fx-aurora,
+            .fx-rgb, .fx-shake, .fx-smash, .fx-slash, .fx-terminal)
+        :is(.lyric-wrapper, .bilingual-line) {
             line-height: 1 !important;
             overflow: visible !important;
             align-items: center !important;
@@ -514,8 +529,12 @@
         /* Melindungi Inline Glow Filter  */
         /* ============================== */
         /* ANIMASI LAYER PENUH (Biasa) */
-        .fx-fade .lyric-wrapper {
+        .fx-fade .lyric-text {
             animation: fadeIn var(--fade-speed) ease-in-out forwards;
+        }
+
+        .fx-fade .lyric-ghost {
+            animation: fadeInGhost var(--fade-speed) ease-in-out forwards;
         }
 
         @keyframes fadeIn {
@@ -528,44 +547,95 @@
             }
         }
 
-        .fx-track .lyric-wrapper {
-            animation: trackIn var(--fade-speed) ease-out forwards;
+        @keyframes fadeInGhost {
+            0% {
+                opacity: 0;
+            }
+
+            100% {
+            }
+        }
+
+        .fx-track .lyric-text {
+            animation: trackIn var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .fx-track .lyric-ghost {
+            animation: trackInGhost var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
         @keyframes trackIn {
             0% {
-                letter-spacing: 0.3em;
+                letter-spacing: 0.18em;
                 opacity: 0;
-                filter: blur(10px);
+                filter: blur(4px);
+                transform: translate3d(0, 8px, 0);
+            }
+
+            68% {
+                opacity: 1;
+                filter: blur(0);
             }
 
             100% {
                 letter-spacing: normal;
                 opacity: 1;
-                filter: blur(0);
+                transform: translate3d(0, 0, 0);
             }
         }
 
-        .fx-blur .lyric-wrapper {
+        @keyframes trackInGhost {
+            0% {
+                letter-spacing: 0.18em;
+                opacity: 0;
+                transform: translate3d(0, 8px, 0);
+            }
+
+            100% {
+                letter-spacing: normal;
+                transform: translate3d(0, 0, 0);
+            }
+        }
+
+        .fx-blur .lyric-text {
             animation: blurIn var(--fade-speed) cubic-bezier(0.23, 1, 0.32, 1) forwards;
+        }
+
+        .fx-blur .lyric-ghost {
+            animation: blurInGhost var(--fade-speed) cubic-bezier(0.23, 1, 0.32, 1) forwards;
         }
 
         @keyframes blurIn {
             0% {
-                filter: blur(30px);
+                filter: blur(9px);
+                transform: translate3d(0, 0, 0) scale(1.06);
+                opacity: 0;
+            }
+
+            100% {
+                transform: translate3d(0, 0, 0) scale(1);
+                opacity: 1;
+                filter: blur(0);
+            }
+        }
+
+        @keyframes blurInGhost {
+            0% {
                 transform: scale(1.1);
                 opacity: 0;
             }
 
             100% {
-                filter: blur(0);
                 transform: scale(1);
-                opacity: 1;
             }
         }
 
-        .fx-mask .lyric-wrapper {
+        .fx-mask .lyric-text {
             animation: maskRise var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .fx-mask .lyric-ghost {
+            animation: maskRiseGhost var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
         @keyframes maskRise {
@@ -582,7 +652,21 @@
             }
         }
 
-        .fx-burst .lyric-wrapper {
+        @keyframes maskRiseGhost {
+            0% {
+                clip-path: inset(100% -50% -50% -50%);
+                transform: translateY(60px);
+                opacity: 0;
+            }
+
+            100% {
+                clip-path: inset(-50% -50% -50% -50%);
+                transform: translateY(0);
+            }
+        }
+
+        .fx-burst .lyric-text,
+        .fx-burst .lyric-ghost {
             animation: glowBurst var(--fade-speed) ease-out forwards;
         }
 
@@ -590,60 +674,73 @@
             0% {
                 opacity: 0;
                 transform: scale(0.9);
-                filter: brightness(3);
+                filter: brightness(1.8);
             }
 
             40% {
                 opacity: 1;
                 transform: scale(1.05);
-                filter: brightness(2);
+                filter: brightness(1.35);
             }
 
             100% {
                 opacity: 1;
                 transform: scale(1);
-                filter: brightness(1);
             }
         }
 
-        .fx-echo .lyric-wrapper {
+        .fx-echo .lyric-text,
+        .fx-echo .lyric-ghost {
             animation: echoMerge var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) forwards;
         }
 
         @keyframes echoMerge {
             0% {
                 opacity: 0;
-                transform: scale(2);
-                filter: blur(20px);
-                letter-spacing: 0.2em;
+                transform: translate3d(0, 0, 0) scale(1.34);
+                filter: blur(6px);
+                letter-spacing: 0.12em;
+            }
+
+            62% {
+                opacity: 1;
+                transform: translate3d(0, 0, 0) scale(1.02);
+                filter: blur(0);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) scale(1);
                 letter-spacing: normal;
             }
         }
 
-        .fx-flip3d .lyric-wrapper {
-            animation: flipDown var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        .fx-flip3d .lyric-text,
+        .fx-flip3d .lyric-ghost {
+            animation: flipDown var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+            backface-visibility: hidden;
             transform-origin: top center;
         }
 
         @keyframes flipDown {
             0% {
                 opacity: 0;
-                transform: rotateX(-90deg);
+                transform: perspective(900px) rotateX(-64deg) translate3d(0, -18px, 0);
+            }
+
+            70% {
+                opacity: 1;
+                transform: perspective(900px) rotateX(6deg) translate3d(0, 2px, 0);
             }
 
             100% {
                 opacity: 1;
-                transform: rotateX(0deg);
+                transform: perspective(900px) rotateX(0deg) translate3d(0, 0, 0);
             }
         }
 
-        .fx-slide .lyric-wrapper {
+        .fx-slide .lyric-text,
+        .fx-slide .lyric-ghost {
             animation: motionSlide var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
 
@@ -659,27 +756,29 @@
             }
         }
 
-        .fx-focus .lyric-wrapper {
+        .fx-focus .lyric-text,
+        .fx-focus .lyric-ghost {
             animation: focusExp var(--fade-speed) ease-out forwards;
         }
 
         @keyframes focusExp {
             0% {
                 opacity: 0;
-                letter-spacing: -0.2em;
-                filter: blur(15px);
-                transform: scale(0.9);
+                letter-spacing: -0.1em;
+                filter: blur(6px);
+                transform: translate3d(0, 0, 0) scale(0.94);
             }
 
             100% {
                 opacity: 1;
                 letter-spacing: normal;
-                filter: blur(0);
-                transform: scale(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
-        .fx-neon .lyric-wrapper {
+        .fx-neon .lyric-text,
+        .fx-neon .lyric-ghost {
             animation: neonOn var(--fade-speed) linear forwards;
         }
 
@@ -706,28 +805,38 @@
 
             100% {
                 opacity: 1;
-                filter: brightness(1);
             }
         }
 
-        .fx-pop .lyric-wrapper {
-            animation: elasticPop var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        .fx-pop .lyric-text,
+        .fx-pop .lyric-ghost {
+            animation: elasticPop var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
             transform-origin: center center;
         }
 
         @keyframes elasticPop {
             0% {
                 opacity: 0;
-                transform: scale(0.3);
+                transform: translate3d(0, 0, 0) scale(0.72);
+            }
+
+            58% {
+                opacity: 1;
+                transform: translate3d(0, 0, 0) scale(1.08);
+            }
+
+            78% {
+                transform: translate3d(0, 0, 0) scale(0.98);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
+                transform: translate3d(0, 0, 0) scale(1);
             }
         }
 
-        .fx-stretch .lyric-wrapper {
+        .fx-stretch .lyric-text,
+        .fx-stretch .lyric-ghost {
             animation: cinemaStretch var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) forwards;
             transform-origin: center center;
         }
@@ -735,19 +844,23 @@
         @keyframes cinemaStretch {
             0% {
                 opacity: 0;
-                transform: scaleY(0) scaleX(1.2);
-                filter: blur(10px);
+                transform: translate3d(0, 0, 0) scaleY(0.25) scaleX(1.12);
+                filter: blur(5px);
             }
 
             100% {
                 opacity: 1;
-                transform: scaleY(1) scaleX(1);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) scaleY(1) scaleX(1);
+                filter: none;
             }
         }
 
-        .fx-cinema .lyric-wrapper {
+        .fx-cinema .lyric-text {
             animation: cinemaZoom var(--fade-speed) ease-out forwards;
+        }
+
+        .fx-cinema .lyric-ghost {
+            animation: cinemaZoomGhost var(--fade-speed) ease-out forwards;
         }
 
         @keyframes cinemaZoom {
@@ -760,12 +873,26 @@
             100% {
                 opacity: 1;
                 transform: scale(1);
-                filter: blur(0);
             }
         }
 
-        .fx-swipe .lyric-wrapper {
+        @keyframes cinemaZoomGhost {
+            0% {
+                opacity: 0;
+                transform: scale(1.3);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .fx-swipe .lyric-text {
             animation: swipeRight var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        .fx-swipe .lyric-ghost {
+            animation: swipeRightGhost var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
 
         @keyframes swipeRight {
@@ -782,26 +909,58 @@
             }
         }
 
-        .fx-stamp .lyric-wrapper {
+        @keyframes swipeRightGhost {
+            0% {
+                clip-path: inset(0 100% 0 0);
+                transform: translateX(-20px);
+                opacity: 0;
+            }
+
+            100% {
+                clip-path: inset(0 0 0 0);
+                transform: translateX(0);
+            }
+        }
+
+        .fx-stamp .lyric-text {
             animation: stampIn var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        .fx-stamp .lyric-ghost {
+            animation: stampInGhost var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
         }
 
         @keyframes stampIn {
             0% {
                 opacity: 0;
-                transform: scale(3);
-                filter: blur(10px);
+                transform: translate3d(0, 0, 0) scale(1.8);
+                filter: blur(5px);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
-        .fx-elevator .lyric-wrapper {
+        @keyframes stampInGhost {
+            0% {
+                opacity: 0;
+                transform: scale(3);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .fx-elevator .lyric-text {
             animation: elevatorUp var(--fade-speed) cubic-bezier(0.23, 1, 0.32, 1) forwards;
+        }
+
+        .fx-elevator .lyric-ghost {
+            animation: elevatorUpGhost var(--fade-speed) cubic-bezier(0.23, 1, 0.32, 1) forwards;
         }
 
         @keyframes elevatorUp {
@@ -816,8 +975,24 @@
             }
         }
 
-        .fx-swivel .lyric-wrapper {
+        @keyframes elevatorUpGhost {
+            0% {
+                opacity: 0;
+                transform: translateY(100%);
+            }
+
+            100% {
+                transform: translateY(0);
+            }
+        }
+
+        .fx-swivel .lyric-text {
             animation: swivelIn var(--fade-speed) ease-out forwards;
+            transform-origin: center;
+        }
+
+        .fx-swivel .lyric-ghost {
+            animation: swivelInGhost var(--fade-speed) ease-out forwards;
             transform-origin: center;
         }
 
@@ -831,12 +1006,27 @@
             100% {
                 opacity: 1;
                 transform: rotateY(0deg);
-                filter: blur(0);
             }
         }
 
-        .fx-fold .lyric-wrapper {
+        @keyframes swivelInGhost {
+            0% {
+                opacity: 0;
+                transform: rotateY(-90deg);
+            }
+
+            100% {
+                transform: rotateY(0deg);
+            }
+        }
+
+        .fx-fold .lyric-text {
             animation: foldDown var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+            transform-origin: top center;
+        }
+
+        .fx-fold .lyric-ghost {
+            animation: foldDownGhost var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
             transform-origin: top center;
         }
 
@@ -852,8 +1042,23 @@
             }
         }
 
-        .fx-turb .lyric-wrapper {
+        @keyframes foldDownGhost {
+            0% {
+                opacity: 0;
+                transform: rotateX(90deg);
+            }
+
+            100% {
+                transform: rotateX(0);
+            }
+        }
+
+        .fx-turb .lyric-text {
             animation: turbIn var(--fade-speed) linear forwards;
+        }
+
+        .fx-turb .lyric-ghost {
+            animation: turbInGhost var(--fade-speed) linear forwards;
         }
 
         @keyframes turbIn {
@@ -870,7 +1075,6 @@
             80% {
                 opacity: 1;
                 transform: translateX(0);
-                filter: blur(0);
             }
 
             100% {
@@ -879,14 +1083,37 @@
             }
         }
 
-        .fx-drop .lyric-wrapper {
+        @keyframes turbInGhost {
+            0% {
+                opacity: 0;
+                transform: scale(1.1) translateX(-10px);
+            }
+
+            40% {
+                transform: translateX(-5px);
+            }
+
+            80% {
+                transform: translateX(0);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .fx-drop .lyric-text {
             animation: dropBounce var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        .fx-drop .lyric-ghost {
+            animation: dropBounceGhost var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
         }
 
         @keyframes dropBounce {
             0% {
                 opacity: 0;
-                transform: translateY(-100vh);
+                transform: translateY(-1080px);
             }
 
             60% {
@@ -900,8 +1127,27 @@
             }
         }
 
-        .fx-rotate .lyric-wrapper {
+        @keyframes dropBounceGhost {
+            0% {
+                opacity: 0;
+                transform: translateY(-1080px);
+            }
+
+            60% {
+                transform: translateY(20px);
+            }
+
+            100% {
+                transform: translateY(0);
+            }
+        }
+
+        .fx-rotate .lyric-text {
             animation: rotateIn var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        .fx-rotate .lyric-ghost {
+            animation: rotateInGhost var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
 
         @keyframes rotateIn {
@@ -916,8 +1162,23 @@
             }
         }
 
-        .fx-beat .lyric-wrapper {
+        @keyframes rotateInGhost {
+            0% {
+                opacity: 0;
+                transform: rotate(-180deg) scale(0.5);
+            }
+
+            100% {
+                transform: rotate(0) scale(1);
+            }
+        }
+
+        .fx-beat .lyric-text {
             animation: beatIn var(--fade-speed) ease-out forwards;
+        }
+
+        .fx-beat .lyric-ghost {
+            animation: beatInGhost var(--fade-speed) ease-out forwards;
         }
 
         @keyframes beatIn {
@@ -937,10 +1198,25 @@
             }
         }
 
+        @keyframes beatInGhost {
+            0% {
+                opacity: 0;
+                transform: scale(0.8);
+            }
+
+            50% {
+                transform: scale(1.1);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
         /* ========================================= */
         /* ANIMASI SPLIT CHAR (TARGET .char EKSKLUSIF) */
         /* ========================================= */
-        .fx-stagger .lyric-text .char {
+        .fx-stagger .char {
             opacity: 0;
             animation: staggerUp var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
@@ -957,7 +1233,7 @@
             }
         }
 
-        .fx-spin .lyric-text .char {
+        .fx-spin .char {
             opacity: 0;
             transform-origin: center center;
             animation: letterSpin var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
@@ -973,11 +1249,10 @@
             100% {
                 opacity: 1;
                 transform: rotateY(0deg) scale(1);
-                filter: blur(0);
             }
         }
 
-        .fx-wave .lyric-text .char {
+        .fx-wave .char {
             opacity: 0;
             animation: liquidWave var(--fade-speed) cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
@@ -998,7 +1273,7 @@
             }
         }
 
-        .fx-gauss .lyric-text .char {
+        .fx-gauss .char {
             opacity: 0;
             animation: gaussMerge var(--fade-speed) ease-out forwards;
         }
@@ -1006,18 +1281,24 @@
         @keyframes gaussMerge {
             0% {
                 opacity: 0;
-                filter: blur(20px);
-                transform: scale(1.5);
+                filter: blur(7px);
+                transform: translate3d(0, 0, 0) scale(1.22);
+            }
+
+            62% {
+                opacity: 1;
+                filter: blur(1px);
+                transform: translate3d(0, 0, 0) scale(1.02);
             }
 
             100% {
                 opacity: 1;
                 filter: blur(0);
-                transform: scale(1);
+                transform: translate3d(0, 0, 0) scale(1);
             }
         }
 
-        .fx-glitch .lyric-text .char {
+        .fx-glitch .char {
             opacity: 0;
             animation: softGlitch var(--fade-speed) steps(3) forwards;
         }
@@ -1025,25 +1306,25 @@
         @keyframes softGlitch {
             0% {
                 opacity: 0;
-                transform: translate(-10px, 5px);
+                transform: translate3d(-8px, 4px, 0);
             }
 
             33% {
-                transform: translate(10px, -5px);
+                transform: translate3d(8px, -4px, 0);
                 opacity: 0.5;
-                filter: hue-rotate(90deg);
+                text-shadow: 3px 0 #00e5ff, -3px 0 #ff2d75;
             }
 
             66% {
-                transform: translate(-5px, 2px);
+                transform: translate3d(-4px, 2px, 0);
                 opacity: 0.8;
-                filter: hue-rotate(-90deg);
+                text-shadow: -2px 0 #00e5ff, 2px 0 #ff2d75;
             }
 
             100% {
                 opacity: 1;
-                transform: translate(0, 0);
-                filter: hue-rotate(0);
+                transform: translate3d(0, 0, 0);
+                text-shadow: none;
             }
         }
 
@@ -1633,7 +1914,7 @@
             display: none;
             z-index: 999;
             padding: 10px 0;
-            font-size: 2.5vw;
+            font-size: 48px; /* 2.5vw fallback on 1920px canvas */
         }
 
         .crawl-content {
@@ -1979,7 +2260,7 @@
         /* 16. AURORA ART: Shifting aurora-spectrum gradient */
         .theme-aurora-art {
             background: linear-gradient(90deg, #00ff88, #00e5ff, #8000ff, #ff0088, #ff8800, #00ff88);
-            background-size: 300% 100%;
+            background-size: 100% 100%;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent !important;
             color: transparent !important;
@@ -2092,16 +2373,16 @@
         }
 
         /* ENERGETIC PRAISE: Per-Char Effects */
-        .fx-punch .lyric-text .char,
-        .fx-elastic .lyric-text .char,
-        .fx-flashpop .lyric-text .char,
-        .fx-whip .lyric-text .char,
-        .fx-gdrop .lyric-text .char,
-        .fx-rgb .lyric-text .char,
-        .fx-shake .lyric-text .char,
-        .fx-smash .lyric-text .char,
-        .fx-slash .lyric-text .char,
-        .fx-terminal .lyric-text .char {
+        .fx-punch .char,
+        .fx-elastic .char,
+        .fx-flashpop .char,
+        .fx-whip .char,
+        .fx-gdrop .char,
+        .fx-rgb .char,
+        .fx-shake .char,
+        .fx-smash .char,
+        .fx-slash .char,
+        .fx-terminal .char {
             vertical-align: baseline !important;
             line-height: 1 !important;
             display: inline-block;
@@ -2135,14 +2416,14 @@
         @keyframes wBloom {
             0% {
                 opacity: 0;
-                filter: brightness(10) blur(20px) contrast(3);
-                transform: scale(1.05);
+                filter: brightness(2.2) blur(6px) contrast(1.25);
+                transform: translate3d(0, 0, 0) scale(1.04);
             }
 
             100% {
                 opacity: 1;
-                filter: brightness(1) blur(0) contrast(1);
-                transform: scale(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
@@ -2155,20 +2436,20 @@
         @keyframes wSmoke {
             0% {
                 opacity: 0;
-                transform: skewX(-20deg) scale(1.05);
-                filter: blur(10px);
+                transform: translate3d(0, 0, 0) skewX(-14deg) scale(1.04);
+                filter: blur(5px);
             }
 
             50% {
                 opacity: 0.5;
-                transform: skewX(10deg) scale(1.02);
-                filter: blur(4px);
+                transform: translate3d(0, 0, 0) skewX(8deg) scale(1.02);
+                filter: blur(2px);
             }
 
             100% {
                 opacity: 1;
-                transform: skewX(0deg) scale(1);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) skewX(0deg) scale(1);
+                filter: none;
             }
         }
 
@@ -2188,7 +2469,6 @@
             100% {
                 opacity: 1;
                 clip-path: circle(150% at 50% 50%);
-                filter: drop-shadow(0 0 0 transparent);
             }
         }
 
@@ -2202,14 +2482,14 @@
         @keyframes wFocus {
             0% {
                 opacity: 0;
-                transform: perspective(600px) rotateX(85deg) scale(1.2);
-                filter: blur(15px);
+                transform: perspective(700px) rotateX(58deg) scale(1.08);
+                filter: blur(6px);
             }
 
             100% {
                 opacity: 1;
                 transform: perspective(600px) rotateX(0deg) scale(1);
-                filter: blur(0);
+                filter: none;
             }
         }
 
@@ -2230,9 +2510,7 @@
 
             100% {
                 opacity: 1;
-                text-shadow: 0 0 0 transparent, 0 0 0 transparent;
                 transform: scale(1);
-                filter: blur(0);
                 color: inherit;
             }
         }
@@ -2242,7 +2520,7 @@
         /* ========================================= */
 
         /* 6. PUNCH (Tornado Spin): Mutar dari jarak pandang jauh hingga menabrak layar */
-        .fx-punch .lyric-text .char {
+        .fx-punch .char {
             animation: pPunch var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
             display: inline-block;
         }
@@ -2257,12 +2535,11 @@
             100% {
                 opacity: 1;
                 transform: scale(1) rotate(0deg);
-                filter: blur(0);
             }
         }
 
         /* 7. ELASTIC (Squish & Squash): Memipih super gepeng horizontal lalu loncat normal (True Jelly) */
-        .fx-elastic .lyric-text .char {
+        .fx-elastic .char {
             animation: pElastic var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
             display: inline-block;
             transform-origin: center;
@@ -2292,7 +2569,7 @@
         }
 
         /* 8. FLASHPOP (CRT TV On): Berawal dari garis cahaya super tipis lalu melebar jadi huruf */
-        .fx-flashpop .lyric-text .char {
+        .fx-flashpop .char {
             animation: pFlash var(--fade-speed) cubic-bezier(0.1, 0.9, 0.2, 1) both;
             display: inline-block;
         }
@@ -2300,29 +2577,29 @@
         @keyframes pFlash {
             0% {
                 opacity: 0;
-                transform: scaleY(0.01) scaleX(5);
-                filter: brightness(10) contrast(3);
+                transform: translate3d(0, 0, 0) scaleY(0.16) scaleX(2.2);
+                filter: brightness(2.4) contrast(1.35);
                 background: white;
                 color: transparent;
             }
 
             50% {
                 opacity: 1;
-                transform: scaleY(1.2) scaleX(0.9);
+                transform: translate3d(0, 0, 0) scaleY(1.12) scaleX(0.94);
                 background: transparent;
                 color: inherit;
-                filter: brightness(2);
+                filter: brightness(1.25);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
-                filter: brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
         /* 9. WHIP (3D Door Slam): Berayun seperti pintu dibanting tutup dari samping */
-        .fx-whip .lyric-text .char {
+        .fx-whip .char {
             animation: pWhip var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
             display: inline-block;
             transform-origin: left;
@@ -2338,12 +2615,11 @@
             100% {
                 opacity: 1;
                 transform: perspective(400px) rotateY(0deg) scale(1);
-                filter: blur(0);
             }
         }
 
         /* 10. GDROP (Giant Stomp): Karakter raksasa dari atas layar nge-stomp ke dalam layar */
-        .fx-gdrop .lyric-text .char {
+        .fx-gdrop .char {
             animation: pDrop var(--fade-speed) cubic-bezier(0.5, 0, 0.1, 1) both;
             display: inline-block;
         }
@@ -2351,22 +2627,178 @@
         @keyframes pDrop {
             0% {
                 opacity: 0;
-                transform: scale(8);
-                text-shadow: 0 0 50px red;
-                filter: blur(10px);
+                transform: translate3d(0, 0, 0) scale(2.4);
+                text-shadow: 0 0 24px red;
+                filter: blur(4px);
             }
 
             80% {
                 opacity: 1;
-                transform: scale(0.9);
+                transform: translate3d(0, 0, 0) scale(0.92);
                 text-shadow: 0 0 10px cyan;
                 filter: blur(0);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
-                text-shadow: 0 0 0 transparent;
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
+            }
+        }
+
+        /* 11. RGB GLITCH SNAP: Snap with color displacement */
+        .fx-rgb .char {
+            animation: pRGBGlitch var(--fade-speed) cubic-bezier(0.19, 1, 0.22, 1) both;
+            will-change: transform, opacity, filter;
+        }
+
+        @keyframes pRGBGlitch {
+            0% {
+                opacity: 0;
+                transform: scale(1.1) translate(4px, -2px);
+                filter: drop-shadow(-5px 0 0 rgba(255, 0, 0, 0.8)) drop-shadow(5px 0 0 rgba(0, 255, 255, 0.8)) blur(1px);
+            }
+            20% {
+                opacity: 1;
+                transform: scale(0.95) translate(-3px, 2px);
+                filter: drop-shadow(3px 0 0 rgba(0, 0, 255, 0.8)) drop-shadow(-3px 0 0 rgba(0, 255, 0, 0.8));
+            }
+            40% {
+                transform: scale(1.02) translate(1px, -1px);
+                filter: drop-shadow(-1px 0 0 rgba(255, 0, 0, 0.5)) drop-shadow(1px 0 0 rgba(0, 255, 255, 0.5));
+            }
+            60% {
+                transform: scale(0.99) translate(0, 0);
+                filter: none;
+            }
+            100% {
+                opacity: 1;
+                transform: scale(1) translate(0, 0);
+                filter: none;
+            }
+        }
+
+        /* 12. CAMERA IMPACT SHAKE: Violent camera shake dampening quickly */
+        .fx-shake .char {
+            animation: pCameraShake var(--fade-speed) ease-out both;
+            will-change: transform, opacity, filter;
+        }
+
+        @keyframes pCameraShake {
+            0% {
+                opacity: 0;
+                transform: translate3d(-18px, 12px, 0) rotate(-3deg) scale(1.25);
+                filter: blur(3px);
+            }
+            15% {
+                opacity: 1;
+                transform: translate3d(12px, -10px, 0) rotate(2deg) scale(0.95);
+            }
+            30% {
+                transform: translate3d(-8px, 6px, 0) rotate(-1.5deg) scale(1.05);
+            }
+            45% {
+                transform: translate3d(5px, -4px, 0) rotate(1deg) scale(0.98);
+            }
+            60% {
+                transform: translate3d(-2px, 1px, 0) rotate(-0.5deg) scale(1.01);
+            }
+            75% {
+                transform: translate3d(1px, -1px, 0) rotate(0.2deg);
+            }
+            100% {
+                opacity: 1;
+                transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+                filter: none;
+            }
+        }
+
+        /* 13. KINETIC SMASH: High speed drop-down & squash bounce */
+        .fx-smash .char {
+            animation: pKineticSmash var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
+            transform-origin: bottom center;
+            will-change: transform, opacity, filter;
+        }
+
+        @keyframes pKineticSmash {
+            0% {
+                opacity: 0;
+                transform: translateY(-100px) scaleY(2) scaleX(0.6);
+                filter: blur(2px);
+            }
+            55% {
+                opacity: 1;
+                transform: translateY(10px) scaleY(0.4) scaleX(1.6);
+                filter: none;
+            }
+            75% {
+                transform: translateY(-6px) scaleY(1.15) scaleX(0.85);
+            }
+            90% {
+                transform: translateY(2px) scaleY(0.92) scaleX(1.04);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0) scaleY(1) scaleX(1);
+            }
+        }
+
+        /* 14. NINJA SLASH: Alternating fast slice from opposite angles */
+        .fx-slash .char {
+            animation: pNinjaSlashOdd var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) both;
+            will-change: transform, opacity, filter;
+        }
+
+        .fx-slash .char:nth-child(even) {
+            animation-name: pNinjaSlashEven;
+        }
+
+        @keyframes pNinjaSlashOdd {
+            0% {
+                opacity: 0;
+                transform: translate(-60px, -30px) skewX(-35deg) scale(1.3);
+                filter: blur(3px) brightness(2.2);
+            }
+            70% {
+                opacity: 1;
+                transform: translate(3px, 1px) skewX(5deg) scale(0.92);
+            }
+            100% {
+                opacity: 1;
+                transform: translate(0, 0) skewX(0) scale(1);
+                filter: none;
+            }
+        }
+
+        @keyframes pNinjaSlashEven {
+            0% {
+                opacity: 0;
+                transform: translate(60px, 30px) skewX(35deg) scale(1.3);
+                filter: blur(3px) brightness(2.2);
+            }
+            70% {
+                opacity: 1;
+                transform: translate(-3px, -1px) skewX(-5deg) scale(0.92);
+            }
+            100% {
+                opacity: 1;
+                transform: translate(0, 0) skewX(0) scale(1);
+                filter: none;
+            }
+        }
+
+        /* 15. TERMINAL TYPEWRITER: Sequential typewriter pop-in */
+        .fx-terminal .char {
+            animation: pTerminalTypewriter 0.05s steps(1, start) both;
+            will-change: transform, opacity, filter;
+        }
+
+        @keyframes pTerminalTypewriter {
+            0% {
+                opacity: 0;
+            }
+            100% {
+                opacity: 1;
             }
         }
 
@@ -2383,16 +2815,15 @@
         @keyframes aeDust {
             0% {
                 opacity: 0;
-                filter: blur(15px);
-                transform: translateY(-20px) scale(1.05) skewX(10deg);
-                text-shadow: 0 30px 20px rgba(255, 255, 255, 0.6);
+                filter: blur(6px);
+                transform: translate3d(0, -18px, 0) scale(1.04) skewX(8deg);
+                text-shadow: 0 18px 14px rgba(255, 255, 255, 0.45);
             }
 
             100% {
                 opacity: 1;
-                filter: blur(0);
-                transform: translateY(0) scale(1) skewX(0);
-                text-shadow: 0 0 0 transparent;
+                transform: translate3d(0, 0, 0) scale(1) skewX(0);
+                filter: none;
             }
         }
 
@@ -2405,14 +2836,14 @@
         @keyframes aeLens {
             0% {
                 opacity: 0;
-                filter: brightness(5) blur(15px) contrast(2);
-                transform: scale(1.05);
+                filter: brightness(2) blur(6px) contrast(1.25);
+                transform: translate3d(0, 0, 0) scale(1.04);
             }
 
             100% {
                 opacity: 1;
-                filter: brightness(1) blur(0) contrast(1);
-                transform: scale(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
@@ -2446,14 +2877,14 @@
         @keyframes aeAbyss {
             0% {
                 opacity: 0;
-                transform: perspective(800px) translateZ(-300px) rotateX(-60deg);
-                filter: blur(15px);
+                transform: perspective(900px) translate3d(0, 0, -90px) rotateX(-38deg);
+                filter: blur(6px);
             }
 
             100% {
                 opacity: 1;
-                transform: perspective(800px) translateZ(0) rotateX(0);
-                filter: blur(0);
+                transform: perspective(900px) translate3d(0, 0, 0) rotateX(0);
+                filter: none;
             }
         }
 
@@ -2466,180 +2897,17 @@
         @keyframes aeAurora {
             0% {
                 opacity: 0;
-                filter: blur(10px);
-                text-shadow: -20px 0 40px #00e5ff, 20px 0 40px #ff00ff;
-                transform: scale(1.02);
-            }
-
-            100% {
-                opacity: 1;
-                filter: blur(0);
-                text-shadow: 0 0 0 transparent;
-                transform: scale(1);
-            }
-        }
-
-        /* ========================================= */
-        /* --- AE MOTION PRAISE (PER-CHAR) --- */
-        /* ========================================= */
-
-        /* 6. RGB GLITCH: Shadow Merah & Biru misah lalu nabrak bersatu */
-        .fx-rgb .lyric-text .char {
-            animation: aeRGB var(--fade-speed) cubic-bezier(0.25, 1, 0.5, 1) both;
-            display: inline-block;
-        }
-
-        @keyframes aeRGB {
-            0% {
-                opacity: 0;
-                transform: scale(1.2);
-                text-shadow: -30px 0 10px red, 30px 0 10px cyan;
                 filter: blur(5px);
-            }
-
-            50% {
-                opacity: 1;
-                text-shadow: 5px 0 0 red, -5px 0 0 cyan;
-                filter: blur(0);
+                text-shadow: -10px 0 24px #00e5ff, 10px 0 24px #ff00ff;
+                transform: translate3d(0, 0, 0) scale(1.02);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
-                text-shadow: 0 0 0 transparent;
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
+                text-shadow: none;
             }
-        }
-
-        /* 7. IMPACT SHAKE: Teks jatuh keras trus kameranya gempa (Shake) */
-        .fx-shake .lyric-text .char {
-            animation: aeShake var(--fade-speed) cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
-            display: inline-block;
-        }
-
-        @keyframes aeShake {
-            0% {
-                opacity: 0;
-                transform: scale(2.5) translateY(-30px);
-                filter: blur(10px);
-            }
-
-            40% {
-                opacity: 1;
-                transform: scale(1) translateY(0);
-                filter: blur(0);
-            }
-
-            50% {
-                transform: translate(-4px, 4px);
-            }
-
-            60% {
-                transform: translate(4px, -4px);
-            }
-
-            70% {
-                transform: translate(-4px, -4px);
-            }
-
-            80% {
-                transform: translate(4px, 4px);
-            }
-
-            100% {
-                transform: translate(0, 0);
-            }
-        }
-
-        /* 8. KINETIC SMASH: Muter dari sudut tajam lalu ngerem mendadak */
-        .fx-smash .lyric-text .char {
-            animation: aeSmash var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
-            display: inline-block;
-        }
-
-        @keyframes aeSmash {
-            0% {
-                opacity: 0;
-                transform: scale(0) rotate(-45deg) translateX(-50px);
-                filter: blur(5px);
-            }
-
-            100% {
-                opacity: 1;
-                transform: scale(1) rotate(0) translateX(0);
-                filter: blur(0);
-            }
-        }
-
-        /* 9. NINJA SLASH: Dipotong diagonal (Masking Polygon) trus nyatu */
-        .fx-slash .lyric-text .char {
-            animation: aeSlash var(--fade-speed) cubic-bezier(0.16, 1, 0.3, 1) both;
-            display: inline-block;
-        }
-
-        @keyframes aeSlash {
-            0% {
-                opacity: 0;
-                clip-path: polygon(0 0, 100% 0, 100% 0, 0 0);
-                transform: translateY(30px) skewX(40deg);
-            }
-
-            100% {
-                opacity: 1;
-                clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
-                transform: translateY(0) skewX(0);
-            }
-        }
-
-        /* 10. TERMINAL TYPE: Ngetik instan ala koding Hacker (No fade) */
-        .fx-terminal .lyric-text .char {
-            animation: aeTerminal var(--fade-speed) steps(1, end) both;
-            display: inline-block;
-            border-right: 3px solid transparent;
-        }
-
-        @keyframes aeTerminal {
-            0% {
-                opacity: 0;
-            }
-
-            50% {
-                opacity: 1;
-                border-right-color: var(--main-color);
-            }
-
-            95% {
-                opacity: 1;
-                border-right-color: transparent;
-            }
-
-            100% {
-                opacity: 1;
-                border-right-color: transparent;
-            }
-        }
-
-        /* ========================================================= */
-        /* --- DEEP EFFECT: GROUPED ODD/EVEN WORD TRANSITIONS --- */
-        /* Words 1,3,5... appear first; words 2,4,6... appear after */
-        /* ========================================================= */
-
-        /* BASE: Per-word inline display for all deep effects */
-        .fx-smoke-deep .word,
-        .fx-liquid .word,
-        .fx-zoom-deep .word,
-        .fx-glitch-deep .word,
-        .fx-fisheye .word,
-        .fx-radial-blur .word,
-        .fx-chromatic .word,
-        .fx-motion-blur .word,
-        .fx-veil-lift .word,
-        .fx-particle .word {
-            display: inline-block;
-            vertical-align: baseline !important;
-            line-height: 1 !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            will-change: transform, opacity, filter;
         }
 
         /* 1. SMOKE DEEP: Asap mengepul berbarengan – odd naik dari kiri, even dari kanan */
@@ -2654,8 +2922,8 @@
         @keyframes wSmokeDpOdd {
             0% {
                 opacity: 0;
-                transform: skewX(-25deg) translateX(-10px) scale(1.08);
-                filter: blur(14px);
+                transform: translate3d(-8px, 0, 0) skewX(-18deg) scale(1.06);
+                filter: blur(6px);
             }
 
             60% {
@@ -2674,8 +2942,8 @@
         @keyframes wSmokeDpEven {
             0% {
                 opacity: 0;
-                transform: skewX(25deg) translateX(10px) scale(1.08);
-                filter: blur(14px);
+                transform: translate3d(8px, 0, 0) skewX(18deg) scale(1.06);
+                filter: blur(6px);
             }
 
             60% {
@@ -2754,40 +3022,40 @@
         @keyframes wZoomDpIn {
             0% {
                 opacity: 0;
-                transform: scale(0.2) translateZ(-200px);
-                filter: blur(20px) brightness(3);
+                transform: translate3d(0, 0, 0) scale(0.58);
+                filter: blur(6px) brightness(1.8);
             }
 
             70% {
                 opacity: 1;
-                transform: scale(1.05) translateZ(5px);
-                filter: blur(0) brightness(1.1);
+                transform: translate3d(0, 0, 0) scale(1.04);
+                filter: blur(0) brightness(1.08);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1) translateZ(0);
-                filter: blur(0) brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
         @keyframes wZoomDpOut {
             0% {
                 opacity: 0;
-                transform: scale(3.5) translateZ(200px);
-                filter: blur(25px) brightness(4);
+                transform: translate3d(0, 0, 0) scale(1.85);
+                filter: blur(7px) brightness(2);
             }
 
             70% {
                 opacity: 1;
-                transform: scale(0.97) translateZ(-5px);
-                filter: blur(0) brightness(1.1);
+                transform: translate3d(0, 0, 0) scale(0.98);
+                filter: blur(0) brightness(1.08);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1) translateZ(0);
-                filter: blur(0) brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
@@ -2870,8 +3138,8 @@
         @keyframes wFisheyeA {
             0% {
                 opacity: 0;
-                transform: scale(2.2) perspective(200px) rotateY(-30deg);
-                filter: blur(10px);
+                transform: translate3d(0, 0, 0) scale(1.45) perspective(360px) rotateY(-18deg);
+                filter: blur(5px);
             }
 
             65% {
@@ -2889,8 +3157,8 @@
         @keyframes wFisheyeB {
             0% {
                 opacity: 0;
-                transform: scale(2.2) perspective(200px) rotateY(30deg);
-                filter: blur(10px);
+                transform: translate3d(0, 0, 0) scale(1.45) perspective(360px) rotateY(18deg);
+                filter: blur(5px);
             }
 
             65% {
@@ -2917,40 +3185,40 @@
         @keyframes wRadialBurstOut {
             0% {
                 opacity: 0;
-                transform: scale(0.1);
-                filter: blur(30px) brightness(5);
+                transform: translate3d(0, 0, 0) scale(0.45);
+                filter: blur(8px) brightness(2.1);
             }
 
             50% {
                 opacity: 0.9;
-                transform: scale(1.08);
-                filter: blur(2px) brightness(1.3);
+                transform: translate3d(0, 0, 0) scale(1.06);
+                filter: blur(1px) brightness(1.22);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
-                filter: blur(0) brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
         @keyframes wRadialBurstIn {
             0% {
                 opacity: 0;
-                transform: scale(4.5);
-                filter: blur(30px) brightness(0.3);
+                transform: translate3d(0, 0, 0) scale(2.15);
+                filter: blur(8px) brightness(0.55);
             }
 
             50% {
                 opacity: 0.9;
-                transform: scale(0.95);
-                filter: blur(2px) brightness(1.2);
+                transform: translate3d(0, 0, 0) scale(0.96);
+                filter: blur(1px) brightness(1.14);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
-                filter: blur(0) brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
@@ -3027,8 +3295,8 @@
         @keyframes wMotionBlurL {
             0% {
                 opacity: 0;
-                transform: translateX(-60px) rotate(-5deg) scaleX(1.4);
-                filter: blur(15px);
+                transform: translate3d(-44px, 0, 0) rotate(-4deg) scaleX(1.22);
+                filter: blur(6px);
             }
 
             60% {
@@ -3039,16 +3307,16 @@
 
             100% {
                 opacity: 1;
-                transform: translateX(0) rotate(0deg) scaleX(1);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) rotate(0deg) scaleX(1);
+                filter: none;
             }
         }
 
         @keyframes wMotionBlurR {
             0% {
                 opacity: 0;
-                transform: translateX(60px) rotate(5deg) scaleX(1.4);
-                filter: blur(15px);
+                transform: translate3d(44px, 0, 0) rotate(4deg) scaleX(1.22);
+                filter: blur(6px);
             }
 
             60% {
@@ -3059,8 +3327,8 @@
 
             100% {
                 opacity: 1;
-                transform: translateX(0) rotate(0deg) scaleX(1);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) rotate(0deg) scaleX(1);
+                filter: none;
             }
         }
 
@@ -3077,7 +3345,7 @@
             0% {
                 opacity: 0;
                 clip-path: circle(0% at 50% 50%);
-                filter: blur(12px) brightness(3);
+                filter: blur(5px) brightness(1.8);
             }
 
             60% {
@@ -3089,7 +3357,7 @@
             100% {
                 opacity: 1;
                 clip-path: circle(200% at 50% 50%);
-                filter: blur(0) brightness(1);
+                filter: none;
             }
         }
 
@@ -3097,8 +3365,8 @@
             0% {
                 opacity: 0;
                 clip-path: inset(0 0 100% 0);
-                transform: translateY(-8px);
-                filter: blur(10px);
+                transform: translate3d(0, -8px, 0);
+                filter: blur(5px);
             }
 
             60% {
@@ -3111,8 +3379,8 @@
             100% {
                 opacity: 1;
                 clip-path: inset(0 0 0% 0);
-                transform: translateY(0);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0);
+                filter: none;
             }
         }
 
@@ -3128,8 +3396,8 @@
         @keyframes wParticleUp {
             0% {
                 opacity: 0;
-                transform: translateY(-40px) scale(1.3);
-                filter: blur(12px) brightness(4);
+                transform: translate3d(0, -32px, 0) scale(1.16);
+                filter: blur(5px) brightness(1.8);
             }
 
             60% {
@@ -3140,16 +3408,16 @@
 
             100% {
                 opacity: 1;
-                transform: translateY(0) scale(1);
-                filter: blur(0) brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
         @keyframes wParticleDown {
             0% {
                 opacity: 0;
-                transform: translateY(40px) scale(1.3);
-                filter: blur(12px) brightness(4);
+                transform: translate3d(0, 32px, 0) scale(1.16);
+                filter: blur(5px) brightness(1.8);
             }
 
             60% {
@@ -3160,8 +3428,8 @@
 
             100% {
                 opacity: 1;
-                transform: translateY(0) scale(1);
-                filter: blur(0) brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
@@ -3191,20 +3459,20 @@
         @keyframes wHolyBreathe {
             0% {
                 opacity: 0;
-                transform: scale(0.7);
-                filter: brightness(8) blur(18px);
+                transform: translate3d(0, 0, 0) scale(0.82);
+                filter: brightness(2.2) blur(6px);
             }
 
             55% {
                 opacity: 1;
-                transform: scale(1.04);
-                filter: brightness(1.5) blur(0);
+                transform: translate3d(0, 0, 0) scale(1.03);
+                filter: brightness(1.25) blur(0);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
-                filter: brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
@@ -3216,20 +3484,20 @@
         @keyframes wSanctify {
             0% {
                 opacity: 0;
-                filter: brightness(10) saturate(0) blur(10px);
-                transform: scale(1.1);
+                filter: brightness(2.4) saturate(0.35) blur(5px);
+                transform: translate3d(0, 0, 0) scale(1.06);
             }
 
             50% {
                 opacity: 1;
-                filter: brightness(2.5) saturate(0.4) blur(2px);
-                transform: scale(1.02);
+                filter: brightness(1.35) saturate(0.75) blur(1px);
+                transform: translate3d(0, 0, 0) scale(1.02);
             }
 
             100% {
                 opacity: 1;
-                filter: brightness(1) saturate(1) blur(0);
-                transform: scale(1);
+                filter: none;
+                transform: translate3d(0, 0, 0) scale(1);
             }
         }
 
@@ -3241,22 +3509,22 @@
         @keyframes wAscend {
             0% {
                 opacity: 0;
-                transform: translateY(35px) scale(0.85);
-                filter: blur(12px) brightness(4);
-                text-shadow: 0 0 40px gold;
+                transform: translate3d(0, 28px, 0) scale(0.9);
+                filter: blur(5px) brightness(1.9);
+                text-shadow: 0 0 22px gold;
             }
 
             65% {
                 opacity: 1;
-                transform: translateY(-4px) scale(1.02);
-                filter: blur(0) brightness(1.2);
+                transform: translate3d(0, -3px, 0) scale(1.02);
+                filter: blur(0) brightness(1.14);
                 text-shadow: 0 0 8px gold;
             }
 
             100% {
                 opacity: 1;
-                transform: translateY(0) scale(1);
-                filter: brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
                 text-shadow: none;
             }
         }
@@ -3269,20 +3537,20 @@
         @keyframes wMistForm {
             0% {
                 opacity: 0;
-                transform: rotate(-18deg) scale(1.5);
-                filter: blur(22px) brightness(2.5);
+                transform: translate3d(0, 0, 0) rotate(-10deg) scale(1.2);
+                filter: blur(7px) brightness(1.65);
             }
 
             55% {
                 opacity: 0.9;
-                transform: rotate(4deg) scale(1.04);
-                filter: blur(4px) brightness(1.2);
+                transform: translate3d(0, 0, 0) rotate(3deg) scale(1.03);
+                filter: blur(2px) brightness(1.12);
             }
 
             100% {
                 opacity: 1;
-                transform: rotate(0deg) scale(1);
-                filter: blur(0) brightness(1);
+                transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+                filter: none;
             }
         }
 
@@ -3294,20 +3562,20 @@
         @keyframes wRapture {
             0% {
                 opacity: 0;
-                transform: translateY(-55px) scale(1.25);
-                filter: blur(18px) brightness(6);
+                transform: translate3d(0, -38px, 0) scale(1.14);
+                filter: blur(6px) brightness(2.1);
             }
 
             60% {
                 opacity: 1;
-                transform: translateY(5px) scale(0.97);
-                filter: blur(0) brightness(1.3);
+                transform: translate3d(0, 4px, 0) scale(0.98);
+                filter: blur(0) brightness(1.18);
             }
 
             100% {
                 opacity: 1;
-                transform: translateY(0) scale(1);
-                filter: brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
@@ -3316,133 +3584,135 @@
         /* Last char appears first, ripples backward to first char */
         /* ============================================================= */
 
-        .fx-shockwave .lyric-text .char,
-        .fx-overdrive .lyric-text .char,
-        .fx-nuke .lyric-text .char,
-        .fx-voltage .lyric-text .char,
-        .fx-riot .lyric-text .char {
+        .fx-shockwave .char,
+        .fx-overdrive .char,
+        .fx-nuke .char,
+        .fx-voltage .char,
+        .fx-riot .char {
             display: inline-block;
             vertical-align: baseline !important;
             line-height: 1 !important;
             margin: 0 !important;
             padding: 0 !important;
             will-change: transform, opacity, filter;
+            backface-visibility: hidden;
         }
 
         /* 6. SHOCKWAVE: Chars explode from microscale then snap back, reverse cascade */
-        .fx-shockwave .lyric-text .char {
+        .fx-shockwave .char {
             animation: pShockwave var(--fade-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
         }
 
         @keyframes pShockwave {
             0% {
                 opacity: 0;
-                transform: scale(6);
-                filter: blur(10px) brightness(8);
+                transform: translate3d(0, 0, 0) scale(2.4);
+                filter: blur(4px) brightness(2.4);
             }
 
             55% {
                 opacity: 1;
-                transform: scale(0.88);
-                filter: blur(0) brightness(1.4);
+                transform: translate3d(0, 0, 0) scale(0.92);
+                filter: blur(0) brightness(1.18);
             }
 
             75% {
-                transform: scale(1.06);
+                transform: translate3d(0, 0, 0) scale(1.04);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1);
+                transform: translate3d(0, 0, 0) scale(1);
                 filter: brightness(1);
             }
         }
 
         /* 7. OVERDRIVE: Chars slam from extreme horizontal skew, reverse cascade */
-        .fx-overdrive .lyric-text .char {
+        .fx-overdrive .char {
             animation: pOverdrive var(--fade-speed) cubic-bezier(0.68, -0.55, 0.265, 1.55) both;
         }
 
         @keyframes pOverdrive {
             0% {
                 opacity: 0;
-                transform: skewX(-50deg) scaleX(4);
-                filter: blur(12px) brightness(10);
+                transform: translate3d(0, 0, 0) skewX(-28deg) scaleX(1.9);
+                filter: blur(4px) brightness(2.2);
             }
 
             55% {
                 opacity: 1;
-                transform: skewX(6deg) scaleX(0.96);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) skewX(5deg) scaleX(0.96);
+                filter: blur(0) brightness(1.12);
             }
 
             100% {
                 opacity: 1;
-                transform: skewX(0deg) scaleX(1);
+                transform: translate3d(0, 0, 0) skewX(0deg) scaleX(1);
+                filter: none;
             }
         }
 
         /* 8. NUKE: Chars implode from microscale then bounce, reverse cascade */
-        .fx-nuke .lyric-text .char {
+        .fx-nuke .char {
             animation: pNuke var(--fade-speed) cubic-bezier(0.5, -0.3, 0.1, 1.5) both;
         }
 
         @keyframes pNuke {
             0% {
                 opacity: 0;
-                transform: scale(0.01) translateY(-80px);
-                filter: blur(20px) brightness(12);
+                transform: translate3d(0, -58px, 0) scale(0.35);
+                filter: blur(6px) brightness(2.4);
             }
 
             45% {
                 opacity: 1;
-                transform: scale(1.4) translateY(12px);
-                filter: blur(0) brightness(2);
+                transform: translate3d(0, 10px, 0) scale(1.18);
+                filter: blur(0) brightness(1.25);
             }
 
             72% {
-                transform: scale(0.88) translateY(-5px);
+                transform: translate3d(0, -4px, 0) scale(0.92);
             }
 
             100% {
                 opacity: 1;
-                transform: scale(1) translateY(0);
-                filter: brightness(1);
+                transform: translate3d(0, 0, 0) scale(1);
+                filter: none;
             }
         }
 
         /* 9. VOLTAGE: Electric crackling – odd from top, even from bottom (sequential) */
-        .fx-voltage .lyric-text .char {
+        .fx-voltage .char {
             animation: pVoltageA var(--fade-speed) steps(4) both;
         }
 
-        .fx-voltage .lyric-text .char:nth-child(even) {
+        .fx-voltage .char:nth-child(even) {
             animation-name: pVoltageB;
         }
 
         @keyframes pVoltageA {
             0% {
                 opacity: 0;
-                transform: translateY(-25px) scaleY(0.05);
-                filter: brightness(15) blur(4px);
+                transform: translate3d(0, -22px, 0) scaleY(0.28);
+                filter: brightness(2.4) blur(2px);
                 color: #00e5ff;
             }
 
             25% {
                 opacity: 1;
-                transform: translateY(6px) scaleY(1.4);
-                filter: brightness(4);
+                transform: translate3d(0, 5px, 0) scaleY(1.22);
+                filter: brightness(1.55);
             }
 
             75% {
-                transform: translateY(-2px) scaleY(1);
-                filter: brightness(1.6);
+                transform: translate3d(0, -2px, 0) scaleY(1);
+                filter: brightness(1.16);
             }
 
             100% {
                 opacity: 1;
-                transform: translateY(0) scaleY(1);
-                filter: brightness(1);
+                transform: translate3d(0, 0, 0) scaleY(1);
+                filter: none;
                 color: inherit;
             }
         }
@@ -3450,26 +3720,26 @@
         @keyframes pVoltageB {
             0% {
                 opacity: 0;
-                transform: translateY(25px) scaleY(0.05);
-                filter: brightness(15) blur(4px);
+                transform: translate3d(0, 22px, 0) scaleY(0.28);
+                filter: brightness(2.4) blur(2px);
                 color: #ffff00;
             }
 
             25% {
                 opacity: 1;
-                transform: translateY(-6px) scaleY(1.4);
-                filter: brightness(4);
+                transform: translate3d(0, -5px, 0) scaleY(1.22);
+                filter: brightness(1.55);
             }
 
             75% {
-                transform: translateY(2px) scaleY(1);
-                filter: brightness(1.6);
+                transform: translate3d(0, 2px, 0) scaleY(1);
+                filter: brightness(1.16);
             }
 
             100% {
                 opacity: 1;
-                transform: translateY(0) scaleY(1);
-                filter: brightness(1);
+                transform: translate3d(0, 0, 0) scaleY(1);
+                filter: none;
                 color: inherit;
             }
         }
@@ -3490,42 +3760,42 @@
         @keyframes pRiotA {
             0% {
                 opacity: 0;
-                transform: rotate(-200deg) scale(3.5) translateX(-25px);
-                filter: blur(8px);
+                transform: translate3d(-18px, 0, 0) rotate(-90deg) scale(1.7);
+                filter: blur(3px);
             }
 
             100% {
                 opacity: 1;
-                transform: rotate(0deg) scale(1) translateX(0);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+                filter: none;
             }
         }
 
         @keyframes pRiotB {
             0% {
                 opacity: 0;
-                transform: rotate(200deg) scale(3.5) translateY(-25px);
-                filter: blur(8px);
+                transform: translate3d(0, -18px, 0) rotate(90deg) scale(1.7);
+                filter: blur(3px);
             }
 
             100% {
                 opacity: 1;
-                transform: rotate(0deg) scale(1) translateY(0);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+                filter: none;
             }
         }
 
         @keyframes pRiotC {
             0% {
                 opacity: 0;
-                transform: rotate(-90deg) scale(0.1) translateX(25px);
-                filter: blur(8px);
+                transform: translate3d(18px, 0, 0) rotate(-70deg) scale(0.48);
+                filter: blur(3px);
             }
 
             100% {
                 opacity: 1;
-                transform: rotate(0deg) scale(1) translateX(0);
-                filter: blur(0);
+                transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+                filter: none;
             }
         }
 
@@ -3744,7 +4014,8 @@
         [class*='loop-'].loop-handoff-active:not(.loop-ready) .char {
             transition: transform var(--loop-handoff-ms) var(--loop-handoff-ease),
                 filter var(--loop-handoff-ms) ease,
-                opacity var(--loop-handoff-ms) ease !important;
+                opacity var(--loop-handoff-ms) ease,
+                text-shadow var(--loop-handoff-ms) ease !important;
         }
 
         [class*='loop-'].loop-handoff .lyric-wrapper::after {
@@ -3787,62 +4058,80 @@
 
         @keyframes wlDeepShadow {
             0% {
-                transform: scale(0.97) translateY(5px);
-                filter: blur(0.8px) brightness(0.82);
+                transform: scale(0.95) translateY(10px);
+                filter: drop-shadow(0 4px 12px rgba(255, 255, 255, 0.08)) drop-shadow(0 15px 35px rgba(0, 0, 0, 0.6)) brightness(0.8);
                 opacity: 0.85;
             }
 
             100% {
-                transform: scale(1.03) translateY(-5px);
-                filter: blur(0) brightness(1.12);
+                transform: scale(1.05) translateY(-10px);
+                filter: drop-shadow(0 10px 25px rgba(255, 255, 255, 0.2)) drop-shadow(0 20px 45px rgba(0, 0, 0, 0.8)) brightness(1.15);
                 opacity: 1;
             }
         }
 
         /* 2. Diagonal Light Scan */
+        .loop-worship-line-elegant-diagonal-scan.loop-ready .lyric-wrapper {
+            transform: translateX(-12px) translateY(4px) rotate(-0.5deg) skewX(-1deg);
+            filter: brightness(0.78);
+            text-shadow: 0 0 4px rgba(255, 255, 255, 0.1);
+        }
         .loop-worship-line-elegant-diagonal-scan .lyric-wrapper {
-            animation: wlDiagScan 6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+            animation: wlDiagScan 5s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
             animation-delay: 0s;
         }
 
         @keyframes wlDiagScan {
             0% {
-                transform: translateX(-8px) translateY(3px);
-                filter: brightness(0.8);
-            }
-
-            48% {
-                transform: translateX(0) translateY(0);
-                filter: brightness(1.22);
+                transform: translateX(-12px) translateY(4px) rotate(-0.5deg) skewX(-1deg);
+                filter: brightness(0.78);
+                text-shadow: 0 0 4px rgba(255, 255, 255, 0.1);
             }
 
             100% {
-                transform: translateX(8px) translateY(-3px);
-                filter: brightness(0.8);
+                transform: translateX(12px) translateY(-4px) rotate(0.5deg) skewX(1deg);
+                filter: brightness(1.22);
+                text-shadow: 0 0 25px rgba(255, 255, 255, 0.45), 0 0 10px rgba(255, 255, 255, 0.2);
             }
         }
 
         /* 3. Soft Smoke Rise */
+        .loop-worship-line-soft-smoke.loop-ready .lyric-wrapper {
+            transform: translateY(12px) scale(0.95) skewX(-2deg);
+            filter: blur(1.5px) brightness(0.75);
+            opacity: 0.8;
+        }
         .loop-worship-line-soft-smoke .lyric-wrapper {
-            animation: wlSoftSmoke 6s ease-in-out infinite alternate;
+            animation: wlSoftSmoke 5s ease-in-out infinite alternate;
             animation-delay: 0s;
         }
 
         @keyframes wlSoftSmoke {
             0% {
-                transform: translateY(6px);
-                filter: blur(1.2px) brightness(0.78);
-                opacity: 0.82;
+                transform: translateY(12px) scale(0.95) skewX(-2deg);
+                filter: blur(1.5px) brightness(0.75);
+                opacity: 0.8;
+            }
+
+            50% {
+                transform: translateY(0px) scale(1.02) skewX(1.5deg);
+                filter: blur(0.5px) brightness(1.1);
+                opacity: 0.98;
             }
 
             100% {
-                transform: translateY(-6px);
-                filter: blur(0) brightness(1.1);
-                opacity: 1;
+                transform: translateY(-12px) scale(0.98) skewX(-1.5deg);
+                filter: blur(2.5px) brightness(0.85);
+                opacity: 0.65;
             }
         }
 
         /* 4. Sacred Breath — deep inhale scale */
+        .loop-worship-line-sacred-breath.loop-ready .lyric-wrapper {
+            transform: scale(0.92);
+            filter: blur(1.2px) brightness(0.75) drop-shadow(0 0 10px rgba(255, 255, 255, 0));
+            opacity: 0.75;
+        }
         .loop-worship-line-sacred-breath .lyric-wrapper {
             animation: wlSacredBreath 4.5s ease-in-out infinite alternate;
             animation-delay: 0s;
@@ -3850,133 +4139,138 @@
 
         @keyframes wlSacredBreath {
             0% {
-                transform: scale(0.94);
-                filter: blur(0.8px) brightness(0.78);
-                opacity: 0.8;
+                transform: scale(0.92);
+                filter: blur(1.2px) brightness(0.75) drop-shadow(0 0 10px rgba(255, 255, 255, 0));
+                opacity: 0.75;
             }
 
             100% {
-                transform: scale(1.06);
-                filter: blur(0) brightness(1.15);
+                transform: scale(1.08);
+                filter: blur(0) brightness(1.2) drop-shadow(0 0 22px rgba(255, 255, 255, 0.35));
                 opacity: 1;
             }
         }
 
         /* 5. Holy Glow Drift */
+        .loop-worship-line-glow-drift.loop-ready .lyric-wrapper {
+            transform: translate3d(-10px, 4px, 0) scale(0.95);
+            filter: drop-shadow(0 2px 8px rgba(255, 255, 255, 0.05)) brightness(0.8) blur(0.5px);
+        }
         .loop-worship-line-glow-drift .lyric-wrapper {
-            animation: wlGlowDrift 5.5s ease-in-out infinite;
+            animation: wlGlowDrift 7s ease-in-out infinite;
             animation-delay: 0s;
         }
 
         @keyframes wlGlowDrift {
             0% {
-                transform: translateX(-5px) scale(0.97);
-                filter: brightness(0.82);
+                transform: translate3d(-10px, 4px, 0) scale(0.95);
+                filter: drop-shadow(0 2px 8px rgba(255, 255, 255, 0.05)) brightness(0.8) blur(0.5px);
             }
 
             50% {
-                transform: translateX(5px) scale(1.04);
-                filter: brightness(1.25);
+                transform: translate3d(10px, -4px, 0) scale(1.05);
+                filter: drop-shadow(0 12px 30px rgba(255, 255, 255, 0.3)) brightness(1.25) blur(0);
             }
 
             100% {
-                transform: translateX(-5px) scale(0.97);
-                filter: brightness(0.82);
+                transform: translate3d(-10px, 4px, 0) scale(0.95);
+                filter: drop-shadow(0 2px 8px rgba(255, 255, 255, 0.05)) brightness(0.8) blur(0.5px);
             }
         }
 
         /* ============================================================ */
-        /* --- WORSHIP WORD (5) — .word, alternate-reverse bergantian - */
-        /* Odd = zoom/glow UP, Even = zoom/glow DOWN (true alternating) */
+        /* --- WORSHIP WORD (5) — .word, delay acak terdistribusi     - */
         /* ============================================================ */
 
         /* 1. Deep Zoom — random delays untuk natural feel */
         .loop-worship-word-depth-shadow .lyric-text .word {
             display: inline-block;
-            animation: wwDepthZoom 9s ease-in-out infinite alternate;
+            animation: wwDepthZoom 8s ease-in-out infinite alternate;
         }
 
-        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(1) {
-            animation-delay: 0ms;
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(6n+1) {
+            animation-delay: 0s;
         }
 
-        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(2) {
-            animation-delay: 450ms;
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(6n+2) {
+            animation-delay: 1.5s;
         }
 
-        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(3) {
-            animation-delay: 1100ms;
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(6n+3) {
+            animation-delay: 4s;
         }
 
-        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(4) {
-            animation-delay: 650ms;
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(6n+4) {
+            animation-delay: 2.5s;
         }
 
-        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(5) {
-            animation-delay: 1500ms;
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(6n+5) {
+            animation-delay: 5.5s;
         }
 
-        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(6) {
-            animation-delay: 250ms;
-        }
-
-        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(n+7) {
-            animation-delay: 850ms;
+        .loop-worship-word-depth-shadow .lyric-text .word:nth-child(6n) {
+            animation-delay: 6.8s;
         }
 
         @keyframes wwDepthZoom {
             0% {
-                transform: scale(0.98) translateY(2px);
-                filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.4)) brightness(0.95);
+                transform: scale(0.92) translateY(4px);
+                filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3)) brightness(0.85);
             }
 
             100% {
-                transform: scale(1.02) translateY(-2px);
-                filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.08)) brightness(1.05);
+                transform: scale(1.08) translateY(-4px);
+                filter: drop-shadow(0 15px 25px rgba(0, 0, 0, 0.45)) brightness(1.15);
             }
         }
 
         /* 2. Deep Glow — random delays untuk natural feel */
         .loop-worship-word-silk-scan .lyric-text .word {
             display: inline-block;
-            animation: wwDeepGlow 9s ease-in-out infinite alternate;
+            animation: wwDeepGlow 8s ease-in-out infinite alternate;
         }
 
-        .loop-worship-word-silk-scan .lyric-text .word:nth-child(1) {
-            animation-delay: 100ms;
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(6n+1) {
+            animation-delay: 0.8s;
         }
 
-        .loop-worship-word-silk-scan .lyric-text .word:nth-child(2) {
-            animation-delay: 750ms;
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(6n+2) {
+            animation-delay: 3s;
         }
 
-        .loop-worship-word-silk-scan .lyric-text .word:nth-child(3) {
-            animation-delay: 400ms;
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(6n+3) {
+            animation-delay: 1.8s;
         }
 
-        .loop-worship-word-silk-scan .lyric-text .word:nth-child(4) {
-            animation-delay: 1200ms;
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(6n+4) {
+            animation-delay: 4.5s;
         }
 
-        .loop-worship-word-silk-scan .lyric-text .word:nth-child(5) {
-            animation-delay: 600ms;
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(6n+5) {
+            animation-delay: 5.8s;
         }
 
-        .loop-worship-word-silk-scan .lyric-text .word:nth-child(n+6) {
-            animation-delay: 950ms;
+        .loop-worship-word-silk-scan .lyric-text .word:nth-child(6n) {
+            animation-delay: 0s;
         }
 
         @keyframes wwDeepGlow {
             0% {
-                filter: brightness(0.92) drop-shadow(0 0 2px rgba(255, 255, 255, 0.1));
-                transform: scale(0.99);
-                opacity: 0.92;
+                filter: brightness(0.8) drop-shadow(0 0 0 rgba(255, 255, 255, 0));
+                transform: scale(0.97) translateY(1.5px);
+                opacity: 0.75;
+            }
+
+            50% {
+                filter: brightness(1.2) drop-shadow(0 0 12px rgba(255, 255, 255, 0.4));
+                transform: scale(1.03) translateY(-1.5px);
+                opacity: 1;
             }
 
             100% {
-                filter: brightness(1.08) drop-shadow(0 0 6px rgba(255, 255, 255, 0.25));
-                transform: scale(1.01);
-                opacity: 1;
+                filter: brightness(0.8) drop-shadow(0 0 0 rgba(255, 255, 255, 0));
+                transform: scale(0.97) translateY(1.5px);
+                opacity: 0.75;
             }
         }
 
@@ -3986,36 +4280,40 @@
             animation: wwSmokeFloat 10s ease-in-out infinite alternate;
         }
 
-        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(1) {
-            animation-delay: 200ms;
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(6n+1) {
+            animation-delay: 1.2s;
         }
 
-        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(2) {
-            animation-delay: 700ms;
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(6n+2) {
+            animation-delay: 4.5s;
         }
 
-        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(3) {
-            animation-delay: 1100ms;
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(6n+3) {
+            animation-delay: 6.8s;
         }
 
-        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(4) {
-            animation-delay: 550ms;
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(6n+4) {
+            animation-delay: 3s;
         }
 
-        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(n+5) {
-            animation-delay: 1400ms;
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(6n+5) {
+            animation-delay: 8.5s;
+        }
+
+        .loop-worship-word-soft-smoke .lyric-text .word:nth-child(6n) {
+            animation-delay: 0.5s;
         }
 
         @keyframes wwSmokeFloat {
             0% {
-                transform: translateY(2px) scale(0.99);
-                filter: blur(0.3px) brightness(0.92);
-                opacity: 0.90;
+                transform: translateY(5px) rotate(-1deg) scale(0.95);
+                filter: blur(0.8px) brightness(0.82);
+                opacity: 0.75;
             }
 
             100% {
-                transform: translateY(-2px) scale(1.01);
-                filter: blur(0) brightness(1.05);
+                transform: translateY(-5px) rotate(1deg) scale(1.05);
+                filter: blur(0) brightness(1.12);
                 opacity: 1;
             }
         }
@@ -4026,35 +4324,39 @@
             animation: wwFloatDevot 9s ease-in-out infinite alternate;
         }
 
-        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(1) {
-            animation-delay: 300ms;
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(6n+1) {
+            animation-delay: 0.9s;
         }
 
-        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(2) {
-            animation-delay: 850ms;
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(6n+2) {
+            animation-delay: 2.8s;
         }
 
-        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(3) {
-            animation-delay: 600ms;
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(6n+3) {
+            animation-delay: 5.5s;
         }
 
-        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(4) {
-            animation-delay: 1350ms;
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(6n+4) {
+            animation-delay: 1.8s;
         }
 
-        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(n+5) {
-            animation-delay: 450ms;
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(6n+5) {
+            animation-delay: 7.2s;
+        }
+
+        .loop-worship-word-floating-devotion .lyric-text .word:nth-child(6n) {
+            animation-delay: 4s;
         }
 
         @keyframes wwFloatDevot {
             0% {
-                transform: translateY(1.5px) scale(0.98);
-                filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.3)) brightness(0.94);
+                transform: translateY(6px) rotate(-0.8deg) scale(0.94);
+                filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.25)) brightness(0.88);
             }
 
             100% {
-                transform: translateY(-1.5px) scale(1.02);
-                filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.15)) brightness(1.06);
+                transform: translateY(-6px) rotate(0.8deg) scale(1.06);
+                filter: drop-shadow(0 8px 16px rgba(255, 255, 255, 0.15)) brightness(1.12);
             }
         }
 
@@ -4064,32 +4366,41 @@
             animation: wwGentleRise 10s ease-in-out infinite alternate;
         }
 
-        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(1) {
-            animation-delay: 150ms;
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(6n+1) {
+            animation-delay: 0.5s;
         }
 
-        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(2) {
-            animation-delay: 1000ms;
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(6n+2) {
+            animation-delay: 3.5s;
         }
 
-        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(3) {
-            animation-delay: 700ms;
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(6n+3) {
+            animation-delay: 6.2s;
         }
 
-        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(4) {
-            animation-delay: 1450ms;
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(6n+4) {
+            animation-delay: 1.8s;
+        }
+
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(6n+5) {
+            animation-delay: 8s;
+        }
+
+        .loop-worship-word-gentle-rise .lyric-text .word:nth-child(6n) {
+            animation-delay: 4.8s;
         }
 
         @keyframes wwGentleRise {
             0% {
-                transform: translateY(1.5px) scale(0.99);
-                opacity: 0.92;
+                transform: translateY(6px) scale(0.95);
+                opacity: 0.78;
+                filter: brightness(0.88);
             }
 
             100% {
-                transform: translateY(-1.5px) scale(1.01);
+                transform: translateY(-6px) scale(1.04);
                 opacity: 1;
-                filter: brightness(1.04);
+                filter: brightness(1.12);
             }
         }
 
@@ -4129,24 +4440,19 @@
 
         /* 2. Metal Sheen sweep */
         .loop-praise-line-metal-sheen .lyric-wrapper {
-            animation: plMetalSheen 4.5s linear infinite;
+            animation: plMetalSheen 3.5s cubic-bezier(0.25, 1, 0.5, 1) infinite alternate;
             animation-delay: 0s;
         }
 
         @keyframes plMetalSheen {
             0% {
-                transform: translateX(-8px);
-                filter: brightness(0.82);
-            }
-
-            45% {
-                transform: translateX(0);
-                filter: brightness(1.35);
+                transform: translateX(-15px);
+                filter: drop-shadow(-30px 10px 20px rgba(0, 0, 0, 0.75)) brightness(0.8);
             }
 
             100% {
-                transform: translateX(8px);
-                filter: brightness(0.82);
+                transform: translateX(15px);
+                filter: drop-shadow(30px 10px 20px rgba(0, 0, 0, 0.75)) brightness(1.3);
             }
         }
 
@@ -4177,24 +4483,19 @@
 
         /* 4. Shadow Running */
         .loop-praise-line-shadow-running .lyric-wrapper {
-            animation: plShadowRun 3s ease-in-out infinite;
+            animation: plShadowRun 2s ease-in-out infinite alternate;
             animation-delay: 0s;
         }
 
         @keyframes plShadowRun {
             0% {
-                transform: translateX(-5px);
-                filter: brightness(0.82);
-            }
-
-            50% {
-                transform: translateX(5px);
-                filter: brightness(1.22);
+                transform: translate3d(-10px, -2px, 0);
+                filter: drop-shadow(-8px 0 4px rgba(255, 0, 128, 0.5)) drop-shadow(8px 0 4px rgba(0, 255, 128, 0.3)) brightness(0.85);
             }
 
             100% {
-                transform: translateX(-5px);
-                filter: brightness(0.82);
+                transform: translate3d(10px, 2px, 0);
+                filter: drop-shadow(8px 0 4px rgba(0, 255, 128, 0.5)) drop-shadow(-8px 0 4px rgba(255, 0, 128, 0.3)) brightness(1.2);
             }
         }
 
@@ -4218,19 +4519,19 @@
 
         /* 6. Outline Drift */
         .loop-praise-line-outline-drift .lyric-wrapper {
-            animation: plOutDrift 3.5s ease-in-out infinite alternate;
+            animation: plOutDrift 2.5s ease-in-out infinite alternate;
             animation-delay: 0s;
         }
 
         @keyframes plOutDrift {
             0% {
-                transform: translateX(-10px);
-                filter: brightness(0.82);
+                transform: translate3d(-15px, 0, 0);
+                filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.7)) brightness(0.8);
             }
 
             100% {
-                transform: translateX(10px);
-                filter: brightness(1.2);
+                transform: translate3d(15px, 0, 0) scale(1.03);
+                filter: drop-shadow(0 0 12px var(--main-color, #00ffff)) brightness(1.25);
             }
         }
 
@@ -4331,55 +4632,66 @@
 
         /* 11. VHS Drift */
         .loop-praise-line-premium-vhs .lyric-wrapper {
-            animation: plVHSDrift 0.1s infinite;
+            animation: plVHSDrift 2.5s ease-in-out infinite;
             animation-delay: 0s;
         }
 
         @keyframes plVHSDrift {
+            0%, 100% {
+                transform: translate(0, 0) skewX(-1.5deg);
+                filter: drop-shadow(2px 0 1px rgba(255, 0, 0, 0.5)) drop-shadow(-2px 0 1px rgba(0, 255, 255, 0.5)) brightness(0.95);
+            }
 
-            0%,
-            100% {
-                transform: translate(0, 0) skewX(0);
+            25% {
+                transform: translate(-3px, 1px) skewX(1deg);
+                filter: drop-shadow(-3px 0 2px rgba(255, 0, 0, 0.6)) drop-shadow(3px 0 2px rgba(0, 0, 255, 0.6)) brightness(1.1);
             }
 
             50% {
-                transform: translate(-2px, 0.5px) skewX(0.8deg);
-                filter: drop-shadow(3px 0 0 rgba(255, 0, 0, 0.4)) drop-shadow(-3px 0 0 rgba(0, 255, 255, 0.4));
+                transform: translate(2px, -1px) skewX(-0.8deg);
+                filter: drop-shadow(1px 0 1px rgba(255, 0, 0, 0.4)) drop-shadow(-1px 0 1px rgba(0, 0, 255, 0.4)) brightness(0.9);
+            }
+
+            75% {
+                transform: translate(-1px, 2px) skewX(1.5deg);
+                filter: drop-shadow(-2px 0 1.5px rgba(255, 0, 0, 0.55)) drop-shadow(2px 0 1.5px rgba(0, 0, 255, 0.55)) brightness(1.05);
             }
         }
 
         /* 12. Panorama Drift */
         .loop-praise-line-shadow-panorama .lyric-wrapper {
-            animation: plPanorama 6s linear infinite alternate;
+            animation: plPanorama 4s cubic-bezier(0.25, 1, 0.5, 1) infinite alternate;
             animation-delay: 0s;
         }
 
         @keyframes plPanorama {
             0% {
-                text-shadow: -40px 0 30px rgba(0, 0, 0, 0.7);
-                filter: brightness(0.92);
+                transform: skewX(-4deg) translateX(-15px);
+                text-shadow: -80px 0 25px rgba(0, 0, 0, 0.8), -40px 0 15px rgba(0, 0, 0, 0.4);
+                filter: brightness(0.85);
             }
 
             100% {
-                text-shadow: 40px 0 30px rgba(0, 0, 0, 0.4);
-                filter: brightness(1.08);
+                transform: skewX(4deg) translateX(15px);
+                text-shadow: 80px 0 25px rgba(0, 0, 0, 0.8), 40px 0 15px rgba(0, 0, 0, 0.4);
+                filter: brightness(1.15);
             }
         }
 
         /* 13. Full Screen Zoom Shadow */
         .loop-praise-line-cinematic-breath .lyric-text {
-            animation: plCineBreath 5s ease-in-out infinite alternate;
+            animation: plCineBreath 3s ease-in-out infinite alternate;
         }
 
         @keyframes plCineBreath {
             0% {
-                transform: scale(1);
-                filter: drop-shadow(0 5px 25px rgba(0, 0, 0, 0.7));
+                transform: scale(0.92) translate3d(0, 8px, 0);
+                filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.8)) brightness(0.75);
             }
 
             100% {
-                transform: scale(1.02);
-                filter: drop-shadow(0 10px 40px rgba(0, 0, 0, 0.4)) brightness(1.08);
+                transform: scale(1.08) translate3d(0, -8px, 0);
+                filter: drop-shadow(0 25px 40px rgba(0, 0, 0, 0.6)) brightness(1.25);
             }
         }
 
@@ -5126,176 +5438,177 @@
         /* ========================================== */
         /* PRAISE/WORSHIP RANDOM LETTER TRANSITIONS   */
         /* ========================================== */
-        .fx-praise-letter-zoom-spark .lyric-text .char,
-        .fx-praise-letter-strobe-pop .lyric-text .char,
-        .fx-praise-letter-prism-snap .lyric-text .char,
-        .fx-praise-letter-whip-grid .lyric-text .char,
-        .fx-praise-letter-flash-cut .lyric-text .char,
-        .fx-praise-letter-orbit-hit .lyric-text .char,
-        .fx-praise-letter-bass-drop .lyric-text .char,
-        .fx-praise-letter-chroma-burst .lyric-text .char,
-        .fx-praise-letter-tile-shatter .lyric-text .char,
-        .fx-praise-letter-speed-ramp .lyric-text .char,
-        .fx-worship-letter-candle-rise .lyric-text .char,
-        .fx-worship-letter-mist-bloom .lyric-text .char,
-        .fx-worship-letter-lens-prayer .lyric-text .char,
-        .fx-worship-letter-silk-drift .lyric-text .char,
-        .fx-worship-letter-soft-iris .lyric-text .char,
-        .fx-worship-letter-cloud-form .lyric-text .char,
-        .fx-worship-letter-golden-hour .lyric-text .char,
-        .fx-worship-letter-deep-focus .lyric-text .char,
-        .fx-worship-letter-veil-cascade .lyric-text .char,
-        .fx-worship-letter-cinematic-breathe .lyric-text .char {
+        .fx-praise-letter-zoom-spark .char,
+        .fx-praise-letter-strobe-pop .char,
+        .fx-praise-letter-prism-snap .char,
+        .fx-praise-letter-whip-grid .char,
+        .fx-praise-letter-flash-cut .char,
+        .fx-praise-letter-orbit-hit .char,
+        .fx-praise-letter-bass-drop .char,
+        .fx-praise-letter-chroma-burst .char,
+        .fx-praise-letter-tile-shatter .char,
+        .fx-praise-letter-speed-ramp .char,
+        .fx-worship-letter-candle-rise .char,
+        .fx-worship-letter-mist-bloom .char,
+        .fx-worship-letter-lens-prayer .char,
+        .fx-worship-letter-silk-drift .char,
+        .fx-worship-letter-soft-iris .char,
+        .fx-worship-letter-cloud-form .char,
+        .fx-worship-letter-golden-hour .char,
+        .fx-worship-letter-deep-focus .char,
+        .fx-worship-letter-veil-cascade .char,
+        .fx-worship-letter-cinematic-breathe .char {
             display: inline-block;
             vertical-align: baseline !important;
             line-height: 1 !important;
             will-change: transform, opacity, filter;
             transform-origin: center;
+            backface-visibility: hidden;
         }
 
-        .fx-praise-letter-zoom-spark .lyric-text .char { animation: prZoomSpark max(0.18s, calc(var(--fade-speed) - 0.16s)) cubic-bezier(0.16, 1, 0.3, 1) both; }
-        .fx-praise-letter-strobe-pop .lyric-text .char { animation: prStrobePop max(0.16s, calc(var(--fade-speed) - 0.22s)) steps(4) both; }
-        .fx-praise-letter-prism-snap .lyric-text .char { animation: prPrismSnap max(0.2s, calc(var(--fade-speed) - 0.14s)) cubic-bezier(0.22, 1, 0.36, 1) both; }
-        .fx-praise-letter-whip-grid .lyric-text .char { animation: prWhipGrid max(0.18s, calc(var(--fade-speed) - 0.18s)) cubic-bezier(0.34, 1.56, 0.64, 1) both; }
-        .fx-praise-letter-flash-cut .lyric-text .char { animation: prFlashCut max(0.15s, calc(var(--fade-speed) - 0.24s)) cubic-bezier(0.1, 0.9, 0.2, 1) both; }
-        .fx-praise-letter-orbit-hit .lyric-text .char { animation: prOrbitHit max(0.2s, calc(var(--fade-speed) - 0.12s)) cubic-bezier(0.175, 0.885, 0.32, 1.275) both; }
-        .fx-praise-letter-bass-drop .lyric-text .char { animation: prBassDrop max(0.2s, calc(var(--fade-speed) - 0.15s)) cubic-bezier(0.5, -0.25, 0.12, 1.45) both; }
-        .fx-praise-letter-chroma-burst .lyric-text .char { animation: prChromaBurst max(0.18s, calc(var(--fade-speed) - 0.18s)) steps(3) both; }
-        .fx-praise-letter-tile-shatter .lyric-text .char { animation: prTileShatter max(0.22s, calc(var(--fade-speed) - 0.1s)) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-        .fx-praise-letter-speed-ramp .lyric-text .char { animation: prSpeedRamp max(0.16s, calc(var(--fade-speed) - 0.2s)) cubic-bezier(0.05, 0.9, 0.14, 1) both; }
+        .fx-praise-letter-zoom-spark .char { animation: prZoomSpark max(0.18s, calc(var(--fade-speed) - 0.16s)) cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .fx-praise-letter-strobe-pop .char { animation: prStrobePop max(0.16s, calc(var(--fade-speed) - 0.22s)) steps(4) both; }
+        .fx-praise-letter-prism-snap .char { animation: prPrismSnap max(0.24s, calc(var(--fade-speed) - 0.08s)) cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .fx-praise-letter-whip-grid .char { animation: prWhipGrid max(0.18s, calc(var(--fade-speed) - 0.18s)) cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+        .fx-praise-letter-flash-cut .char { animation: prFlashCut max(0.15s, calc(var(--fade-speed) - 0.24s)) cubic-bezier(0.1, 0.9, 0.2, 1) both; }
+        .fx-praise-letter-orbit-hit .char { animation: prOrbitHit max(0.2s, calc(var(--fade-speed) - 0.12s)) cubic-bezier(0.175, 0.885, 0.32, 1.275) both; }
+        .fx-praise-letter-bass-drop .char { animation: prBassDrop max(0.2s, calc(var(--fade-speed) - 0.15s)) cubic-bezier(0.5, -0.25, 0.12, 1.45) both; }
+        .fx-praise-letter-chroma-burst .char { animation: prChromaBurst max(0.24s, calc(var(--fade-speed) - 0.08s)) steps(2, end) both; }
+        .fx-praise-letter-tile-shatter .char { animation: prTileShatter max(0.26s, calc(var(--fade-speed) - 0.04s)) cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .fx-praise-letter-speed-ramp .char { animation: prSpeedRamp max(0.16s, calc(var(--fade-speed) - 0.2s)) cubic-bezier(0.05, 0.9, 0.14, 1) both; }
 
-        .fx-worship-letter-candle-rise .lyric-text .char { animation: woCandleRise calc(var(--fade-speed) + 0.34s) cubic-bezier(0.22, 1, 0.36, 1) both; }
-        .fx-worship-letter-mist-bloom .lyric-text .char { animation: woMistBloom calc(var(--fade-speed) + 0.48s) ease-out both; }
-        .fx-worship-letter-lens-prayer .lyric-text .char { animation: woLensPrayer calc(var(--fade-speed) + 0.38s) cubic-bezier(0.16, 1, 0.3, 1) both; }
-        .fx-worship-letter-silk-drift .lyric-text .char { animation: woSilkDrift calc(var(--fade-speed) + 0.46s) cubic-bezier(0.25, 1, 0.5, 1) both; }
-        .fx-worship-letter-soft-iris .lyric-text .char { animation: woSoftIris calc(var(--fade-speed) + 0.42s) ease-out both; }
-        .fx-worship-letter-cloud-form .lyric-text .char { animation: woCloudForm calc(var(--fade-speed) + 0.52s) cubic-bezier(0.22, 1, 0.36, 1) both; }
-        .fx-worship-letter-golden-hour .lyric-text .char { animation: woGoldenHour calc(var(--fade-speed) + 0.4s) ease-out both; }
-        .fx-worship-letter-deep-focus .lyric-text .char { animation: woDeepFocus calc(var(--fade-speed) + 0.46s) cubic-bezier(0.25, 1, 0.5, 1) both; }
-        .fx-worship-letter-veil-cascade .lyric-text .char { animation: woVeilCascade calc(var(--fade-speed) + 0.5s) cubic-bezier(0.16, 1, 0.3, 1) both; }
-        .fx-worship-letter-cinematic-breathe .lyric-text .char { animation: woCinematicBreathe calc(var(--fade-speed) + 0.58s) ease-out both; }
+        .fx-worship-letter-candle-rise .char { animation: woCandleRise calc(var(--fade-speed) + 0.34s) cubic-bezier(0.22, 1, 0.36, 1) both; }
+        .fx-worship-letter-mist-bloom .char { animation: woMistBloom calc(var(--fade-speed) + 0.48s) ease-out both; }
+        .fx-worship-letter-lens-prayer .char { animation: woLensPrayer calc(var(--fade-speed) + 0.38s) cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .fx-worship-letter-silk-drift .char { animation: woSilkDrift calc(var(--fade-speed) + 0.46s) cubic-bezier(0.25, 1, 0.5, 1) both; }
+        .fx-worship-letter-soft-iris .char { animation: woSoftIris calc(var(--fade-speed) + 0.42s) ease-out both; }
+        .fx-worship-letter-cloud-form .char { animation: woCloudForm calc(var(--fade-speed) + 0.52s) cubic-bezier(0.22, 1, 0.36, 1) both; }
+        .fx-worship-letter-golden-hour .char { animation: woGoldenHour calc(var(--fade-speed) + 0.4s) ease-out both; }
+        .fx-worship-letter-deep-focus .char { animation: woDeepFocus calc(var(--fade-speed) + 0.46s) cubic-bezier(0.25, 1, 0.5, 1) both; }
+        .fx-worship-letter-veil-cascade .char { animation: woVeilCascade calc(var(--fade-speed) + 0.5s) cubic-bezier(0.16, 1, 0.3, 1) both; }
+        .fx-worship-letter-cinematic-breathe .char { animation: woCinematicBreathe calc(var(--fade-speed) + 0.58s) ease-out both; }
 
         @keyframes prZoomSpark {
-            0% { opacity: 0; transform: scale(5) rotate(12deg); filter: blur(12px) brightness(8); }
-            62% { opacity: 1; transform: scale(0.88) rotate(-2deg); filter: blur(0) brightness(1.8); }
-            100% { opacity: 1; transform: scale(1) rotate(0); filter: brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, 0, 0) scale(2.1) rotate(8deg); filter: blur(4px) brightness(2.2); }
+            62% { opacity: 1; transform: translate3d(0, 0, 0) scale(0.9) rotate(-2deg); filter: blur(0) brightness(1.25); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1) rotate(0); filter: none; }
         }
 
         @keyframes prStrobePop {
-            0% { opacity: 0; transform: scale(0.1) translateY(30px); filter: brightness(12) contrast(2); }
-            35% { opacity: 1; transform: scale(1.35) translateY(-8px); }
-            70% { transform: scale(0.92) translateY(2px); }
-            100% { opacity: 1; transform: scale(1) translateY(0); filter: brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, 24px, 0) scale(0.45); filter: brightness(2.3) contrast(1.25); }
+            35% { opacity: 1; transform: translate3d(0, -6px, 0) scale(1.18); }
+            70% { transform: translate3d(0, 2px, 0) scale(0.96); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes prPrismSnap {
-            0% { opacity: 0; transform: translate3d(-22px, 18px, 0) scale(1.9); filter: blur(7px) hue-rotate(120deg) saturate(2.4); text-shadow: -7px 0 #00e5ff, 7px 0 #ff2d75; }
-            72% { opacity: 1; transform: translate3d(3px, -2px, 0) scale(0.98); filter: blur(0) saturate(1.5); }
+            0% { opacity: 0; transform: translate3d(-14px, 12px, 0) scale(1.32); filter: blur(3px) saturate(1.45); text-shadow: -4px 0 #00e5ff, 4px 0 #ff2d75; }
+            68% { opacity: 1; transform: translate3d(2px, -1px, 0) scale(0.99); filter: blur(0) saturate(1.12); text-shadow: -1px 0 #00e5ff, 1px 0 #ff2d75; }
             100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; text-shadow: none; }
         }
 
         @keyframes prWhipGrid {
-            0% { opacity: 0; transform: translateX(-120px) skewX(-42deg) scaleX(3); filter: blur(10px) brightness(5); }
-            58% { opacity: 1; transform: translateX(8px) skewX(8deg) scaleX(0.92); filter: blur(0); }
-            100% { opacity: 1; transform: translateX(0) skewX(0) scaleX(1); }
+            0% { opacity: 0; transform: translate3d(-72px, 0, 0) skewX(-24deg) scaleX(1.7); filter: blur(4px) brightness(1.8); }
+            58% { opacity: 1; transform: translate3d(6px, 0, 0) skewX(6deg) scaleX(0.94); filter: blur(0); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) skewX(0) scaleX(1); filter: none; }
         }
 
         @keyframes prFlashCut {
-            0% { opacity: 0; transform: scale(2.8) rotate(-8deg); filter: brightness(20) blur(2px); }
-            25% { opacity: 1; transform: scale(0.72) rotate(4deg); }
-            60% { transform: scale(1.12) rotate(-1deg); }
-            100% { opacity: 1; transform: scale(1) rotate(0); filter: brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, 0, 0) scale(1.8) rotate(-6deg); filter: brightness(2.6) blur(1px); }
+            25% { opacity: 1; transform: translate3d(0, 0, 0) scale(0.78) rotate(3deg); }
+            60% { transform: translate3d(0, 0, 0) scale(1.08) rotate(-1deg); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1) rotate(0); filter: none; }
         }
 
         @keyframes prOrbitHit {
-            0% { opacity: 0; transform: rotate(180deg) translateX(90px) rotate(-180deg) scale(0.3); filter: blur(8px) brightness(7); }
-            70% { opacity: 1; transform: rotate(-12deg) translateX(4px) rotate(12deg) scale(1.08); filter: blur(0) brightness(1.4); }
-            100% { opacity: 1; transform: rotate(0) translateX(0) scale(1); filter: brightness(1); }
+            0% { opacity: 0; transform: rotate(120deg) translateX(54px) rotate(-120deg) scale(0.55); filter: blur(3px) brightness(2); }
+            70% { opacity: 1; transform: rotate(-8deg) translateX(3px) rotate(8deg) scale(1.06); filter: blur(0) brightness(1.18); }
+            100% { opacity: 1; transform: rotate(0) translateX(0) scale(1); filter: none; }
         }
 
         @keyframes prBassDrop {
-            0% { opacity: 0; transform: translateY(-95px) scaleY(0.08) scaleX(1.8); filter: blur(9px) brightness(9); }
-            48% { opacity: 1; transform: translateY(16px) scaleY(1.35) scaleX(0.86); }
-            78% { transform: translateY(-4px) scaleY(0.96) scaleX(1.04); }
-            100% { opacity: 1; transform: translateY(0) scale(1); filter: brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, -64px, 0) scaleY(0.28) scaleX(1.45); filter: blur(4px) brightness(2.1); }
+            48% { opacity: 1; transform: translate3d(0, 12px, 0) scaleY(1.2) scaleX(0.9); }
+            78% { transform: translate3d(0, -3px, 0) scaleY(0.98) scaleX(1.03); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes prChromaBurst {
-            0% { opacity: 0; transform: translate(24px, -18px) scale(1.6); filter: blur(8px) hue-rotate(240deg) contrast(2); text-shadow: 8px 0 #00e5ff, -8px 0 #ff2d75; }
-            55% { opacity: 1; transform: translate(-3px, 2px) scale(1.05); }
-            100% { opacity: 1; transform: translate(0, 0) scale(1); filter: none; text-shadow: none; }
+            0% { opacity: 0; transform: translate3d(16px, -12px, 0) scale(1.28); filter: blur(3px) contrast(1.28); text-shadow: 4px 0 #00e5ff, -4px 0 #ff2d75; }
+            55% { opacity: 1; transform: translate3d(-2px, 1px, 0) scale(1.04); text-shadow: 2px 0 #00e5ff, -2px 0 #ff2d75; }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; text-shadow: none; }
         }
 
         @keyframes prTileShatter {
-            0% { opacity: 0; transform: perspective(500px) rotateX(80deg) rotateY(-55deg) translateY(38px) scale(0.65); filter: blur(7px) brightness(4); }
-            64% { opacity: 1; transform: perspective(500px) rotateX(-8deg) rotateY(6deg) translateY(-3px) scale(1.05); filter: blur(0); }
-            100% { opacity: 1; transform: perspective(500px) rotateX(0) rotateY(0) translateY(0) scale(1); }
+            0% { opacity: 0; transform: perspective(720px) rotateX(48deg) rotateY(-28deg) translate3d(0, 24px, 0) scale(0.78); filter: blur(3px) brightness(1.9); }
+            64% { opacity: 1; transform: perspective(720px) rotateX(-4deg) rotateY(4deg) translate3d(0, -2px, 0) scale(1.04); filter: blur(0) brightness(1.08); }
+            100% { opacity: 1; transform: perspective(720px) rotateX(0) rotateY(0) translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes prSpeedRamp {
-            0% { opacity: 0; transform: translateX(-180px) scaleX(4); filter: blur(18px) brightness(8); }
-            52% { opacity: 1; transform: translateX(10px) scaleX(0.85); filter: blur(1px) brightness(1.5); }
-            100% { opacity: 1; transform: translateX(0) scaleX(1); filter: blur(0) brightness(1); }
+            0% { opacity: 0; transform: translate3d(-110px, 0, 0) scaleX(2.2); filter: blur(5px) brightness(2.2); }
+            52% { opacity: 1; transform: translate3d(8px, 0, 0) scaleX(0.88); filter: blur(1px) brightness(1.22); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scaleX(1); filter: none; }
         }
 
         @keyframes woCandleRise {
-            0% { opacity: 0; transform: translateY(42px) scale(0.82); filter: blur(14px) brightness(3.5); text-shadow: 0 0 28px rgba(255, 196, 95, 0.85); }
-            68% { opacity: 1; transform: translateY(-3px) scale(1.02); filter: blur(1px) brightness(1.25); }
-            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0) brightness(1); text-shadow: none; }
+            0% { opacity: 0; transform: translate3d(0, 34px, 0) scale(0.86); filter: blur(5px) brightness(1.9); text-shadow: 0 0 20px rgba(255, 196, 95, 0.72); }
+            68% { opacity: 1; transform: translate3d(0, -3px, 0) scale(1.02); filter: blur(1px) brightness(1.16); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes woMistBloom {
-            0% { opacity: 0; transform: scale(1.65); filter: blur(26px) saturate(0.8) brightness(2.4); }
-            70% { opacity: 0.95; transform: scale(1.03); filter: blur(3px) brightness(1.15); }
-            100% { opacity: 1; transform: scale(1); filter: blur(0) brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, 0, 0) scale(1.28); filter: blur(8px) saturate(0.9) brightness(1.55); }
+            70% { opacity: 0.95; transform: translate3d(0, 0, 0) scale(1.03); filter: blur(2px) brightness(1.1); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes woLensPrayer {
-            0% { opacity: 0; transform: translateY(18px) scale(1.2); filter: blur(18px) brightness(5); text-shadow: 0 0 42px rgba(255, 255, 255, 0.85); }
-            58% { opacity: 1; transform: translateY(-2px) scale(1.02); filter: blur(2px) brightness(1.35); }
-            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0) brightness(1); text-shadow: none; }
+            0% { opacity: 0; transform: translate3d(0, 16px, 0) scale(1.12); filter: blur(6px) brightness(2); text-shadow: 0 0 28px rgba(255, 255, 255, 0.72); }
+            58% { opacity: 1; transform: translate3d(0, -2px, 0) scale(1.02); filter: blur(1px) brightness(1.2); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes woSilkDrift {
-            0% { opacity: 0; transform: translate3d(-36px, 22px, 0) rotate(-7deg) scale(1.12); filter: blur(18px); }
+            0% { opacity: 0; transform: translate3d(-28px, 18px, 0) rotate(-6deg) scale(1.08); filter: blur(6px); }
             74% { opacity: 1; transform: translate3d(2px, -2px, 0) rotate(1deg) scale(1.01); filter: blur(1px); }
-            100% { opacity: 1; transform: translate3d(0, 0, 0) rotate(0) scale(1); filter: blur(0); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) rotate(0) scale(1); filter: none; }
         }
 
         @keyframes woSoftIris {
-            0% { opacity: 0; transform: scale(0.42); filter: blur(20px) brightness(4); }
-            64% { opacity: 1; transform: scale(1.04); filter: blur(2px) brightness(1.22); }
-            100% { opacity: 1; transform: scale(1); filter: blur(0) brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, 0, 0) scale(0.58); filter: blur(7px) brightness(1.9); }
+            64% { opacity: 1; transform: translate3d(0, 0, 0) scale(1.04); filter: blur(1px) brightness(1.15); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes woCloudForm {
-            0% { opacity: 0; transform: translateY(-18px) scale(1.45); filter: blur(28px) opacity(0.25); }
-            72% { opacity: 0.92; transform: translateY(2px) scale(1.02); filter: blur(4px) opacity(0.95); }
-            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0) opacity(1); }
+            0% { opacity: 0; transform: translate3d(0, -16px, 0) scale(1.2); filter: blur(8px) opacity(0.45); }
+            72% { opacity: 0.92; transform: translate3d(0, 2px, 0) scale(1.02); filter: blur(2px) opacity(0.95); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes woGoldenHour {
             0% { opacity: 0; transform: translateY(26px) scale(0.92); filter: sepia(1) blur(18px) brightness(3.2); text-shadow: 0 0 36px rgba(255, 190, 92, 0.78); }
             70% { opacity: 1; transform: translateY(-2px) scale(1.02); filter: sepia(0.25) blur(1px) brightness(1.25); }
-            100% { opacity: 1; transform: translateY(0) scale(1); filter: none; text-shadow: none; }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
         }
 
         @keyframes woDeepFocus {
-            0% { opacity: 0; transform: translateZ(0) scale(1.35); filter: blur(30px) contrast(0.55) brightness(2.1); }
-            75% { opacity: 1; transform: scale(1.01); filter: blur(3px) contrast(0.92) brightness(1.08); }
-            100% { opacity: 1; transform: scale(1); filter: blur(0) contrast(1) brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, 0, 0) scale(1.18); filter: blur(8px) contrast(0.72) brightness(1.45); }
+            75% { opacity: 1; transform: translate3d(0, 0, 0) scale(1.01); filter: blur(2px) contrast(0.95) brightness(1.06); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         @keyframes woVeilCascade {
-            0% { opacity: 0; transform: translateY(-58px) scaleY(1.28); filter: blur(16px) brightness(2.8); }
-            68% { opacity: 1; transform: translateY(4px) scaleY(0.98); filter: blur(2px) brightness(1.2); }
-            100% { opacity: 1; transform: translateY(0) scaleY(1); filter: blur(0) brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, -42px, 0) scaleY(1.16); filter: blur(6px) brightness(1.7); }
+            68% { opacity: 1; transform: translate3d(0, 4px, 0) scaleY(0.98); filter: blur(1px) brightness(1.12); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scaleY(1); filter: none; }
         }
 
         @keyframes woCinematicBreathe {
-            0% { opacity: 0; transform: scale(0.72) translateY(20px); filter: blur(22px) brightness(2.7); }
-            56% { opacity: 1; transform: scale(1.06) translateY(-2px); filter: blur(2px) brightness(1.16); }
-            100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0) brightness(1); }
+            0% { opacity: 0; transform: translate3d(0, 18px, 0) scale(0.82); filter: blur(7px) brightness(1.7); }
+            56% { opacity: 1; transform: translate3d(0, -2px, 0) scale(1.05); filter: blur(1px) brightness(1.12); }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
         }
 
         /* ========================================== */
@@ -5332,6 +5645,11 @@
             width: 100%;
             height: 100%;
             border: none;
+            background: transparent !important;
+            will-change: transform;
+            transform: translate3d(0, 0, 0);
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
         }
 
         .layer-audio {

@@ -1,4 +1,22 @@
 
+// ============================================================
+// SECURITY: Protect canvas getContext dari prototype override.
+// Harus dijalankan SEBELUM IIFE watermark agar tidak bisa
+// dikosongkan dengan: HTMLCanvasElement.prototype.getContext = ...
+// ============================================================
+(function () {
+    'use strict';
+    try {
+        var _origGetCtx = HTMLCanvasElement.prototype.getContext;
+        Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+            value: _origGetCtx,
+            writable: false,
+            configurable: false,
+            enumerable: false
+        });
+    } catch (e) { /* already locked or old browser */ }
+})();
+
 (function (global) {
     'use strict';
 
@@ -7,6 +25,8 @@
     var _graceExpired = false;
     var _graceTimer = null;
     var _nonce = null;
+    var _lastSeq = 0;          // Anti-replay: sequence terakhir yang diterima
+    var _lastHandleMs = 0;     // Rate-limit: timestamp terakhir license msg diproses
     var _canvas = null;
     var _observer = null;
     var _pulseTimer = null;
@@ -16,6 +36,7 @@
     var _logoReady = false;
     var GRACE_FIRST_MS = 3000;
     var GRACE_RECONNECT_MS = 10000;
+    var LICENSE_MSG_RATELIMIT_MS = 800;  // Throttle license msg: max 1 per 800ms
 
 
     var _img = new Image();
@@ -155,6 +176,13 @@
                 _createCanvas();
             } else {
                 _canvas.setAttribute(_ATTR, '1');
+                // CSS Opacity Hardening: Reset inline style jika di-override paksa
+                // (misal via DevTools, CSS injection, atau script attack)
+                var cs = window.getComputedStyle(_canvas);
+                if (parseFloat(cs.opacity) < 0.05 || cs.display === 'none' || cs.visibility === 'hidden') {
+                    _canvas.style.cssText = '';  // Clear semua inline style override
+                    _injectCSS();               // Re-inject CSS !important rules
+                }
             }
         }, 1000);
     }
@@ -182,7 +210,7 @@
     }
 
     // =========================================================================
-    // NONCE VERIFICATION
+    // NONCE + SEQUENCE VERIFICATION
     // =========================================================================
     function _verifyNonce(msg) {
         if (!msg || typeof msg !== 'object') return false;
@@ -192,6 +220,8 @@
         if (_nonce === null) {
             if (msg._nonce && typeof msg._nonce === 'string' && msg._nonce.length >= 32) {
                 _nonce = msg._nonce;
+                // Set baseline sequence dari pesan pertama
+                if (typeof msg._seq === 'number') { _lastSeq = msg._seq; }
                 return true;
             }
             if (isLicenseMsg) return false;
@@ -199,7 +229,18 @@
         }
 
         if (isLicenseMsg) {
-            return (msg._nonce === _nonce);
+            // 1. Nonce harus cocok
+            if (msg._nonce !== _nonce) return false;
+
+            // 2. Sequence harus selalu naik — cegah replay attack
+            if (typeof msg._seq === 'number') {
+                if (msg._seq <= _lastSeq) {
+                    // Sequence sama atau mundur = pesan lama yang di-replay
+                    return false;
+                }
+                _lastSeq = msg._seq;
+            }
+            return true;
         }
 
         return true;
@@ -229,6 +270,8 @@
 
         onConnect: function () {
             _nonce = null;
+            _lastSeq = 0;       // Reset sequence — server baru punya counter baru mulai dari 0
+            _lastHandleMs = 0;  // Reset rate-limit agar license_status pertama langsung diproses
             _deactivate();
             var isReconnect = _confirmed;
             _startGrace(isReconnect);
@@ -249,14 +292,26 @@
 
         /**
          * Dipanggil untuk setiap message WS.
-         * Verifikasi nonce, handle license_status dan force_watermark.
+         * Verifikasi nonce + sequence, handle license_status dan force_watermark.
+         * Rate-limited untuk pesan license agar tidak bisa di-spam dari console.
          *
          * @param {object} msg - Parsed JSON dari WS
          * @returns {boolean} true jika message sudah di-handle
          */
         handleMessage: function (msg) {
-            if (!_verifyNonce(msg)) {
+            var isLicenseMsg = (msg && (msg.action === 'license_status' || msg.action === 'force_watermark'));
 
+            // Rate-limit untuk pesan license: max 1 per LICENSE_MSG_RATELIMIT_MS
+            // Ini mencegah flood attack dari console (loop panggil handleMessage)
+            if (isLicenseMsg) {
+                var now = Date.now();
+                if (now - _lastHandleMs < LICENSE_MSG_RATELIMIT_MS) {
+                    return false;  // Terlalu cepat, abaikan
+                }
+                _lastHandleMs = now;
+            }
+
+            if (!_verifyNonce(msg)) {
                 _cancelGrace();
                 _confirmed = false;
                 _activate();

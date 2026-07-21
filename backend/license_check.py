@@ -271,6 +271,13 @@ async def activate_license_patched(payload: LicensePayload, request: Request):
                 await manager.broadcast({ "action": "license_status", "valid":  True})
             LICENSE_CHECK_DONE = True
             print(f"[LICENSE] Aktivasi berhasil untuk {key} | HWID: {current_hwid[:8]}...")
+            # Refresh integrity baseline setelah aktivasi lisensi baru
+            try:
+                import file_integrity
+                await asyncio.to_thread(file_integrity._run_first_install)
+                print("[LICENSE] Integrity baseline refreshed after activation.")
+            except Exception as e:
+                print(f"[LICENSE] Integrity refresh error: {e}")
             return {"status": "success", "message": "Aktivasi berhasil!"}
         else:
             return {"status": "error", "message": "Gagal mengenkripsi HWID di server (akses ditolak atau offline)"}

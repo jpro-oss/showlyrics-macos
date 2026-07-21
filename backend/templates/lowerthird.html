@@ -2,30 +2,47 @@
 <html>
 
 <head>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link id="lt-font-link" rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Montserrat:wght@900&display=swap">
     <link rel="stylesheet" href="/static/lt.css?v={{ VERSION }}">
+    <style>
+        .cam-output-iframe,
+        .scripture-iframe,
+        .iframe-layer,
+        .layer-lyrics,
+        .lt-banner,
+        #alert-crawl,
+        .crawl-content {
+            will-change: transform, opacity;
+        }
+    </style>
     <script src="/static/wm.js?v={{ VERSION }}"></script>
 </head>
 
 <body>
     <!-- 📹 AUDIENCE CAMERA LAYER -->
-    <iframe id="audience-cam-iframe" src="/audience_cam" class="cam-output-iframe"></iframe>
+    <iframe id="audience-cam-iframe" src="about:blank" data-src="/audience_cam" class="cam-output-iframe"></iframe>
 
-    <iframe src="/scripture-lt" id="scripture-lt-frame" class="scripture-iframe"></iframe>
-    <iframe src="/background" id="frame-video" class="iframe-layer layer-video"></iframe>
-    <iframe src="/photo" id="frame-photo" class="iframe-layer layer-photo"></iframe>
-    <iframe src="/presentation" id="frame-presentation" class="iframe-layer layer-presentation"></iframe>
+    <iframe src="about:blank" data-src="/scripture-lt" id="scripture-lt-frame" class="scripture-iframe"></iframe>
+    <iframe src="about:blank" data-src="/background" id="frame-video" class="iframe-layer layer-video"></iframe>
+    <iframe src="about:blank" data-src="/photo" id="frame-photo" class="iframe-layer layer-photo"></iframe>
+    <iframe src="about:blank" data-src="/presentation" id="frame-presentation" class="iframe-layer layer-presentation"></iframe>
 
 
-    <div id="lt-container" class="layer-lyrics">
-        <div id="lt-text" class="lt-text"></div>
+    <div id="lt-scale-wrapper" class="scale-wrapper">
+        <div id="lt-container" class="layer-lyrics">
+            <div id="lt-banner" class="lt-banner">
+                <div id="lt-text" class="lt-text"></div>
+            </div>
+        </div>
+        <div id="alert-crawl">
+            <div id="crawl-text" class="crawl-content"></div>
+        </div>
     </div>
-    <div id="alert-crawl">
-        <div id="crawl-text" class="crawl-content"></div>
-    </div>
 
-    <script src="/static/lt.js?v={{ VERSION }}"></script>
+    <script src="/static/lt.js?v={{ VERSION }}" defer></script>
 </body>
 
 </html>

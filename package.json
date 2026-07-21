@@ -6,7 +6,9 @@
   "author": "JProduction",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder"
+    "dist": "electron-builder --mac",
+    "dist:dmg": "electron-builder --mac dmg",
+    "dist:zip": "electron-builder --mac zip"
   },
   "build": {
     "appId": "com.showlyrics.engine",
@@ -14,25 +16,35 @@
     "directories": {
       "output": "dist"
     },
-    "win": {
+    "mac": {
       "target": [
         {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "target": "dmg",
+          "arch": ["universal"]
+        },
+        {
+          "target": "zip",
+          "arch": ["universal"]
         }
       ],
-      "icon": "src/app.ico"
+      "icon": "src/app.icns",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "darkModeSupport": true,
+      "minimumSystemVersion": "12.0"
     },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": true,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "installerIcon": "src/app.ico",
-      "uninstallerIcon": "src/app.ico",
-      "uninstallDisplayName": "ShowLyricsApp ${version}"
+    "dmg": {
+      "title": "ShowLyricsApp ${version}",
+      "icon": "src/app.icns",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "files": [
       "src/**/*",
@@ -43,9 +55,7 @@
       {
         "from": "bin",
         "to": "bin",
-        "filter": [
-          "**/*"
-        ]
+        "filter": ["**/*"]
       }
     ],
     "asar": true

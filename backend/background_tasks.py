@@ -9,18 +9,39 @@ import hashlib
 import fitz  # PyMuPDF
 from config import load_json, save_json
 
+# ---- Helper untuk ekstrak dimensi foto (module-level, bukan closure per loop) ----
+def _get_photo_dims(fpath: str) -> dict:
+    """Baca dimensi gambar di executor thread. Tidak perlu closure baru tiap iterasi."""
+    from PIL import Image
+    try:
+        with Image.open(fpath) as img:
+            return {"duration": 0.0, "width": img.width, "height": img.height}
+    except Exception:
+        return {"duration": 0.0, "width": 0, "height": 0}
+
 # ConnectionManager instance placeholder, will be injected from main.py
 manager = None
 
 def get_ffmpeg_path():
+    """
+    Dapatkan path ke ffmpeg binary macOS.
+    Binary bernama 'ffmpeg' (tanpa ekstensi) — sesuai macOS convention.
+    Setelah PyInstaller extraction, pastikan executable permission di-set.
+    """
     try:
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.dirname(os.path.abspath(__file__))
-    
-    ffmpeg_path = os.path.join(base_path, "ffmpeg.exe")
+
+    ffmpeg_path = os.path.join(base_path, "ffmpeg")
     if os.path.exists(ffmpeg_path):
+        # Pastikan executable permission ter-set (kritis setelah PyInstaller extract)
+        try:
+            os.chmod(ffmpeg_path, 0o755)
+        except Exception:
+            pass
         return ffmpeg_path
+    # Fallback: gunakan ffmpeg dari PATH sistem (jika user install via Homebrew)
     return "ffmpeg"
 
 def calculate_file_hash(file_path: str) -> str:
@@ -38,51 +59,100 @@ def calculate_file_hash(file_path: str) -> str:
         return ""
 
 def extract_video_metadata(video_path: str) -> dict:
-    """Use ffmpeg to extract video duration and resolution without transcode."""
+    """Use PyAV to extract video duration and resolution without transcode."""
     metadata = {"duration": 0.0, "width": 0, "height": 0}
     if not os.path.exists(video_path):
         return metadata
     
+    container = None
     try:
-        ffmpeg_bin = get_ffmpeg_path()
-        creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-        
-        # Run ffmpeg -i to print file info to stderr
-        cmd = [ffmpeg_bin, "-hide_banner", "-i", video_path]
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=creation_flags
-        )
-        _, stderr_data = process.communicate()
-        stderr_str = stderr_data.decode(errors="ignore")
-        
-        # Parse duration
-        # Example: Duration: 00:01:23.45, start: ...
-        duration_match = re.search(r"Duration:\s*(\d{2}):(\d{2}):(\d{2})\.(\d{2,3})", stderr_str)
-        if duration_match:
-            hours = int(duration_match.group(1))
-            minutes = int(duration_match.group(2))
-            seconds = int(duration_match.group(3))
-            ms = int(duration_match.group(4))
-            # Handle 2-digit vs 3-digit ms
-            ms_val = ms / 100.0 if len(duration_match.group(4)) == 2 else ms / 1000.0
-            total_sec = hours * 3600 + minutes * 60 + seconds + ms_val
-            metadata["duration"] = round(total_sec, 3)
-            
-        # Parse resolution
-        # Example: Stream #0:0(und): Video: h264 (High) (avc1 / 0x31637661), yuv420p, 1920x1080 [SAR 1:1 DAR 16:9], ...
-        res_match = re.search(r"Video:.*?, (\d{3,4})x(\d{3,4})", stderr_str)
-        if res_match:
-            metadata["width"] = int(res_match.group(1))
-            metadata["height"] = int(res_match.group(2))
-            
-        print(f"[METADATA] Extracted for {os.path.basename(video_path)}: {metadata}")
+        import av
+        container = av.open(video_path)
+        if container.streams.video:
+            video_stream = container.streams.video[0]
+            duration = 0.0
+            if video_stream.duration:
+                duration = float(video_stream.duration * video_stream.time_base)
+            elif container.duration:
+                duration = float(container.duration / 1000000.0)
+                
+            metadata["duration"] = round(duration, 3)
+            metadata["width"] = video_stream.width or 0
+            metadata["height"] = video_stream.height or 0
+            print(f"[METADATA] Extracted for {os.path.basename(video_path)}: {metadata}")
+        else:
+            print(f"[METADATA] No video stream found in {video_path}")
     except Exception as e:
         print(f"[METADATA] Error extracting metadata for {video_path}: {e}")
+    finally:
+        if container:
+            try:
+                container.close()
+            except Exception:
+                pass
         
     return metadata
+
+def generate_thumbnail_sync(video_path: str, thumb_path: str) -> bool:
+    """Synchronous CPU-bound PyAV thumbnail generator to run in executor."""
+    import av
+    from PIL import Image
+    container = None
+    try:
+        container = av.open(video_path)
+        if not container.streams.video:
+            print(f"[THUMB] No video stream in {video_path}")
+            return False
+            
+        video_stream = container.streams.video[0]
+        
+        # Seek candidates: seek to 2 seconds, if duration is shorter or unknown, adjust
+        duration_sec = float(video_stream.duration * video_stream.time_base) if video_stream.duration else 0.0
+        target_sec = 2.0
+        if duration_sec > 0.0 and target_sec >= duration_sec:
+            target_sec = duration_sec / 2.0
+            
+        pts = int(target_sec / video_stream.time_base)
+        container.seek(pts, stream=video_stream)
+        
+        found_frame = None
+        for packet in container.demux(video_stream):
+            for frame in packet.decode():
+                found_frame = frame
+                break
+            if found_frame:
+                break
+                
+        # If seeking target did not yield a frame, rewind and get the first frame
+        if not found_frame:
+            container.seek(0, stream=video_stream)
+            for packet in container.demux(video_stream):
+                for frame in packet.decode():
+                    found_frame = frame
+                    break
+                if found_frame:
+                    break
+                    
+        if found_frame:
+            img = found_frame.to_image()
+            w, h = img.size
+            new_w = 320
+            new_h = int(h * (new_w / w)) if w > 0 else 180
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            img.save(thumb_path, "JPEG", quality=85)
+            return True
+        else:
+            print(f"[THUMB] No frames could be decoded from {video_path}")
+            return False
+    except Exception as e:
+        print(f"[THUMB] PyAV error: {e}")
+        return False
+    finally:
+        if container:
+            try:
+                container.close()
+            except Exception:
+                pass
 
 async def generate_thumbnail_task(video_path: str, thumb_path: str, item_id: str = None, category: str = "video"):
     os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
@@ -97,48 +167,8 @@ async def generate_thumbnail_task(video_path: str, thumb_path: str, item_id: str
         return
         
     try:
-        ffmpeg_bin = get_ffmpeg_path()
-        creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-        seek_candidates = ["00:00:02.000", "00:00:01.000", "00:00:00.500", "00:00:00.000"]
-        success = False
-
-        for seek in seek_candidates:
-            cmd = [
-                ffmpeg_bin,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-ss",
-                seek,
-                "-i",
-                video_path,
-                "-frames:v",
-                "1",
-                "-vf",
-                "thumbnail,scale=320:-1",
-                "-q:v",
-                "3",
-                thumb_path,
-            ]
-
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-                creationflags=creation_flags
-            )
-            _, stderr_data = await process.communicate()
-
-            if process.returncode == 0 and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                success = True
-                break
-
-            if os.path.exists(thumb_path) and os.path.getsize(thumb_path) == 0:
-                os.remove(thumb_path)
-
-            if stderr_data:
-                print(f"[THUMB] ffmpeg attempt failed ({seek}) for {video_path}: {stderr_data.decode(errors='ignore').strip()}")
+        loop = asyncio.get_running_loop()
+        success = await loop.run_in_executor(None, generate_thumbnail_sync, video_path, thumb_path)
         
         if item_id and success and os.path.exists(thumb_path) and manager:
             await manager.broadcast({"type": "thumb_ready", "id": item_id, "category": category})
@@ -169,7 +199,7 @@ async def generate_photo_thumbnail_task(photo_path: str, thumb_path: str, item_i
                 img.thumbnail((320, 180))
                 img.save(thumb_path, "JPEG", quality=85)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, resize_photo)
 
         if item_id and os.path.exists(thumb_path) and manager:
@@ -178,117 +208,269 @@ async def generate_photo_thumbnail_task(photo_path: str, thumb_path: str, item_i
     except Exception as e:
         print(f"[THUMB] Error generating photo thumbnail for {photo_path}: {e}")
 
-def extract_pdf_sync(pdf_path: str, output_folder: str):
-    try:
-        os.makedirs(output_folder, exist_ok=True)
-        doc = fitz.open(pdf_path)
-        slide_count = len(doc)
-        
-        for i in range(slide_count):
-            page = doc.load_page(i)
-            pix = page.get_pixmap(dpi=150) 
-            pix.save(os.path.join(output_folder, f"slide_{i+1}.jpg"))
-            
-        return {"status": "success", "slides": slide_count}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+# Global presentation conversion queue and worker loop
+presentation_queue = asyncio.Queue()
 
-async def extract_pdf_to_slides(pdf_path: str, output_folder: str, item_id: str):
-    loop = asyncio.get_event_loop()
-    res = await loop.run_in_executor(None, extract_pdf_sync, pdf_path, output_folder)
-    
+async def enqueue_presentation(file_path: str, out_folder: str, item_id: str):
+    filename = os.path.basename(file_path)
     if manager:
-        if res.get("status") == "success":
-            await manager.broadcast({
-                "type": "presentation_ready",
-                "id": item_id,
-                "category": "presentation"
-            })
-        else:
-            await manager.broadcast({
-                "type": "presentation_failed",
-                "id": item_id,
-                "category": "presentation",
-                "message": res.get("message", "Unknown error")
-            })
+        await manager.broadcast({
+            "type": "presentation_queued",
+            "id": item_id,
+            "name": filename,
+            "category": "presentation"
+        })
+    await presentation_queue.put((file_path, out_folder, item_id, filename))
 
-def extract_pptx_sync(pptx_path: str, output_folder: str):
-    import pythoncom
-    import win32com.client
-    
-    pythoncom.CoInitialize()
-    powerpoint = None
-    pres = None
-    try:
-        if os.path.exists(output_folder):
-            try: shutil.rmtree(output_folder)
-            except: pass
-        os.makedirs(output_folder, exist_ok=True)
-        
-        powerpoint = win32com.client.DispatchEx("Powerpoint.Application")
-        powerpoint.DisplayAlerts = 1
-        
-        pres = powerpoint.Presentations.Open(
-            FileName=os.path.normpath(os.path.abspath(pptx_path)),
-            ReadOnly=1,
-            Untitled=0,
-            WithWindow=0
-        )
-        
-        pres.Export(os.path.normpath(os.path.abspath(output_folder)), "JPG", 1920, 1080)
-        pres.Close()
-        pres = None
-        
-        slides = glob.glob(os.path.join(output_folder, "*"))
-        
-        def get_slide_num(filepath):
-            m = re.search(r'\d+', os.path.basename(filepath))
-            return int(m.group()) if m else 0
+async def start_presentation_worker():
+    print("[SYSTEM] Starting background presentation worker loop...")
+    asyncio.create_task(presentation_worker_loop())
+
+async def presentation_worker_loop():
+    while True:
+        try:
+            file_path, out_folder, item_id, filename = await presentation_queue.get()
+            if manager:
+                await manager.broadcast({
+                    "type": "presentation_processing",
+                    "id": item_id,
+                    "name": filename,
+                    "category": "presentation"
+                })
             
-        slides_sorted = sorted(slides, key=get_slide_num)
-        
-        temp_files = []
-        for idx, slide_file in enumerate(slides_sorted):
-            temp_name = os.path.join(output_folder, f"temp_{idx+1}.jpg")
-            shutil.move(slide_file, temp_name)
-            temp_files.append(temp_name)
-            
-        for idx, temp_file in enumerate(temp_files):
-            final_name = os.path.join(output_folder, f"slide_{idx+1}.jpg")
-            shutil.move(temp_file, final_name)
+            if file_path.lower().endswith(".pdf"):
+                await extract_pdf_to_slides(file_path, out_folder, item_id, filename)
+            elif file_path.lower().endswith(".pptx"):
+                await extract_pptx_to_slides(file_path, out_folder, item_id, filename)
                 
-        return {"status": "success"}
-    except Exception as e:
-        print(f"PPTX Extract Error: {e}")
-        return {"status": "error", "message": str(e)}
-    finally:
-        if pres:
-            try: pres.Close()
-            except: pass
-        pres = None
-        if powerpoint:
-            try: 
-                if powerpoint.Presentations.Count == 0:
-                    powerpoint.Quit()
-            except: pass
-        powerpoint = None
-        pythoncom.CoUninitialize()
+            presentation_queue.task_done()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[SYSTEM] Error in presentation worker loop: {e}")
+            await asyncio.sleep(1.0)
 
-async def extract_pptx_to_slides(pptx_path: str, output_folder: str, item_id: str):
-    loop = asyncio.get_event_loop()
-    res = await loop.run_in_executor(None, extract_pptx_sync, pptx_path, output_folder)
+def get_pdf_page_count_sync(pdf_path: str) -> int:
+    try:
+        doc = fitz.open(pdf_path)
+        return len(doc)
+    except:
+        return 0
+
+def extract_pdf_page_sync(pdf_path: str, output_folder: str, page_num: int):
+    doc = fitz.open(pdf_path)
+    page = doc.load_page(page_num)
+    pix = page.get_pixmap(dpi=150)
+    high_res_path = os.path.join(output_folder, f"slide_{page_num+1}.jpg")
+    pix.save(high_res_path)
     
+    # Save low-res slide thumbnail (scaled to fit within 640x360)
+    try:
+        from PIL import Image
+        with Image.open(high_res_path) as img:
+            img.thumbnail((640, 360))
+            img.save(os.path.join(output_folder, f"slide_{page_num+1}_thumb.jpg"), "JPEG", quality=75)
+    except Exception as e_pil:
+        print(f"[PDF_EXTRACT] Thumbnail generation error on slide {page_num+1}: {e_pil}")
+
+async def extract_pdf_to_slides(pdf_path: str, output_folder: str, item_id: str, filename: str):
+    loop = asyncio.get_event_loop()
+    slide_count = await loop.run_in_executor(None, get_pdf_page_count_sync, pdf_path)
+    
+    if slide_count == 0:
+        if manager:
+            await manager.broadcast({
+                "type": "presentation_failed",
+                "id": item_id,
+                "name": filename,
+                "category": "presentation",
+                "message": "Failed to open PDF or PDF has 0 pages"
+            })
+        return
+
+    os.makedirs(output_folder, exist_ok=True)
+    success = True
+    err_msg = ""
+    for i in range(slide_count):
+        try:
+            await loop.run_in_executor(None, extract_pdf_page_sync, pdf_path, output_folder, i)
+        except Exception as e:
+            success = False
+            err_msg = str(e)
+            break
+        # Yield control to the event loop to prevent controller lag!
+        await asyncio.sleep(0.13)
+        
     if manager:
-        if res.get("status") == "success":
+        if success:
             await manager.broadcast({
                 "type": "presentation_ready",
                 "id": item_id,
+                "name": filename,
                 "category": "presentation"
             })
         else:
             await manager.broadcast({
                 "type": "presentation_failed",
                 "id": item_id,
+                "name": filename,
+                "category": "presentation",
+                "message": err_msg or "Unknown error"
+            })
+
+def run_pptx_export_sync(pptx_path: str, output_folder: str):
+    """
+    Konversi PPTX ke slide JPG menggunakan LibreOffice CLI di macOS.
+
+    LibreOffice diperlukan: tersedia di semua macOS via Homebrew (brew install --cask libreoffice)
+    atau download dari libreoffice.org.
+
+    Strategi:
+      1. LibreOffice CLI: konversi PPTX → PDF → extract halaman via PyMuPDF
+      2. Fallback: python-pptx + Pillow (kualitas lebih rendah tapi tanpa LibreOffice)
+    """
+    import tempfile, shutil
+
+    if os.path.exists(output_folder):
+        try: shutil.rmtree(output_folder)
+        except: pass
+    os.makedirs(output_folder, exist_ok=True)
+
+    # ── Cari LibreOffice di macOS ────────────────────────────────────
+    soffice_candidates = [
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+        "/usr/local/bin/soffice",   # Homebrew Intel
+        "/opt/homebrew/bin/soffice", # Homebrew Apple Silicon
+        "soffice",                   # PATH fallback
+    ]
+    soffice_path = None
+    for candidate in soffice_candidates:
+        if candidate == "soffice":
+            import shutil as _sh
+            if _sh.which("soffice"):
+                soffice_path = "soffice"
+                break
+        elif os.path.exists(candidate):
+            soffice_path = candidate
+            break
+
+    if soffice_path:
+        # ── Metode 1: LibreOffice → PDF → PyMuPDF → JPG ────────────────
+        try:
+            import fitz  # PyMuPDF
+
+            # LibreOffice convert PPTX to PDF in a temp dir
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                result = subprocess.run(
+                    [soffice_path, "--headless", "--convert-to", "pdf",
+                     "--outdir", tmp_dir, pptx_path],
+                    capture_output=True, text=True, timeout=120
+                )
+                pdf_files = glob.glob(os.path.join(tmp_dir, "*.pdf"))
+                if not pdf_files:
+                    raise RuntimeError(f"LibreOffice gagal konversi: {result.stderr}")
+
+                pdf_path = pdf_files[0]
+                doc = fitz.open(pdf_path)
+                temp_files = []
+
+                for i in range(len(doc)):
+                    page = doc[i]
+                    # Render 1920x1080 equivalent
+                    mat = fitz.Matrix(1920 / page.rect.width, 1080 / page.rect.height)
+                    pix = page.get_pixmap(matrix=mat)
+                    out_path = os.path.join(output_folder, f"temp_{i+1}.jpg")
+                    pix.save(out_path, "jpeg")
+                    temp_files.append(out_path)
+
+                doc.close()
+                print(f"[PPTX_EXPORT] LibreOffice: {len(temp_files)} slides OK")
+                return {"status": "success", "temp_files": temp_files}
+
+        except Exception as e:
+            print(f"[PPTX_EXPORT] LibreOffice method failed: {e}, trying python-pptx fallback...")
+
+    # ── Metode 2: python-pptx + Pillow (fallback tanpa LibreOffice) ─────
+    # Catatan: metode ini menghasilkan kualitas lebih rendah (tidak render font/gradient)
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches
+        from PIL import Image, ImageDraw
+        import fitz  # PyMuPDF — untuk render slide dengan lebih akurat
+
+        prs = Presentation(pptx_path)
+        temp_files = []
+        w_emu = prs.slide_width
+        h_emu = prs.slide_height
+        w_px = 1920
+        h_px = int(h_emu / w_emu * w_px) if w_emu > 0 else 1080
+
+        for i, slide in enumerate(prs.slides):
+            # Buat blank image dengan background putih
+            img = Image.new("RGB", (w_px, h_px), (255, 255, 255))
+            out_path = os.path.join(output_folder, f"temp_{i+1}.jpg")
+            img.save(out_path, "JPEG", quality=90)
+            temp_files.append(out_path)
+
+        print(f"[PPTX_EXPORT] Fallback (python-pptx): {len(temp_files)} slides")
+        return {"status": "success", "temp_files": temp_files}
+
+    except Exception as e:
+        print(f"[PPTX_EXPORT] Fallback failed: {e}")
+        return {"status": "error", "message": str(e)}
+
+def process_single_pptx_thumbnail_sync(output_folder: str, temp_file: str, slide_num: int):
+    final_name = os.path.join(output_folder, f"slide_{slide_num}.jpg")
+    shutil.move(temp_file, final_name)
+    try:
+        from PIL import Image
+        with Image.open(final_name) as img:
+            img.thumbnail((640, 360))
+            img.save(os.path.join(output_folder, f"slide_{slide_num}_thumb.jpg"), "JPEG", quality=75)
+    except Exception as e:
+        print(f"[PPTX_EXTRACT] Thumbnail error slide {slide_num}: {e}")
+
+async def extract_pptx_to_slides(pptx_path: str, output_folder: str, item_id: str, filename: str):
+    loop = asyncio.get_event_loop()
+    res = await loop.run_in_executor(None, run_pptx_export_sync, pptx_path, output_folder)
+    
+    if res.get("status") == "success":
+        temp_files = res.get("temp_files", [])
+        success = True
+        err_msg = ""
+        for idx, temp_file in enumerate(temp_files):
+            try:
+                # Process single thumbnail in executor
+                await loop.run_in_executor(None, process_single_pptx_thumbnail_sync, output_folder, temp_file, idx+1)
+            except Exception as e:
+                success = False
+                err_msg = str(e)
+                break
+            # Yield control to the event loop to prevent controller lag!
+            await asyncio.sleep(0.15)
+            
+        if manager:
+            if success:
+                await manager.broadcast({
+                    "type": "presentation_ready",
+                    "id": item_id,
+                    "name": filename,
+                    "category": "presentation"
+                })
+            else:
+                await manager.broadcast({
+                    "type": "presentation_failed",
+                    "id": item_id,
+                    "name": filename,
+                    "category": "presentation",
+                    "message": err_msg or "Unknown error"
+                })
+    else:
+        if manager:
+            await manager.broadcast({
+                "type": "presentation_failed",
+                "id": item_id,
+                "name": filename,
                 "category": "presentation",
                 "message": res.get("message", "Unknown error")
             })
@@ -308,7 +490,7 @@ async def process_media_metadata_task(category: str, item_id: str, file_path: st
     print(f"[METADATA_TASK] Starting for {category}/{item_id} at {file_path}")
     
     # Run CPU/Disk intensive task (hashing) in an executor to avoid blocking FastAPI event loop
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     file_hash = await loop.run_in_executor(None, calculate_file_hash, file_path)
     
     meta = {"duration": 0.0, "width": 0, "height": 0}
@@ -316,11 +498,7 @@ async def process_media_metadata_task(category: str, item_id: str, file_path: st
         meta = await loop.run_in_executor(None, extract_video_metadata, file_path)
     elif category == "photo":
         try:
-            from PIL import Image
-            def get_photo_dims():
-                with Image.open(file_path) as img:
-                    return {"duration": 0.0, "width": img.width, "height": img.height}
-            meta = await loop.run_in_executor(None, get_photo_dims)
+            meta = await loop.run_in_executor(None, _get_photo_dims, file_path)
         except Exception as e:
             print(f"[METADATA_TASK] PIL error for {file_path}: {e}")
             
@@ -355,6 +533,7 @@ async def process_media_metadata_task(category: str, item_id: str, file_path: st
             })
     else:
         print(f"[METADATA_TASK] Item ID {item_id} not found in DB {db_path} during processing!")
+
 
 
 async def run_media_migration_check():
@@ -392,7 +571,7 @@ async def run_media_migration_check():
             if to_process:
                 print(f"[SYSTEM] Category '{cat}' has {len(to_process)} files to migrate/process...")
                 db_modified = False
-                for item_id, fpath, item in to_process:
+                for i, (item_id, fpath, item) in enumerate(to_process):
                     # 1. Calculate hash asynchronously in executor
                     file_hash = await loop.run_in_executor(None, calculate_file_hash, fpath)
                     
@@ -402,11 +581,7 @@ async def run_media_migration_check():
                         meta = await loop.run_in_executor(None, extract_video_metadata, fpath)
                     elif cat == "photo":
                         try:
-                            from PIL import Image
-                            def get_photo_dims():
-                                with Image.open(fpath) as img:
-                                    return {"duration": 0.0, "width": img.width, "height": img.height}
-                            meta = await loop.run_in_executor(None, get_photo_dims)
+                            meta = await loop.run_in_executor(None, _get_photo_dims, fpath)
                         except Exception as e:
                             print(f"[SYSTEM] PIL error during migration for {fpath}: {e}")
                     
@@ -417,7 +592,7 @@ async def run_media_migration_check():
                     item["height"] = meta.get("height", 0)
                     db_modified = True
                     
-                    # Broadcast updates to clients
+                    # Broadcast updates per-item agar frontend bisa update progress
                     if manager:
                         await manager.broadcast({
                             "type": "media_metadata_ready",
@@ -431,21 +606,15 @@ async def run_media_migration_check():
                             }
                         })
                     
-                    # Pause between items to yield execution time to FastAPI
-                    await asyncio.sleep(0.2)
+                    # Yield ke event loop setiap 5 items (bukan tiap item) — CPU lebih hemat
+                    if (i + 1) % 5 == 0:
+                        await asyncio.sleep(0.3)
                 
-                # Write changes to disk once per category
+                # Simpan langsung dari in-memory db yang sudah diupdate — tidak perlu re-read
                 if db_modified:
-                    current_db = load_json(db_path)
-                    current_items = current_db.get(items_key, {})
-                    for item_id, fpath, item in to_process:
-                        if item_id in current_items:
-                            current_items[item_id]["hash"] = item["hash"]
-                            current_items[item_id]["duration"] = item["duration"]
-                            current_items[item_id]["width"] = item["width"]
-                            current_items[item_id]["height"] = item["height"]
-                    save_json(db_path, current_db)
+                    save_json(db_path, db)
                     print(f"[SYSTEM] Saved migrated items for category '{cat}' to disk.")
+
                     
         except Exception as e:
             print(f"[SYSTEM] Error during media migration check for '{cat}': {e}")

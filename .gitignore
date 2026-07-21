@@ -5,6 +5,39 @@ bin/
 backend/__pycache__/
 backend/dist/
 sender/
+sender-1.1.1/
+tools/
 __pycache__/
 .env
 *.log
+
+# Binary files (generated during CI build — too large for Git)
+backend/playback-engine
+backend/playback-engine-amd64
+backend/playback-engine-arm64
+backend/ffmpeg
+backend/playback-engine.exe
+playback-engine.exe
+*.dll
+
+# PyArmor runtime
+backend/pyarmor_runtime_000000/
+
+# PyInstaller
+backend/build/
+
+# Crash reports
+backend/nuitka-crash-report.xml
+
+# macOS system files
+.DS_Store
+._*
+
+# Secrets
+.session_token
+*.pem
+*.p12
+*.key
+
+# Go binaries
+playback-engine/playback-engine

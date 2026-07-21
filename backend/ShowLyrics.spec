@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('ffmpeg.exe', '.'), ('templates', 'templates'), ('static', 'static'), ('pyarmor_runtime_000000', 'pyarmor_runtime_000000')]
+datas = [('ffmpeg.exe', '.'), ('playback-engine.exe', '.'), ('templates', 'templates'), ('static', 'static'), ('pyarmor_runtime_000000', 'pyarmor_runtime_000000')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('cryptography')

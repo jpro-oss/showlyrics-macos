@@ -2,6 +2,8 @@
 <html>
 
 <head>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link id="google-font-link" rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;700;900&family=Cinzel:wght@700&family=Playfair+Display:wght@700&family=Courier+Prime:wght@700&display=swap">
     <link rel="stylesheet" href="/static/display.css?v={{ VERSION }}">
@@ -11,35 +13,41 @@
 <body>
     <!-- 📹 MAIN CAMERA LAYER -->
     {% if not is_editor %}
-    <iframe id="main-cam-iframe" src="/main_cam" class="cam-output-iframe"></iframe>
+    <iframe id="main-cam-iframe" src="about:blank" data-src="/main_cam" class="cam-output-iframe"></iframe>
 
-    <iframe src="/background" id="frame-video" class="iframe-layer layer-video"></iframe>
-    <iframe src="/photo" id="frame-photo" class="iframe-layer layer-photo"></iframe>
-    <iframe src="/presentation" id="frame-presentation" class="iframe-layer layer-presentation"></iframe>
+    <iframe src="about:blank" data-src="/background" id="frame-video" class="iframe-layer layer-video"></iframe>
+    <iframe src="about:blank" data-src="/photo" id="frame-photo" class="iframe-layer layer-photo"></iframe>
+    <iframe src="about:blank" data-src="/presentation" id="frame-presentation" class="iframe-layer layer-presentation"></iframe>
     {% endif %}
 
-    <div id="scene-container">
-        <div id="layer-a" class="lyric-group">
-            <div class="lyric-wrapper">
-                <div class="lyric-ghost"></div>
-                <div class="lyric-text"></div>
+    <div id="display-scale-wrapper" class="scale-wrapper">
+        <div id="scene-container">
+            <div id="layer-a" class="lyric-group">
+                <div class="lyric-zoom-container">
+                    <div class="lyric-wrapper">
+                        <div class="lyric-ghost"></div>
+                        <div class="lyric-text"></div>
+                    </div>
+                </div>
+            </div>
+            <div id="layer-b" class="lyric-group">
+                <div class="lyric-zoom-container">
+                    <div class="lyric-wrapper">
+                        <div class="lyric-ghost"></div>
+                        <div class="lyric-text"></div>
+                    </div>
+                </div>
             </div>
         </div>
-        <div id="layer-b" class="lyric-group">
-            <div class="lyric-wrapper">
-                <div class="lyric-ghost"></div>
-                <div class="lyric-text"></div>
-            </div>
+        <div id="alert-crawl">
+            <div id="crawl-text" class="crawl-content"></div>
         </div>
-    </div>
-    <div id="alert-crawl">
-        <div id="crawl-text" class="crawl-content"></div>
     </div>
 
     {% if not is_editor %}
-    <iframe src="/scripture" id="scripture-frame" class="scripture-iframe"></iframe>
+    <iframe src="about:blank" data-src="/scripture" id="scripture-frame" class="scripture-iframe"></iframe>
     {% endif %}
-    <script src="/static/display.js?v={{ VERSION }}"></script>
+    <script src="/static/display.js?v={{ VERSION }}" defer></script>
 </body>
 
 </html>

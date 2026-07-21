@@ -1,0 +1,317 @@
+name: Build ShowLyrics macOS (DMG)
+
+# Trigger: push ke branch main, atau manual dari GitHub Actions tab
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub Release with DMG?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+jobs:
+  build-macos:
+    name: Build Universal macOS App
+    runs-on: macos-14        # Apple Silicon M1 runner (ARM64 native)
+    timeout-minutes: 60      # Batas 60 menit untuk seluruh job
+
+    steps:
+      # ─────────────────────────────────────────────────────────────
+      # 1. CHECKOUT SOURCE CODE
+      # ─────────────────────────────────────────────────────────────
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1     # Shallow clone — lebih cepat
+
+      # ─────────────────────────────────────────────────────────────
+      # 2. SETUP TOOLS
+      # ─────────────────────────────────────────────────────────────
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Setup Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: playback-engine/go.sum
+
+      # ─────────────────────────────────────────────────────────────
+      # 3. BUILD GO PLAYBACK ENGINE (Universal Binary)
+      # ─────────────────────────────────────────────────────────────
+      - name: Build Go Engine — Intel (amd64)
+        run: |
+          cd playback-engine
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 \
+            go build -ldflags="-s -w" -o ../backend/playback-engine-amd64 ./cmd/
+          echo "AMD64 size: $(du -sh ../backend/playback-engine-amd64 | cut -f1)"
+
+      - name: Build Go Engine — Apple Silicon (arm64)
+        run: |
+          cd playback-engine
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 \
+            go build -ldflags="-s -w" -o ../backend/playback-engine-arm64 ./cmd/
+          echo "ARM64 size: $(du -sh ../backend/playback-engine-arm64 | cut -f1)"
+
+      - name: Create Universal Go Binary
+        run: |
+          lipo -create \
+            backend/playback-engine-amd64 \
+            backend/playback-engine-arm64 \
+            -output backend/playback-engine
+          chmod +x backend/playback-engine
+          echo "Universal binary info:"
+          lipo -info backend/playback-engine
+          echo "Universal size: $(du -sh backend/playback-engine | cut -f1)"
+
+      # ─────────────────────────────────────────────────────────────
+      # 4. DOWNLOAD FFMPEG (Universal macOS Static Build)
+      # ─────────────────────────────────────────────────────────────
+      - name: Download FFmpeg macOS
+        run: |
+          # Download static FFmpeg build for macOS from evermeet.cx
+          echo "Downloading FFmpeg amd64..."
+          curl -L --retry 3 \
+            "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip" \
+            -o /tmp/ffmpeg-amd64.zip
+          unzip -j /tmp/ffmpeg-amd64.zip -d /tmp/ffmpeg-amd64
+          
+          echo "Downloading FFmpeg arm64..."
+          curl -L --retry 3 \
+            "https://www.osxexperts.net/ffmpeg7arm.zip" \
+            -o /tmp/ffmpeg-arm64.zip 2>/dev/null || true
+
+          # Create universal binary if both available
+          if [ -f /tmp/ffmpeg-arm64/ffmpeg ]; then
+            echo "Creating universal FFmpeg..."
+            lipo -create \
+              /tmp/ffmpeg-amd64/ffmpeg \
+              /tmp/ffmpeg-arm64/ffmpeg \
+              -output backend/ffmpeg
+          else
+            echo "Using amd64 FFmpeg (arm64 not available from mirror)"
+            cp /tmp/ffmpeg-amd64/ffmpeg backend/ffmpeg
+          fi
+
+          chmod +x backend/ffmpeg
+          echo "FFmpeg version:"
+          backend/ffmpeg -version | head -1
+          echo "FFmpeg size: $(du -sh backend/ffmpeg | cut -f1)"
+
+      # ─────────────────────────────────────────────────────────────
+      # 5. CONVERT ICON .ICO → .ICNS
+      # ─────────────────────────────────────────────────────────────
+      - name: Convert app.ico to app.icns
+        run: |
+          python3 << 'EOF'
+          import subprocess
+          import os
+          import shutil
+
+          ico_path = "backend/app.ico"
+          out_icns = "src/app.icns"
+
+          if os.path.exists(out_icns):
+              print(f"app.icns already exists, skipping conversion.")
+              exit(0)
+
+          if not os.path.exists(ico_path):
+              print(f"WARNING: {ico_path} not found, creating placeholder icns")
+              # Create minimal placeholder using PIL
+              try:
+                  from PIL import Image
+                  img = Image.new("RGBA", (512, 512), (30, 30, 46, 255))
+                  img.save("/tmp/app_placeholder.png")
+                  ico_path = "/tmp/app_placeholder.png"
+              except Exception as e:
+                  print(f"PIL not available yet: {e}")
+                  exit(0)
+
+          # Convert ICO → PNG using sips
+          png_path = "/tmp/app_icon.png"
+          result = subprocess.run(
+              ["sips", "-s", "format", "png", ico_path, "--out", png_path],
+              capture_output=True, text=True
+          )
+          
+          if result.returncode != 0 or not os.path.exists(png_path):
+              print(f"sips failed: {result.stderr}")
+              # Try with Python Pillow
+              try:
+                  from PIL import Image
+                  img = Image.open(ico_path)
+                  img = img.convert("RGBA")
+                  img.save(png_path, "PNG")
+                  print("Converted with Pillow")
+              except Exception as e:
+                  print(f"Pillow also failed: {e}")
+                  exit(0)
+
+          # Build iconset
+          iconset_dir = "/tmp/AppIcon.iconset"
+          os.makedirs(iconset_dir, exist_ok=True)
+          
+          sizes = [
+              (16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"),
+              (128, "128x128"), (256, "128x128@2x"), (256, "256x256"),
+              (512, "256x256@2x"), (512, "512x512"), (1024, "512x512@2x")
+          ]
+          
+          for size, name in sizes:
+              subprocess.run([
+                  "sips", "-z", str(size), str(size),
+                  png_path, "--out", f"{iconset_dir}/icon_{name}.png"
+              ], capture_output=True)
+
+          result = subprocess.run(
+              ["iconutil", "-c", "icns", iconset_dir, "-o", out_icns],
+              capture_output=True, text=True
+          )
+          
+          if result.returncode == 0 and os.path.exists(out_icns):
+              print(f"app.icns created: {os.path.getsize(out_icns)} bytes")
+          else:
+              print(f"iconutil failed: {result.stderr}")
+              # Fallback: copy PNG as-is and let electron-builder handle it
+              shutil.copy(png_path, out_icns.replace(".icns", ".png"))
+          EOF
+
+      # ─────────────────────────────────────────────────────────────
+      # 6. INSTALL PYTHON DEPENDENCIES
+      # ─────────────────────────────────────────────────────────────
+      - name: Install Python Dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r backend/requirements-macos.txt
+          pip install pyinstaller
+          echo "PyInstaller version: $(pyinstaller --version)"
+
+      # ─────────────────────────────────────────────────────────────
+      # 7. BUILD PYTHON BACKEND WITH PYINSTALLER
+      # ─────────────────────────────────────────────────────────────
+      - name: Build Python Backend (PyInstaller universal2)
+        working-directory: backend
+        run: |
+          # Verify required binaries exist
+          for f in ffmpeg playback-engine; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: $f not found in backend/!"
+              exit 1
+            fi
+            echo "OK: $f ($(du -sh $f | cut -f1))"
+          done
+          
+          echo "Starting PyInstaller build..."
+          pyinstaller ShowLyrics-macos.spec --clean --noconfirm
+          
+          echo "PyInstaller output:"
+          ls -lh dist/ShowLyrics/
+          echo "Total size: $(du -sh dist/ShowLyrics/ | cut -f1)"
+
+      # ─────────────────────────────────────────────────────────────
+      # 8. SETUP BIN DIRECTORY
+      # ─────────────────────────────────────────────────────────────
+      - name: Setup bin/ directory for Electron packaging
+        run: |
+          rm -rf bin
+          mkdir -p bin
+          
+          # Copy PyInstaller output to bin/
+          cp -r backend/dist/ShowLyrics/* bin/
+          
+          # Ensure all binaries have execute permission
+          find bin/ -type f -name "ShowLyrics" -exec chmod +x {} \;
+          find bin/ -type f -name "playback-engine" -exec chmod +x {} \;
+          find bin/ -type f -name "ffmpeg" -exec chmod +x {} \;
+          
+          echo "bin/ structure:"
+          ls -la bin/
+          echo "bin/internal (first 20 files):"
+          ls bin/internal/ | head -20
+          echo "Total bin size: $(du -sh bin/ | cut -f1)"
+
+      # ─────────────────────────────────────────────────────────────
+      # 9. INSTALL NODE DEPENDENCIES
+      # ─────────────────────────────────────────────────────────────
+      - name: Install Node Dependencies
+        run: npm ci
+
+      # ─────────────────────────────────────────────────────────────
+      # 10. BUILD ELECTRON APP (DMG + ZIP)
+      # ─────────────────────────────────────────────────────────────
+      - name: Build Electron macOS App
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Skip code signing (kita distribusi tanpa Apple Developer cert)
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # ─────────────────────────────────────────────────────────────
+      # 11. VERIFY OUTPUT
+      # ─────────────────────────────────────────────────────────────
+      - name: Verify Build Output
+        run: |
+          echo "=== Build Artifacts ==="
+          ls -lh dist/
+          
+          DMG_FILE=$(find dist/ -name "*.dmg" | head -1)
+          ZIP_FILE=$(find dist/ -name "*.zip" | head -1)
+          
+          if [ -n "$DMG_FILE" ]; then
+            echo "DMG: $DMG_FILE ($(du -sh $DMG_FILE | cut -f1))"
+          else
+            echo "ERROR: No DMG file found!"
+            exit 1
+          fi
+          
+          if [ -n "$ZIP_FILE" ]; then
+            echo "ZIP: $ZIP_FILE ($(du -sh $ZIP_FILE | cut -f1))"
+          fi
+
+      # ─────────────────────────────────────────────────────────────
+      # 12. UPLOAD ARTIFACTS (dapat didownload dari GitHub Actions tab)
+      # ─────────────────────────────────────────────────────────────
+      - name: Upload DMG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShowLyricsApp-macOS-DMG
+          path: dist/*.dmg
+          retention-days: 30
+
+      - name: Upload ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShowLyricsApp-macOS-ZIP
+          path: dist/*.zip
+          retention-days: 30
+
+      # ─────────────────────────────────────────────────────────────
+      # 13. (OPSIONAL) CREATE GITHUB RELEASE
+      # Aktifkan dengan: workflow_dispatch → create_release = true
+      # ─────────────────────────────────────────────────────────────
+      - name: Create GitHub Release
+        if: ${{ github.event.inputs.create_release == 'true' }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          name: ShowLyricsApp v2.5.0 (Build ${{ github.run_number }})
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.dmg
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

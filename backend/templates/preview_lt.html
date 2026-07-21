@@ -2,9 +2,19 @@
 <html>
 
 <head>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link id="lt-font-link" rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Montserrat:wght@900&display=swap">
     <link rel="stylesheet" href="/static/lt.css?v={{ VERSION }}">
+    <style>
+        .layer-lyrics,
+        .lt-banner,
+        #alert-crawl,
+        .crawl-content {
+            will-change: transform, opacity;
+        }
+    </style>
     <script src="/static/wm.js?v={{ VERSION }}"></script>
 </head>
 
@@ -12,14 +22,18 @@
     <!-- 📹 AUDIENCE CAMERA LAYER -->
 
 
-    <div id="lt-container" class="layer-lyrics">
-        <div id="lt-text" class="lt-text"></div>
-    </div>
-    <div id="alert-crawl">
-        <div id="crawl-text" class="crawl-content"></div>
+    <div id="lt-scale-wrapper" class="scale-wrapper">
+        <div id="lt-container" class="layer-lyrics">
+            <div id="lt-banner" class="lt-banner">
+                <div id="lt-text" class="lt-text"></div>
+            </div>
+        </div>
+        <div id="alert-crawl">
+            <div id="crawl-text" class="crawl-content"></div>
+        </div>
     </div>
 
-    <script src="/static/lt.js?v={{ VERSION }}"></script>
+    <script src="/static/lt.js?v={{ VERSION }}" defer></script>
 </body>
 
 </html>

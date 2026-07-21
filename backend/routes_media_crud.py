@@ -94,21 +94,20 @@ async def add_bg_folder(folder_path: str, background_tasks: BackgroundTasks):
     valid_ext = (".mp4", ".webm", ".mov")
     count = 0
     created_ids = []
+    # Build set of existing paths untuk O(1) lookup (bukan O(N) per file)
+    existing_paths = {v.get("video_path", v.get("file_path")) for v in db["items"].values()}
 
     for file in os.listdir(folder_path):
         if file.lower().endswith(valid_ext):
             video_full_path = os.path.join(folder_path, file).replace("\\", "/")
-            exists = any(
-                v.get("video_path", v.get("file_path")) == video_full_path
-                for v in db["items"].values()
-            )
-            if not exists:
+            if video_full_path not in existing_paths:
                 video_id = str(uuid.uuid4())[:8]
                 thumb_full_path = os.path.join(THUMBS_DIR, f"{video_id}.jpg")
                 db["items"][video_id] = {
                     "id": video_id, "name": file, "folder": folder_path,
                     "video_path": video_full_path, "file_path": video_full_path,
                 }
+                existing_paths.add(video_full_path)
                 background_tasks.add_task(
                     bg_tasks.generate_thumbnail_task, video_full_path, thumb_full_path, video_id, "video"
                 )
@@ -159,15 +158,13 @@ async def add_bg_files(request: Request, background_tasks: BackgroundTasks):
 
     count = 0
     created_ids = []
+    # Build set of existing paths untuk O(1) lookup
+    existing_paths = {v.get("file_path", v.get("video_path")) for v in db["items"].values()}
     for file_path in files:
         file_path = file_path.replace("\\", "/")
         if os.path.exists(file_path):
             filename = os.path.basename(file_path)
-            exists = any(
-                v.get("video_path", v.get("file_path")) == file_path
-                for v in db["items"].values()
-            )
-            if not exists:
+            if file_path not in existing_paths:
                 video_id = str(uuid.uuid4())[:8]
                 thumb_full_path = os.path.join(THUMBS_DIR, f"{video_id}.jpg")
                 db["items"][video_id] = {
@@ -177,6 +174,7 @@ async def add_bg_files(request: Request, background_tasks: BackgroundTasks):
                     "video_path": file_path,
                     "file_path": file_path,
                 }
+                existing_paths.add(file_path)
                 background_tasks.add_task(
                     bg_tasks.generate_thumbnail_task, file_path, thumb_full_path, video_id, "video"
                 )
@@ -285,15 +283,13 @@ async def add_media_files(category: str, request: Request, background_tasks: Bac
 
     count = 0
     created_ids = []
+    # Build set of existing paths untuk O(1) lookup
+    existing_paths = {v.get("file_path", v.get("video_path")) for v in db["items"].values()}
     for file_path in files:
         file_path = file_path.replace("\\", "/")
         if os.path.exists(file_path):
             filename = os.path.basename(file_path)
-            exists = any(
-                v.get("file_path", v.get("video_path")) == file_path
-                for v in db["items"].values()
-            )
-            if not exists:
+            if file_path not in existing_paths:
                 item_id = str(uuid.uuid4())[:8]
                 db["items"][item_id] = {
                     "id": item_id,
@@ -301,6 +297,7 @@ async def add_media_files(category: str, request: Request, background_tasks: Bac
                     "folder": folder_name if folder_name != "ALL" else "Uncategorized",
                     "file_path": file_path,
                 }
+                existing_paths.add(file_path)
 
                 if category == "video":
                     thumb_full_path = os.path.join(THUMBS_DIR, f"{item_id}.jpg")
@@ -315,10 +312,7 @@ async def add_media_files(category: str, request: Request, background_tasks: Bac
                     )
                 elif category == "presentation":
                     out_folder = os.path.join(PRESENTATION_DIR, item_id)
-                    if file_path.lower().endswith(".pdf"):
-                        background_tasks.add_task(bg_tasks.extract_pdf_to_slides, file_path, out_folder, item_id)
-                    elif file_path.lower().endswith(".pptx"):
-                        background_tasks.add_task(bg_tasks.extract_pptx_to_slides, file_path, out_folder, item_id)
+                    await bg_tasks.enqueue_presentation(file_path, out_folder, item_id)
 
                 background_tasks.add_task(
                     bg_tasks.process_media_metadata_task, category, item_id, file_path
@@ -351,20 +345,19 @@ async def add_media_folder(category: str, folder_path: str, background_tasks: Ba
     valid_ext = get_allowed_extensions(category)
     count = 0
     created_ids = []
+    # Build set of existing paths untuk O(1) lookup
+    existing_paths = {v.get("file_path", v.get("video_path")) for v in db["items"].values()}
 
     for file in os.listdir(folder_path):
         if file.lower().endswith(valid_ext):
             file_full_path = os.path.join(folder_path, file).replace("\\", "/")
-            exists = any(
-                v.get("file_path", v.get("video_path")) == file_full_path
-                for v in db["items"].values()
-            )
-            if not exists:
+            if file_full_path not in existing_paths:
                 item_id = str(uuid.uuid4())[:8]
                 db["items"][item_id] = {
                     "id": item_id, "name": file,
                     "folder": folder_path, "file_path": file_full_path,
                 }
+                existing_paths.add(file_full_path)
 
                 if category == "video":
                     thumb_full_path = os.path.join(THUMBS_DIR, f"{item_id}.jpg")
@@ -379,10 +372,7 @@ async def add_media_folder(category: str, folder_path: str, background_tasks: Ba
                     )
                 elif category == "presentation":
                     out_folder = os.path.join(PRESENTATION_DIR, item_id)
-                    if file_full_path.lower().endswith(".pdf"):
-                        background_tasks.add_task(bg_tasks.extract_pdf_to_slides, file_full_path, out_folder, item_id)
-                    elif file_full_path.lower().endswith(".pptx"):
-                        background_tasks.add_task(bg_tasks.extract_pptx_to_slides, file_full_path, out_folder, item_id)
+                    await bg_tasks.enqueue_presentation(file_full_path, out_folder, item_id)
 
                 background_tasks.add_task(
                     bg_tasks.process_media_metadata_task, category, item_id, file_full_path

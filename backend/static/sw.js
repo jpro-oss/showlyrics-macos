@@ -5,26 +5,10 @@ const CACHE_NAME = 'media-cache';
 // Ini menghilangkan "double 200 OK" yang muncul di server log.
 const activeTeeRequests = new Set();
 
-// In-memory cache for deserialized Blobs to prevent high CPU / disk I/O on loop range requests.
-const maxMemoryBlobs = 3;
-const blobMemoryCache = new Map(); // cleanUrl -> Blob
-const blobMemoryKeys = [];
-
-function keepBlobInCache(url, blob) {
-  if (blobMemoryCache.has(url)) {
-    // move to MRU
-    const idx = blobMemoryKeys.indexOf(url);
-    if (idx > -1) blobMemoryKeys.splice(idx, 1);
-    blobMemoryKeys.push(url);
-    return;
-  }
-  if (blobMemoryKeys.length >= maxMemoryBlobs) {
-    const oldest = blobMemoryKeys.shift();
-    blobMemoryCache.delete(oldest);
-  }
-  blobMemoryCache.set(url, blob);
-  blobMemoryKeys.push(url);
-}
+// [PERF-FIX] blobMemoryCache DIHAPUS sepenuhnya.
+// Menyimpan Blob video 300MB+ di SW context RAM adalah sumber utama OOM di low-end.
+// SW context terpisah dari page — jadi ini bisa mengonsumsi 300MB di luar quota page.
+// Range requests kini dilayani langsung dari Cache Storage (on-demand, GC-friendly).
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -55,9 +39,16 @@ async function handleVideoRequest(request, url) {
   if (request.headers.has('Range')) {
     const cachedResponse = await cache.match(cleanUrl);
     if (cachedResponse) {
-      return handleRangeRequest(request, cachedResponse, cleanUrl);
+      // [OPT] Hanya serve dari cache jika Content-Length tersedia.
+      // Tanpa Content-Length, range calculation tidak akurat → bisa serve wrong bytes.
+      // Jika tidak ada, pass ke network agar server menangani range dengan benar.
+      const cachedLength = cachedResponse.headers.get('Content-Length');
+      if (cachedLength && parseInt(cachedLength, 10) > 0) {
+        return handleRangeRequest(request, cachedResponse, parseInt(cachedLength, 10));
+      }
     }
-    // Belum di-cache — pass range request ke network (server punya RAM cache)
+    // Belum di-cache atau Content-Length tidak valid — pass range request ke network
+    // (server Go punya Range support penuh via http.ServeContent)
     return fetch(request);
   }
 
@@ -70,15 +61,27 @@ async function handleVideoRequest(request, url) {
     return cachedResponse.clone();
   }
 
-  // 2. Jika sudah ada tee() yang sedang berjalan untuk URL ini,
-  //    jangan mulai download kedua — cukup fetch langsung dari network.
-  //    (Tidak bisa clone tee'd stream yang sedang dikonsumsi)
+  // 2. Jika sudah ada download yang sedang berjalan untuk URL ini,
+  //    fetch langsung dari network tanpa memulai download kedua.
+  //    Server akan serve dari RAM cache-nya sendiri.
   if (activeTeeRequests.has(cleanUrl)) {
-    // Fetch langsung dari network — server akan serve dari RAM cache
     return fetch(cleanUrl);
   }
 
-  // 3. Mulai download baru dengan tee() untuk stream ke client + tulis ke cache sekaligus
+  // 3. Mulai download baru.
+  // [PERF-FIX] Strategi baru: clone() alih-alih tee().
+  // tee() BURUK di low-end: browser harus buffer seluruh delta antara
+  // kecepatan dua stream. Pada HDD 5400rpm / eMMC lambat, disk write jauh
+  // lebih lambat dari network, sehingga buffer bisa mendekati ukuran full file.
+  //
+  // Strategi baru:
+  //  - Fetch network response
+  //  - Clone untuk client, satu lagi untuk cache.put()
+  //  - Response yang dikembalikan ke client = clone pertama (langsung streaming)
+  //  - Cache.put() menerima clone kedua (background, tidak blocking client)
+  //
+  // clone() hanya membuat shallow copy dari stream — kedua stream membaca
+  // dari buffer internal browser yang sama, tanpa duplikasi data di RAM.
   const mediaId = url.pathname.split('/').pop();
 
   activeTeeRequests.add(cleanUrl);
@@ -89,43 +92,53 @@ async function handleVideoRequest(request, url) {
     const networkResponse = await fetch(cleanUrl);
 
     if (networkResponse.ok && networkResponse.status === 200 && networkResponse.body) {
-      // tee() split stream menjadi dua cabang:
-      // - streamForClient: dikembalikan langsung ke peminta (video bisa mulai play segera)
-      // - streamForCache: dibaca oleh Cache Storage API untuk disimpan (background)
-      const [streamForClient, streamForCache] = networkResponse.body.tee();
-
       const responseHeaders = new Headers(networkResponse.headers);
 
+      // [OPT] Quota guard: cek storage quota sebelum cache.put() untuk mencegah
+      // QuotaExceededError yang bisa crash SW context di device RAM 4GB.
+      // Estimasi kebutuhan dari Content-Length header — zero-copy, tidak baca body.
+      const contentLengthStr = responseHeaders.get('Content-Length');
+      const neededBytes = contentLengthStr ? parseInt(contentLengthStr, 10) : 0;
+      const canCache = await hasStorageQuota(neededBytes);
+
+      if (!canCache) {
+        // Quota tidak cukup — serve ke client tanpa cache
+        console.warn(`[SW] Storage quota tidak cukup untuk ${mediaId} (${Math.round(neededBytes / 1024 / 1024)}MB). Skip cache.`);
+        activeTeeRequests.delete(cleanUrl);
+        broadcastMessage({ type: 'cache_status', mediaId, status: 'error' });
+        return networkResponse;
+      }
+
+      // [PERF-FIX] Gunakan clone() bukan tee() untuk menghindari RAM buffering.
+      // clone() aman karena kedua stream dibaca secara concurrent oleh browser
+      // tanpa harus menunggu satu sama lain di-buffer ke RAM.
+      const responseForClient = networkResponse.clone();
+
       // Tulis ke cache di background — TIDAK block response ke client
-      cache.put(cleanUrl, new Response(streamForCache, {
-        status: 200,
-        statusText: networkResponse.statusText,
-        headers: responseHeaders,
-      })).then(async () => {
-        // Verifikasi hasil cache untuk menghindari korupsi data / potongan file
-        const cached = await cache.match(cleanUrl);
-        if (cached) {
-          try {
-            const blob = await cached.blob();
+      cache.put(cleanUrl, networkResponse).then(async () => {
+        // [PERF-FIX] Verifikasi cache menggunakan Content-Length header,
+        // BUKAN cached.blob(). Blob() membaca ulang seluruh file ke RAM —
+        // untuk file 300MB ini berarti spike RAM 300MB tepat setelah download.
+        // Content-Length check adalah zero-copy: hanya baca header saja.
+        try {
+          const cached = await cache.match(cleanUrl);
+          if (cached) {
             const expectedLength = parseInt(responseHeaders.get('Content-Length'), 10);
-            if (expectedLength && blob.size !== expectedLength) {
-              console.warn(`[SW] Cache size mismatch for ${mediaId}: expected ${expectedLength}, got ${blob.size}. Deleting cache.`);
+            const cachedLength = parseInt(cached.headers.get('Content-Length'), 10);
+
+            if (expectedLength && cachedLength && cachedLength !== expectedLength) {
+              console.warn(`[SW] Cache size mismatch for ${mediaId}: expected ${expectedLength}, got ${cachedLength}. Deleting cache.`);
               await cache.delete(cleanUrl);
-              blobMemoryCache.delete(cleanUrl);
-              const idx = blobMemoryKeys.indexOf(cleanUrl);
-              if (idx > -1) blobMemoryKeys.splice(idx, 1);
               broadcastMessage({ type: 'cache_status', mediaId, status: 'error' });
             } else {
-              // Simpan Blob reference di memori agar cepat
-              keepBlobInCache(cleanUrl, blob);
               broadcastMessage({ type: 'cache_status', mediaId, status: 'ready' });
             }
-          } catch (verifErr) {
-            console.error('[SW] Cache verification failed, cleaning up:', verifErr);
-            await cache.delete(cleanUrl);
+          } else {
             broadcastMessage({ type: 'cache_status', mediaId, status: 'error' });
           }
-        } else {
+        } catch (verifErr) {
+          console.error('[SW] Cache verification failed, cleaning up:', verifErr);
+          await cache.delete(cleanUrl);
           broadcastMessage({ type: 'cache_status', mediaId, status: 'error' });
         }
         activeTeeRequests.delete(cleanUrl);
@@ -133,16 +146,13 @@ async function handleVideoRequest(request, url) {
         console.warn('[SW] Cache put error:', err);
         try {
           await cache.delete(cleanUrl);
-          blobMemoryCache.delete(cleanUrl);
-          const idx = blobMemoryKeys.indexOf(cleanUrl);
-          if (idx > -1) blobMemoryKeys.splice(idx, 1);
         } catch (_) {}
         activeTeeRequests.delete(cleanUrl);
         broadcastMessage({ type: 'cache_status', mediaId, status: 'error' });
       });
 
-      // Kembalikan stream ke client SEGERA (tidak perlu tunggu cache write selesai)
-      return new Response(streamForClient, {
+      // Kembalikan clone ke client SEGERA (tidak perlu tunggu cache write selesai)
+      return new Response(responseForClient.body, {
         status: 200,
         statusText: networkResponse.statusText,
         headers: responseHeaders,
@@ -169,57 +179,120 @@ async function broadcastMessage(message) {
   });
 }
 
-async function handleRangeRequest(request, cachedResponse, cleanUrl) {
-  let blob = blobMemoryCache.get(cleanUrl);
-  if (!blob) {
-    try {
-      blob = await cachedResponse.blob();
-      keepBlobInCache(cleanUrl, blob);
-    } catch (err) {
-      console.error('[SW] Failed to read blob from cache response:', err);
-      // Fallback: request from network
-      return fetch(request);
+// [OPT] hasStorageQuota: cek apakah ada ruang kosong sebelum cache write.
+// Mencegah QuotaExceededError yang bisa crash SW context di device dengan storage terbatas.
+// Menggunakan StorageManager.estimate() — zero-cost, tidak baca disk.
+// neededBytes: estimasi dari Content-Length header (0 = unknown, skip check)
+async function hasStorageQuota(neededBytes) {
+  if (!neededBytes || neededBytes <= 0) return true; // unknown size, assume ok
+
+  try {
+    if ('storage' in self && 'estimate' in self.storage) {
+      const { quota, usage } = await self.storage.estimate();
+      if (!quota || !usage) return true; // API tersedia tapi tidak ada data, assume ok
+      const available = quota - usage;
+      // Butuh neededBytes + 20% buffer untuk overhead metadata cache
+      return available > neededBytes * 1.2;
     }
+  } catch (_) {
+    // StorageManager tidak tersedia atau error → assume ok (fallback aman)
   }
+  return true;
+}
+
+// [OPT] handleRangeRequest: serve range request dari cached response.
+// Menggunakan blob().slice() untuk random-access range — ini pendekatan paling
+// kompatibel karena Cache Storage API tidak menyediakan seekable stream interface.
+//
+// Optimasi GC:
+// - fullBlob di-null segera setelah slice dibuat → memungkinkan GC di-run sebelum
+//   response selesai dikirim ke browser
+// - slicedBlob hanya berisi bytes yang diminta (jauh lebih kecil dari full file)
+//
+// Trade-off yang diterima: setiap range request memerlukan disk read untuk materialize
+// blob. Ini tidak bisa dihindari dengan Cache Storage API saat ini. Namun, ini masih
+// jauh lebih baik daripada menghit network untuk setiap range request (menghindari
+// redundant full download).
+//
+// contentLength: nilai dari header Content-Length cached response (sudah divalidasi caller)
+async function handleRangeRequest(request, cachedResponse, contentLength) {
   const rangeHeader = request.headers.get('Range');
-  const match = rangeHeader.match(/^bytes=(\d+)-(\d+)?$/);
+  const match = rangeHeader ? rangeHeader.match(/^bytes=(\d+)-(\d+)?$/) : null;
+  const contentType = cachedResponse.headers.get('Content-Type') || 'video/mp4';
 
   if (!match) {
-    // Fallback: serve full file
-    return new Response(blob, {
+    // Tidak ada range valid — serve full cached response
+    const blob = await cachedResponse.blob();
+    const resp = new Response(blob, {
       status: 200,
       headers: {
-        'Content-Type': cachedResponse.headers.get('Content-Type') || 'video/mp4',
-        'Content-Length': blob.size,
+        'Content-Type': contentType,
+        'Content-Length': String(blob.size),
         'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=31536000',
       }
     });
+    return resp;
   }
 
   const start = parseInt(match[1], 10);
-  const end = match[2] ? parseInt(match[2], 10) : blob.size - 1;
-  const clampedEnd = Math.min(end, blob.size - 1);
+  const end = match[2] ? parseInt(match[2], 10) : contentLength - 1;
+  const clampedEnd = Math.min(end, contentLength - 1);
 
-  if (start >= blob.size || start > clampedEnd) {
+  // Validasi range sebelum materialize blob
+  if (start >= contentLength || start > clampedEnd) {
     return new Response('', {
       status: 416, // Range Not Satisfiable
       headers: {
-        'Content-Range': `bytes */${blob.size}`,
+        'Content-Range': `bytes */${contentLength}`,
         'Content-Length': '0',
       }
     });
   }
 
-  const slicedBlob = blob.slice(start, clampedEnd + 1);
+  // Materialize blob dari cache — diperlukan untuk .slice() random access
+  let fullBlob;
+  try {
+    fullBlob = await cachedResponse.blob();
+  } catch (err) {
+    console.error('[SW] Failed to read blob from cache:', err);
+    return fetch(request); // Fallback ke network
+  }
+
+  const actualSize = fullBlob.size;
+  const safeEnd = Math.min(clampedEnd, actualSize - 1);
+  const chunkSize = safeEnd - start + 1;
+
+  // Slice hanya bagian yang diminta
+  const slicedBlob = fullBlob.slice(start, safeEnd + 1);
+
+  // [OPT] Null fullBlob segera setelah slice — memungkinkan GC reclaim RAM
+  // dari blob besar sebelum response selesai dikirim
+  fullBlob = null;
+
   return new Response(slicedBlob, {
     status: 206,
     statusText: 'Partial Content',
     headers: {
-      'Content-Range': `bytes ${start}-${clampedEnd}/${blob.size}`,
+      'Content-Range': `bytes ${start}-${safeEnd}/${actualSize}`,
       'Accept-Ranges': 'bytes',
-      'Content-Length': slicedBlob.size,
-      'Content-Type': cachedResponse.headers.get('Content-Type') || 'video/mp4',
+      'Content-Length': String(chunkSize),
+      'Content-Type': contentType,
       'Cache-Control': 'public, max-age=31536000',
     }
   });
 }
+
+// Clear SW cache and memory for specific cleanUrl
+self.addEventListener('message', async (event) => {
+  if (event.data && event.data.action === 'clear_cache' && event.data.cleanUrl) {
+    try {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.delete(event.data.cleanUrl);
+      // [PERF-FIX] Tidak ada lagi blobMemoryCache untuk di-clear — sudah dihapus.
+      console.log('[SW] Cleared cache for cleanUrl:', event.data.cleanUrl);
+    } catch (e) {
+      console.warn('[SW] Error clearing cache for', event.data.cleanUrl, e);
+    }
+  }
+});

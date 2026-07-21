@@ -233,17 +233,39 @@ ws.addEventListener("message", function (event) {
         // --- 🎯 TANGKAP MASTER AUDIO ---
         if (action === "update_background") {
             if (payload.url) {
-                const isSameVideo = (masterBgAudio.currentSrc || masterBgAudio.src || "").includes(payload.url);
-                if (!isSameVideo || payload.forceReplay) masterBgAudio.src = payload.url;
+                let url = payload.url;
+                if (url.startsWith('/')) {
+                    url = window.location.protocol + "//" + window.location.hostname + ":18899" + url;
+                } else {
+                    try {
+                        const parsedUrl = new URL(url);
+                        parsedUrl.host = window.location.hostname + ":18899";
+                        url = parsedUrl.href;
+                    } catch (e) {
+                        url = url.replace(/:\d+/, ":18899").replace("localhost", window.location.hostname).replace("127.0.0.1", window.location.hostname);
+                    }
+                }
+                const isSameVideo = (masterBgAudio.currentSrc || masterBgAudio.src || "").includes(url);
+                if (!isSameVideo || payload.forceReplay) {
+                    masterBgAudio.src = url;
+                    if (payload.forceReplay) {
+                        try { masterBgAudio.currentTime = 0; } catch (_) { }
+                    } else if (payload.start_time !== undefined) {
+                        try { masterBgAudio.currentTime = parseFloat(payload.start_time) || 0; } catch (_) { }
+                    }
+                } else {
+                    // Same video URL, seek to start_time (especially on unclear or replay)
+                    try {
+                        masterBgAudio.currentTime = parseFloat(payload.start_time) || 0;
+                    } catch (_) { }
+                }
                 masterBgAudio.loop = (payload.behavior === "loop" || payload.behavior === undefined);
                 masterBgAudio.dataset.behavior = payload.behavior || "loop";
-                masterBgAudio.muted = (payload.muted !== undefined) ? payload.muted : true;
-                if (payload.forceReplay) {
-                    try { masterBgAudio.currentTime = 0; } catch (_) { }
-                }
+                masterBgAudio.muted = (payload.muted !== undefined) ? payload.muted : false;
                 masterBgAudio.play().catch(e => console.warn(e));
                 const snapshotExtra = { activeVideoUrl: payload.url, isPlaying: true };
                 if (payload.forceReplay) snapshotExtra.currentTime = 0;
+                else if (payload.start_time !== undefined) snapshotExtra.currentTime = parseFloat(payload.start_time) || 0;
                 saveVideoTimelineSnapshot(snapshotExtra);
             } else {
                 masterBgAudio.pause();
@@ -294,7 +316,17 @@ ws.addEventListener("message", function (event) {
             markThumbAsReadyRealtime(data.category || "video", data.id);
         }
 
-        // 🎯 TANGKAP NOTIFIKASI PPT/PDF BERHASIL EKSTRAK DI BACKEND
+        // 🎯 TANGKAP NOTIFIKASI PPT/PDF ANTRIAN / PROSES / SUKSES DI BACKEND
+        if (action === "presentation_queued") {
+            const name = data.name || "Presentation";
+            showMiniToast(`⏳ Queued: ${name}`, "info", 0, `ppt-extract-${data.id}`);
+        }
+
+        if (action === "presentation_processing") {
+            const name = data.name || "Presentation";
+            showMiniToast(`⚡ Converting: ${name}`, "loading", 0, `ppt-extract-${data.id}`);
+        }
+
         if (action === "presentation_ready") {
             if (typeof markThumbAsReadyRealtime === "function") {
                 markThumbAsReadyRealtime("presentation", data.id);
@@ -302,6 +334,11 @@ ws.addEventListener("message", function (event) {
             if (typeof window.loadMediaData === "function") {
                 window.loadMediaData("presentation");
             }
+
+            // Update/remove mini toast
+            const name = data.name || "Presentation";
+            showMiniToast(`✅ Success: ${name} converted!`, "success", 2000, `ppt-extract-${data.id}`);
+
             if (window.waitingForPPTId && window.waitingForPPTId === data.id) {
                 showToast("PowerPoint slides converted successfully!", "success", 2000);
                 window.loadPPTToGrid(window.waitingForPPTId, window.waitingForPPTName);
@@ -309,6 +346,9 @@ ws.addEventListener("message", function (event) {
         }
 
         if (action === "presentation_failed") {
+            const name = data.name || "Presentation";
+            showMiniToast(`❌ Failed: ${name} conversion failed!`, "error", 4000, `ppt-extract-${data.id}`);
+
             if (window.waitingForPPTId && window.waitingForPPTId === data.id) {
                 showToast("PowerPoint conversion failed: " + (data.message || "Unknown error"), "error", 4000);
                 const overlay = document.getElementById('ppt-grid-overlay');
@@ -334,6 +374,17 @@ ws.addEventListener("message", function (event) {
                         <button class="btn-action btn-activate" onclick="activateShowLyrics()">ACTIVATE DEVICE</button>
                     `;
             }
+        }
+
+        // 🌐 NETWORK GUARD — CDN Strike / Warning / Restored
+        if (action === "network_strike") {
+            _handleNetworkStrike(data);
+        }
+        if (action === "network_warning") {
+            _showNetworkToast(data.message || "Koneksi tidak stabil.", "warning");
+        }
+        if (action === "network_restored") {
+            _dismissNetworkModals();
         }
 
         // Tangkap data memori settingan dari main.py pas baru connect / ada update
@@ -365,10 +416,1262 @@ ws.addEventListener("message", function (event) {
                 if (pFitInput) pFitInput.value = config.photo_fit;
             }
         }
+
+        // 🚨 EMERGENCY CONTROL SYNC (REALTIME STATE RECOVERY)
+        if (action === "alert") {
+            const d = data.data;
+            if (d) {
+                isAlertOn = !!d.show;
+                const btn = document.getElementById("btn-toggle-alert");
+                if (btn) {
+                    if (isAlertOn) {
+                        btn.innerHTML = "🛑 HIDE ALERT";
+                        btn.style.background = "#dc3545";
+                    } else {
+                        btn.innerHTML = "📢 SHOW ALERT";
+                        btn.style.background = "#28a745";
+                    }
+                }
+                const input = document.getElementById("alert-input");
+                if (input) {
+                    input.value = d.text || "";
+                }
+
+                const chkMain = document.getElementById("chk-main");
+                if (chkMain && d.targets) {
+                    chkMain.checked = d.targets.includes('main');
+                }
+                const chkLt = document.getElementById("chk-lt");
+                if (chkLt && d.targets) {
+                    chkLt.checked = d.targets.includes('lt');
+                }
+
+                const alertPos = document.getElementById("alert-pos");
+                if (alertPos && d.position) {
+                    alertPos.value = d.position;
+                }
+
+                const alertColor = document.getElementById("alert-color");
+                if (alertColor && d.color) {
+                    alertColor.value = d.color;
+                }
+
+                if (d.speed !== undefined) {
+                    const alertSpeed = document.getElementById("alert-speed");
+                    const valAlertSpeed = document.getElementById("val-alert-speed");
+                    if (alertSpeed) alertSpeed.value = d.speed;
+                    if (valAlertSpeed) valAlertSpeed.innerText = d.speed + "s";
+                }
+
+                updateNavBlinker();
+            }
+        }
+
+        if (action === "stage_msg") {
+            const d = data.data;
+            if (d) {
+                isMessageOn = !!d.show;
+                const btn = document.getElementById("btn-toggle-msg");
+                if (btn) {
+                    if (isMessageOn) {
+                        btn.innerHTML = "🛑 HIDE MESSAGE";
+                        btn.style.background = "#dc3545";
+                    } else {
+                        btn.innerHTML = "💬 SHOW MESSAGE";
+                        btn.style.background = "#28a745";
+                    }
+                }
+                const input = document.getElementById("stage-input");
+                if (input) {
+                    input.value = d.text || "";
+                }
+                const chkFlash = document.getElementById("chk-flash");
+                if (chkFlash) {
+                    chkFlash.checked = !!d.flash;
+                }
+                updateNavBlinker();
+            }
+        }
+
+        if (action === "stage_countdown") {
+            const d = data.data;
+            if (d) {
+                const btn = document.getElementById("btn-toggle-timer");
+                const btnText = document.getElementById("timer-btn-text");
+                const display = document.getElementById("controller-timer-display");
+                const minInput = document.getElementById("timer-min");
+
+                if (d.action === "start") {
+                    isStageTimerRunning = true;
+                    if (btn) btn.style.background = "#dc3545";
+                    if (btnText) btnText.innerText = "⏹ STOP";
+                    if (display) {
+                        display.style.display = "inline-block";
+                        display.classList.remove("nav-blink-alert");
+                    }
+                    if (minInput) minInput.disabled = true;
+
+                    stageTimeLeft = d.seconds;
+
+                    const updateControllerTimer = () => {
+                        const m = Math.floor(stageTimeLeft / 60).toString().padStart(2, '0');
+                        const s = (stageTimeLeft % 60).toString().padStart(2, '0');
+                        if (display) display.innerText = `${m}:${s}`;
+
+                        if (stageTimeLeft <= 0) {
+                            clearInterval(stageTimerInterval);
+                            if (display) display.classList.add("nav-blink-alert");
+                        }
+                        stageTimeLeft--;
+                    };
+
+                    clearInterval(stageTimerInterval);
+                    updateControllerTimer();
+                    stageTimerInterval = setInterval(updateControllerTimer, 1000);
+                } else if (d.action === "stop") {
+                    isStageTimerRunning = false;
+                    clearInterval(stageTimerInterval);
+                    if (btn) btn.style.background = "#28a745";
+                    if (btnText) btnText.innerText = "▶ START";
+                    if (display) {
+                        display.style.display = "none";
+                        display.classList.remove("nav-blink-alert");
+                    }
+                    if (minInput) minInput.disabled = false;
+                }
+            }
+        }
+
+        if (action === "stage_rundown") {
+            const d = data.data;
+            if (d) {
+                handleIncomingRundownState(d);
+            }
+        }
     } catch (e) {
         console.error("Settings sync failed:", e);
     }
 });
+
+// Stage Rundown State & Functions
+let rundownState = {
+    presetName: "",
+    items: [],
+    activeIndex: -1,
+    status: "stopped",
+    transitionMode: "auto",
+    startedAt: 0,
+    pausedRemaining: 0,
+    overtimeStartedAt: 0,
+    activeOffset: 0,
+    miniTimerSize: 110,
+    miniTitleSize: 80,
+    miniTitleAuto: true,
+    fullTimerSize: 190,
+    fullTitleSize: 190,
+    fullTitleAuto: true,
+    overtimeFlash: true,
+    overtimeColor: "#ff4081",
+    overtimeSpeed: 1.0
+};
+let rundownTickInterval = null;
+
+function handleIncomingRundownState(state) {
+    rundownState = state;
+    updateRundownStyleUI();
+
+    const select = document.getElementById("rundown-preset-select");
+    if (select && state.presetName) {
+        select.value = state.presetName;
+    }
+
+    const transitionSelect = document.getElementById("rundown-transition-select");
+    if (transitionSelect) {
+        transitionSelect.value = state.transitionMode || "auto";
+    }
+
+    renderRundownUI();
+
+    if (rundownState.status === "running" || rundownState.status === "overtime") {
+        if (!rundownTickInterval) {
+            rundownTickInterval = setInterval(tickRundown, 1000);
+        }
+    } else {
+        if (rundownTickInterval) {
+            clearInterval(rundownTickInterval);
+            rundownTickInterval = null;
+        }
+    }
+
+    // Auto show or clear overtime toast based on state status
+    if (rundownState.status === "overtime") {
+        const existingToast = document.getElementById("rundown-overtime-toast");
+        if (!existingToast && rundownState.activeIndex !== -1 && rundownState.items && rundownState.items.length > 0) {
+            const completedName = rundownState.items[rundownState.activeIndex].name;
+            const nextIndex = rundownState.activeIndex + 1;
+            const hasNext = nextIndex < rundownState.items.length;
+            const nextName = hasNext ? rundownState.items[nextIndex].name : "Selesai";
+
+            showRundownToast(
+                `⚠️ [OVERTIME] ${completedName} telah habis waktu!`,
+                "confirm",
+                [
+                    {
+                        text: hasNext ? `Lanjut ke: ${nextName}` : "Selesaikan Rundown",
+                        primary: true,
+                        onClick: () => {
+                            confirmRundownNext();
+                        }
+                    },
+                    {
+                        text: "Tetap Overtime",
+                        primary: false,
+                        keepToast: true,
+                        onClick: () => {
+                            keepRundownOvertime();
+                        }
+                    }
+                ],
+                "rundown-overtime-toast"
+            );
+        }
+    } else {
+        const existingToast = document.getElementById("rundown-overtime-toast");
+        if (existingToast) {
+            existingToast.remove();
+        }
+    }
+
+    updateRundownTimerDisplay();
+}
+
+function getRundownTimeValues() {
+    if (rundownState.activeIndex === -1 || !rundownState.items || rundownState.items.length === 0) {
+        return { remaining: 0, overtime: 0, total: 0, mode: "duration" };
+    }
+    const item = rundownState.items[rundownState.activeIndex];
+    const offset = rundownState.activeOffset || 0;
+
+    if (item.mode === "duration") {
+        const total = item.value * 60;
+        if (rundownState.status === "running") {
+            const elapsed = Math.floor((Date.now() - rundownState.startedAt) / 1000);
+            const remaining = total - elapsed + offset;
+            return { remaining, overtime: remaining < 0 ? -remaining : 0, total, mode: "duration" };
+        } else if (rundownState.status === "paused") {
+            const remaining = rundownState.pausedRemaining + offset;
+            return { remaining, overtime: remaining < 0 ? -remaining : 0, total, mode: "duration" };
+        } else if (rundownState.status === "overtime") {
+            const elapsedOvertime = Math.floor((Date.now() - rundownState.overtimeStartedAt) / 1000);
+            return { remaining: -elapsedOvertime, overtime: elapsedOvertime, total, mode: "duration" };
+        } else {
+            return { remaining: total, overtime: 0, total, mode: "duration" };
+        }
+    } else if (item.mode === "clock") {
+        const [h, m] = item.value.split(':').map(Number);
+        const targetDate = new Date();
+        targetDate.setHours(h, m, 0, 0);
+
+        const now = Date.now();
+        let remaining = Math.floor((targetDate.getTime() - now) / 1000) + offset;
+
+        if (rundownState.status === "running") {
+            return { remaining, overtime: remaining < 0 ? -remaining : 0, total: 0, mode: "clock" };
+        } else if (rundownState.status === "paused") {
+            const remainingPaused = rundownState.pausedRemaining + offset;
+            return { remaining: remainingPaused, overtime: remainingPaused < 0 ? -remainingPaused : 0, total: 0, mode: "clock" };
+        } else if (rundownState.status === "overtime") {
+            const elapsedOvertime = Math.floor((Date.now() - rundownState.overtimeStartedAt) / 1000);
+            return { remaining: -elapsedOvertime, overtime: elapsedOvertime, total: 0, mode: "clock" };
+        } else {
+            return { remaining, overtime: 0, total: 0, mode: "clock" };
+        }
+    }
+    return { remaining: 0, overtime: 0, total: 0, mode: "duration" };
+}
+
+function tickRundown() {
+    updateRundownTimerDisplay();
+
+    if (rundownState.status === "running") {
+        const { remaining } = getRundownTimeValues();
+        if (remaining <= 0) {
+            if (rundownState.transitionMode === "auto") {
+                const nextIndex = rundownState.activeIndex + 1;
+                if (nextIndex < rundownState.items.length) {
+                    const completedName = rundownState.items[rundownState.activeIndex].name;
+                    const nextName = rundownState.items[nextIndex].name;
+
+                    rundownState.activeIndex = nextIndex;
+                    rundownState.startedAt = Date.now();
+                    rundownState.activeOffset = 0;
+                    rundownState.status = "running";
+
+                    sendRundownState();
+                    showRundownToast(`⏱️ ${completedName} selesai! Sekarang: ${nextName}`, "info");
+                } else {
+                    const completedName = rundownState.items[rundownState.activeIndex].name;
+                    rundownState.status = "stopped";
+                    rundownState.activeIndex = -1;
+                    rundownState.activeOffset = 0;
+
+                    sendRundownState();
+                    showRundownToast(`⏱️ Rundown selesai: ${completedName}`, "info");
+                }
+            } else {
+                const completedName = rundownState.items[rundownState.activeIndex].name;
+                rundownState.status = "overtime";
+                rundownState.overtimeStartedAt = Date.now();
+
+                sendRundownState();
+
+                const nextIndex = rundownState.activeIndex + 1;
+                const hasNext = nextIndex < rundownState.items.length;
+                const nextName = hasNext ? rundownState.items[nextIndex].name : "Selesai";
+
+                showRundownToast(
+                    `⚠️ [OVERTIME] ${completedName} telah habis waktu!`,
+                    "confirm",
+                    [
+                        {
+                            text: hasNext ? `Lanjut ke: ${nextName}` : "Selesaikan Rundown",
+                            primary: true,
+                            onClick: () => {
+                                confirmRundownNext();
+                            }
+                        },
+                        {
+                            text: "Tetap Overtime",
+                            primary: false,
+                            keepToast: true,
+                            onClick: () => {
+                                keepRundownOvertime();
+                            }
+                        }
+                    ],
+                    "rundown-overtime-toast"
+                );
+            }
+        }
+    }
+}
+
+function updateRundownTimerDisplay() {
+    const banner = document.getElementById("rundown-active-banner");
+    const activeTitle = document.getElementById("rundown-active-title");
+    const activeTime = document.getElementById("rundown-active-time");
+    const activeStatus = document.getElementById("rundown-active-status");
+    const playPauseBtn = document.getElementById("rundown-play-pause-btn");
+
+    if (rundownState.activeIndex === -1 || !rundownState.items || rundownState.items.length === 0) {
+        if (banner) banner.style.display = "none";
+        return;
+    }
+
+    if (banner) banner.style.display = "block";
+    const item = rundownState.items[rundownState.activeIndex];
+    if (activeTitle) activeTitle.innerText = item.name;
+
+    const { remaining, overtime } = getRundownTimeValues();
+
+    let displayStr = "00:00:00";
+    if (rundownState.status === "overtime" || remaining < 0) {
+        const secs = overtime;
+        const h = Math.floor(secs / 3600).toString().padStart(2, '0');
+        const m = Math.floor((secs % 3600) / 60).toString().padStart(2, '0');
+        const s = (secs % 60).toString().padStart(2, '0');
+        displayStr = `+${h}:${m}:${s}`;
+        if (activeTime) {
+            activeTime.innerText = displayStr;
+            activeTime.style.color = "#ff4081";
+        }
+    } else {
+        const secs = Math.max(0, remaining);
+        const h = Math.floor(secs / 3600).toString().padStart(2, '0');
+        const m = Math.floor((secs % 3600) / 60).toString().padStart(2, '0');
+        const s = (secs % 60).toString().padStart(2, '0');
+        displayStr = `${h}:${m}:${s}`;
+        if (activeTime) {
+            activeTime.innerText = displayStr;
+            activeTime.style.color = "#00e5ff";
+        }
+    }
+
+    if (activeStatus) {
+        activeStatus.innerText = rundownState.status;
+        if (rundownState.status === "running") {
+            activeStatus.style.background = "#28a745";
+            activeStatus.style.color = "#fff";
+        } else if (rundownState.status === "paused") {
+            activeStatus.style.background = "#ffc107";
+            activeStatus.style.color = "#000";
+        } else if (rundownState.status === "overtime") {
+            activeStatus.style.background = "#ff4081";
+            activeStatus.style.color = "#fff";
+        } else {
+            activeStatus.style.background = "#555";
+            activeStatus.style.color = "#fff";
+        }
+    }
+
+    if (playPauseBtn) {
+        if (rundownState.status === "running" || rundownState.status === "overtime") {
+            playPauseBtn.innerText = "⏸ PAUSE";
+            playPauseBtn.style.background = "#ffc107";
+            playPauseBtn.style.color = "#000";
+        } else if (rundownState.status === "paused") {
+            playPauseBtn.innerText = "▶ RESUME";
+            playPauseBtn.style.background = "#28a745";
+            playPauseBtn.style.color = "#fff";
+        } else {
+            playPauseBtn.innerText = "▶ START";
+            playPauseBtn.style.background = "#28a745";
+            playPauseBtn.style.color = "#fff";
+        }
+    }
+}
+
+function renderRundownUI() {
+    updateRundownTimerDisplay();
+
+    const container = document.getElementById("rundown-items-container");
+    if (!container) return;
+
+    container.ondragover = (e) => { e.preventDefault(); };
+    container.ondrop = (e) => {
+        e.preventDefault();
+        const fromIndex = window.rundownDragStartIndex;
+        if (fromIndex === undefined || fromIndex === -1) return;
+
+        const draggedItem = rundownState.items.splice(fromIndex, 1)[0];
+        rundownState.items.push(draggedItem);
+
+        if (rundownState.activeIndex === fromIndex) {
+            rundownState.activeIndex = rundownState.items.length - 1;
+        } else if (rundownState.activeIndex > fromIndex) {
+            rundownState.activeIndex--;
+        }
+
+        window.rundownDragStartIndex = -1;
+        sendRundownState();
+        renderRundownUI();
+    };
+
+    if (!rundownState.items || rundownState.items.length === 0) {
+        container.innerHTML = `<div style="color: #666; font-size: 0.8em; text-align: center; padding: 10px 0;">No rundown items added.</div>`;
+        return;
+    }
+
+    container.innerHTML = "";
+    rundownState.items.forEach((item, index) => {
+        const itemRow = document.createElement("div");
+        const isActive = rundownState.activeIndex === index;
+
+        itemRow.style.display = "flex";
+        itemRow.style.alignItems = "center";
+        itemRow.style.justifyContent = "space-between";
+        itemRow.style.padding = "6px 8px";
+        itemRow.style.background = isActive ? "rgba(0, 229, 255, 0.1)" : "#222";
+        itemRow.style.border = isActive ? "1px solid #00e5ff" : "1px solid #333";
+        itemRow.style.borderRadius = "4px";
+        itemRow.style.gap = "8px";
+
+        // Drag and drop event listeners
+        itemRow.draggable = true;
+        itemRow.ondragstart = (e) => {
+            window.rundownDragStartIndex = index;
+            e.dataTransfer.effectAllowed = 'move';
+        };
+        itemRow.ondragover = (e) => {
+            e.preventDefault();
+            itemRow.style.borderTop = "2px solid #00e5ff";
+            itemRow.style.background = "#333";
+        };
+        itemRow.ondragleave = (e) => {
+            itemRow.style.borderTop = "";
+            itemRow.style.background = isActive ? "rgba(0, 229, 255, 0.1)" : "#222";
+        };
+        itemRow.ondrop = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            itemRow.style.borderTop = "";
+            itemRow.style.background = isActive ? "rgba(0, 229, 255, 0.1)" : "#222";
+
+            const fromIndex = window.rundownDragStartIndex;
+            if (fromIndex === undefined || fromIndex === -1 || fromIndex === index) return;
+
+            const draggedItem = rundownState.items.splice(fromIndex, 1)[0];
+            rundownState.items.splice(index, 0, draggedItem);
+
+            if (rundownState.activeIndex === fromIndex) {
+                rundownState.activeIndex = index;
+            } else if (rundownState.activeIndex > fromIndex && rundownState.activeIndex <= index) {
+                rundownState.activeIndex--;
+            } else if (rundownState.activeIndex < fromIndex && rundownState.activeIndex >= index) {
+                rundownState.activeIndex++;
+            }
+
+            window.rundownDragStartIndex = -1;
+            sendRundownState();
+            renderRundownUI();
+        };
+
+        // Grip handle
+        const dragHandle = document.createElement("div");
+        dragHandle.className = "drag-handle";
+        dragHandle.innerText = "☰";
+        dragHandle.title = "Drag to reorder";
+        itemRow.appendChild(dragHandle);
+
+        const infoCol = document.createElement("div");
+        infoCol.style.flex = "1";
+        infoCol.style.display = "flex";
+        infoCol.style.flexDirection = "column";
+
+        const nameSpan = document.createElement("span");
+        nameSpan.innerText = item.name;
+        nameSpan.style.fontWeight = "bold";
+        nameSpan.style.fontSize = "0.9em";
+        nameSpan.style.color = isActive ? "#00e5ff" : "#fff";
+
+        const valSpan = document.createElement("span");
+        valSpan.innerText = item.mode === "duration" ? `${item.value} Min` : `@ ${item.value}`;
+        valSpan.style.fontSize = "0.75em";
+        valSpan.style.color = "#aaa";
+
+        infoCol.appendChild(nameSpan);
+        infoCol.appendChild(valSpan);
+        itemRow.appendChild(infoCol);
+
+        const actionsCol = document.createElement("div");
+        actionsCol.style.display = "flex";
+        actionsCol.style.gap = "4px";
+        actionsCol.style.alignItems = "center";
+
+        const playBtn = document.createElement("button");
+        playBtn.innerHTML = "▶";
+        playBtn.style.background = "#28a745";
+        playBtn.style.border = "none";
+        playBtn.style.color = "#fff";
+        playBtn.style.borderRadius = "3px";
+        playBtn.style.padding = "2px 6px";
+        playBtn.style.cursor = "pointer";
+        playBtn.style.fontSize = "0.75em";
+        playBtn.onclick = () => {
+            rundownState.activeIndex = index;
+            rundownState.status = "running";
+            rundownState.startedAt = Date.now();
+            rundownState.activeOffset = 0;
+            sendRundownState();
+        };
+        actionsCol.appendChild(playBtn);
+
+        const delBtn = document.createElement("button");
+        delBtn.innerHTML = "🗑️";
+        delBtn.style.background = "#dc3545";
+        delBtn.style.border = "none";
+        delBtn.style.color = "#fff";
+        delBtn.style.borderRadius = "3px";
+        delBtn.style.padding = "2px 6px";
+        delBtn.style.cursor = "pointer";
+        delBtn.style.fontSize = "0.75em";
+        delBtn.onclick = () => {
+            deleteRundownItem(index);
+        };
+        actionsCol.appendChild(delBtn);
+
+        itemRow.appendChild(actionsCol);
+        container.appendChild(itemRow);
+    });
+}
+
+async function loadRundownPresetsList() {
+    try {
+        const res = await fetch("/api/rundown_presets");
+        const data = await res.json();
+        const select = document.getElementById("rundown-preset-select");
+        if (!select) return;
+
+        select.innerHTML = "";
+        const presets = data.presets || {};
+        const def = data.default || "";
+
+        const keys = Object.keys(presets);
+        if (keys.length === 0) {
+            select.innerHTML = `<option value="">- No Presets -</option>`;
+            const defStatus = document.getElementById("rundown-default-status");
+            if (defStatus) defStatus.innerText = "Default: None";
+            return;
+        }
+
+        keys.forEach(k => {
+            const opt = document.createElement("option");
+            opt.value = k;
+            opt.innerText = k + (k === def ? " (Default)" : "");
+            select.appendChild(opt);
+        });
+
+        const defStatus = document.getElementById("rundown-default-status");
+        if (defStatus) defStatus.innerText = def ? `Default: ${def}` : "Default: None";
+
+        if (rundownState.presetName && presets[rundownState.presetName]) {
+            select.value = rundownState.presetName;
+        } else if (def && presets[def]) {
+            select.value = def;
+        }
+    } catch (e) {
+        console.error("Failed to load rundown presets list:", e);
+    }
+}
+
+async function loadSelectedRundownPreset() {
+    const select = document.getElementById("rundown-preset-select");
+    if (!select || !select.value) return;
+
+    try {
+        const res = await fetch("/api/rundown_presets");
+        const data = await res.json();
+        const preset = data.presets[select.value];
+        if (preset) {
+            rundownState.presetName = select.value;
+            rundownState.items = preset.items || [];
+            rundownState.transitionMode = preset.transitionMode || "auto";
+            rundownState.miniTimerSize = preset.miniTimerSize !== undefined ? preset.miniTimerSize : 110;
+            rundownState.miniTitleSize = preset.miniTitleSize !== undefined ? preset.miniTitleSize : 80;
+            rundownState.miniTitleAuto = preset.miniTitleAuto !== undefined ? preset.miniTitleAuto : true;
+            rundownState.fullTimerSize = preset.fullTimerSize !== undefined ? preset.fullTimerSize : 190;
+            rundownState.fullTitleSize = preset.fullTitleSize !== undefined ? preset.fullTitleSize : 190;
+            rundownState.fullTitleAuto = preset.fullTitleAuto !== undefined ? preset.fullTitleAuto : true;
+            rundownState.overtimeFlash = preset.overtimeFlash !== undefined ? preset.overtimeFlash : true;
+            rundownState.overtimeColor = preset.overtimeColor || "#ff4081";
+            rundownState.overtimeSpeed = preset.overtimeSpeed !== undefined ? preset.overtimeSpeed : 1.0;
+            
+            updateRundownStyleUI();
+
+            rundownState.activeIndex = -1;
+            rundownState.status = "stopped";
+            rundownState.startedAt = 0;
+            rundownState.pausedRemaining = 0;
+            rundownState.overtimeStartedAt = 0;
+            rundownState.activeOffset = 0;
+
+            sendRundownState();
+        }
+    } catch (e) {
+        console.error("Failed to load selected rundown preset:", e);
+    }
+}
+
+async function newRundownPreset() {
+    const isOk = await showCustomDialog("confirm", "Create new rundown?<br><span style='color: #ffc107; font-size: 0.85em;'>This will clear the current rundown list. Please make sure you have saved your current preset first.</span>");
+    if (!isOk) return;
+
+    rundownState.items = [];
+    rundownState.activeIndex = -1;
+    rundownState.status = "stopped";
+    rundownState.startedAt = 0;
+    rundownState.pausedRemaining = 0;
+    rundownState.overtimeStartedAt = 0;
+    rundownState.activeOffset = 0;
+    rundownState.presetName = "";
+
+    const select = document.getElementById("rundown-preset-select");
+    if (select) select.value = "";
+
+    sendRundownState();
+    renderRundownUI();
+    showToast("New rundown list initialized", "info", 2000);
+}
+
+async function saveRundownPreset() {
+    const select = document.getElementById("rundown-preset-select");
+    if (!select || !select.value) {
+        saveAsRundownPreset();
+        return;
+    }
+
+    const name = select.value;
+    const isOk = await showCustomDialog("confirm", `Update rundown preset <br><b style="color:#00e5ff;">"${name}"</b><br> with current settings?`);
+    if (!isOk) return;
+
+    const payload = {
+        name: name,
+        config: {
+            items: rundownState.items,
+            transitionMode: rundownState.transitionMode,
+            miniTimerSize: rundownState.miniTimerSize,
+            miniTitleSize: rundownState.miniTitleSize,
+            miniTitleAuto: rundownState.miniTitleAuto,
+            fullTimerSize: rundownState.fullTimerSize,
+            fullTitleSize: rundownState.fullTitleSize,
+            fullTitleAuto: rundownState.fullTitleAuto,
+            overtimeFlash: rundownState.overtimeFlash,
+            overtimeColor: rundownState.overtimeColor,
+            overtimeSpeed: rundownState.overtimeSpeed
+        }
+    };
+
+    try {
+        const res = await fetch("/api/rundown_presets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+            rundownState.presetName = name;
+            showToast(`Preset "${name}" saved!`, "success", 1500);
+            await loadRundownPresetsList();
+            sendRundownState();
+            safeCloseModal('fb-modal');
+        }
+    } catch (e) {
+        console.error("Failed to save rundown preset:", e);
+    }
+}
+
+async function saveAsRundownPreset() {
+    const name = await showCustomDialog("prompt", "Enter new rundown preset name:");
+    if (!name) return;
+
+    const payload = {
+        name: name,
+        config: {
+            items: rundownState.items,
+            transitionMode: rundownState.transitionMode,
+            miniTimerSize: rundownState.miniTimerSize,
+            miniTitleSize: rundownState.miniTitleSize,
+            miniTitleAuto: rundownState.miniTitleAuto,
+            fullTimerSize: rundownState.fullTimerSize,
+            fullTitleSize: rundownState.fullTitleSize,
+            fullTitleAuto: rundownState.fullTitleAuto,
+            overtimeFlash: rundownState.overtimeFlash,
+            overtimeColor: rundownState.overtimeColor,
+            overtimeSpeed: rundownState.overtimeSpeed
+        }
+    };
+
+    try {
+        const res = await fetch("/api/rundown_presets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+            rundownState.presetName = name;
+            showToast(`Preset "${name}" created!`, "success", 1500);
+            await loadRundownPresetsList();
+            sendRundownState();
+            safeCloseModal('fb-modal');
+        }
+    } catch (e) {
+        console.error("Failed to save as rundown preset:", e);
+    }
+}
+
+async function deleteRundownPreset() {
+    const select = document.getElementById("rundown-preset-select");
+    if (!select || !select.value) return;
+
+    const name = select.value;
+    const isOk = await showCustomDialog("confirm", `Are you sure you want to delete preset <br><b style="color:#ff4444;">"${name}"</b>?`);
+    if (!isOk) return;
+
+    try {
+        const res = await fetch(`/api/rundown_presets/${name}`, {
+            method: "DELETE"
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+            if (rundownState.presetName === name) rundownState.presetName = "";
+            showToast(`Preset "${name}" deleted.`, "success", 1500);
+            await loadRundownPresetsList();
+        }
+    } catch (e) {
+        console.error("Failed to delete preset:", e);
+    }
+}
+
+async function setDefaultRundownPreset() {
+    const select = document.getElementById("rundown-preset-select");
+    if (!select || !select.value) return;
+
+    const name = select.value;
+    try {
+        const res = await fetch(`/api/rundown_presets/default/${name}`, {
+            method: "POST"
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+            showToast(`"${name}" set as startup default.`, "success", 1500);
+            await loadRundownPresetsList();
+        }
+    } catch (e) {
+        console.error("Failed to set default preset:", e);
+    }
+}
+
+async function addRundownItem() {
+    const nameInput = document.getElementById("rundown-new-name");
+    const modeSelect = document.getElementById("rundown-new-mode");
+    const valInput = document.getElementById("rundown-new-val");
+
+    if (!nameInput || !modeSelect || !valInput) return;
+
+    const name = nameInput.value.trim();
+    const mode = modeSelect.value;
+    const valRaw = valInput.value.trim();
+
+    if (!name) {
+        await showCustomDialog("alert", "Please enter item name.");
+        return;
+    }
+
+    let value = valRaw;
+    if (mode === "duration") {
+        const mins = parseInt(valRaw, 10);
+        if (isNaN(mins) || mins <= 0) {
+            await showCustomDialog("alert", "Please enter a valid duration in minutes.");
+            return;
+        }
+        value = mins;
+    } else if (mode === "clock") {
+        if (!/^\d{1,2}:\d{2}$/.test(valRaw)) {
+            await showCustomDialog("alert", "Please enter a valid clock target in HH:MM format.");
+            return;
+        }
+    }
+
+    rundownState.items.push({ name, mode, value });
+
+    nameInput.value = "";
+    valInput.value = "";
+
+    sendRundownState();
+}
+
+function deleteRundownItem(index) {
+    if (index < 0 || index >= rundownState.items.length) return;
+
+    rundownState.items.splice(index, 1);
+
+    if (rundownState.activeIndex === index) {
+        rundownState.activeIndex = -1;
+        rundownState.status = "stopped";
+    } else if (rundownState.activeIndex > index) {
+        rundownState.activeIndex--;
+    }
+
+    sendRundownState();
+}
+
+function moveRundownItem(index, dir) {
+    const target = index + dir;
+    if (target < 0 || target >= rundownState.items.length) return;
+
+    const temp = rundownState.items[index];
+    rundownState.items[index] = rundownState.items[target];
+    rundownState.items[target] = temp;
+
+    if (rundownState.activeIndex === index) {
+        rundownState.activeIndex = target;
+    } else if (rundownState.activeIndex === target) {
+        rundownState.activeIndex = index;
+    }
+
+    sendRundownState();
+}
+
+async function clearRundownList() {
+    const isOk = await showCustomDialog("confirm", "Are you sure you want to clear the rundown list?");
+    if (!isOk) return;
+    rundownState.items = [];
+    rundownState.activeIndex = -1;
+    rundownState.status = "stopped";
+    rundownState.startedAt = 0;
+    rundownState.pausedRemaining = 0;
+    rundownState.overtimeStartedAt = 0;
+    rundownState.activeOffset = 0;
+
+    sendRundownState();
+}
+
+function toggleRundownTransitionMode() {
+    const select = document.getElementById("rundown-transition-select");
+    if (!select) return;
+    rundownState.transitionMode = select.value;
+    sendRundownState();
+}
+
+async function toggleActiveRundown() {
+    if (rundownState.activeIndex === -1) {
+        if (rundownState.items.length === 0) {
+            await showCustomDialog("alert", "No items in rundown list.");
+            return;
+        }
+        rundownState.activeIndex = 0;
+    }
+
+    const item = rundownState.items[rundownState.activeIndex];
+    let totalSec = 0;
+    if (item.mode === "duration") {
+        totalSec = item.value * 60;
+    } else {
+        const [h, m] = item.value.split(':').map(Number);
+        const targetDate = new Date();
+        targetDate.setHours(h, m, 0, 0);
+        totalSec = Math.max(0, Math.floor((targetDate.getTime() - Date.now()) / 1000));
+    }
+
+    if (rundownState.status === "stopped") {
+        rundownState.status = "running";
+        rundownState.startedAt = Date.now();
+        rundownState.activeOffset = 0;
+    } else if (rundownState.status === "paused") {
+        if (rundownState.pausedRemaining < 0) {
+            rundownState.status = "overtime";
+            rundownState.overtimeStartedAt = Date.now() + rundownState.pausedRemaining * 1000;
+        } else {
+            rundownState.status = "running";
+            if (item.mode === "duration") {
+                rundownState.startedAt = Date.now() - (totalSec - rundownState.pausedRemaining) * 1000;
+            } else if (item.mode === "clock") {
+                const [h, m] = item.value.split(':').map(Number);
+                const targetDate = new Date();
+                targetDate.setHours(h, m, 0, 0);
+                rundownState.activeOffset = rundownState.pausedRemaining - Math.floor((targetDate.getTime() - Date.now()) / 1000);
+            }
+        }
+    } else if (rundownState.status === "running" || rundownState.status === "overtime") {
+        const { remaining, overtime } = getRundownTimeValues();
+        rundownState.status = "paused";
+        if (remaining < 0 || overtime > 0) {
+            rundownState.pausedRemaining = -overtime;
+        } else {
+            rundownState.pausedRemaining = remaining;
+        }
+    }
+
+    sendRundownState();
+}
+
+function stopActiveRundown() {
+    rundownState.status = "stopped";
+    rundownState.activeIndex = -1;
+    rundownState.startedAt = 0;
+    rundownState.pausedRemaining = 0;
+    rundownState.overtimeStartedAt = 0;
+    rundownState.activeOffset = 0;
+
+    sendRundownState();
+}
+
+function adjustRundownTime(minutes) {
+    if (rundownState.status !== "running" && rundownState.status !== "overtime") return;
+
+    rundownState.activeOffset = (rundownState.activeOffset || 0) + minutes * 60;
+
+    sendRundownState();
+}
+
+function confirmRundownNext() {
+    const nextIndex = rundownState.activeIndex + 1;
+    if (nextIndex < rundownState.items.length) {
+        rundownState.activeIndex = nextIndex;
+        rundownState.startedAt = Date.now();
+        rundownState.activeOffset = 0;
+        rundownState.status = "running";
+    } else {
+        rundownState.status = "stopped";
+        rundownState.activeIndex = -1;
+        rundownState.activeOffset = 0;
+    }
+    sendRundownState();
+}
+
+function keepRundownOvertime() {
+    rundownState.status = "overtime";
+    sendRundownState();
+}
+
+function sendRundownState() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            action: "stage_rundown",
+            payload: rundownState
+        }));
+    }
+}
+
+function showRundownToast(message, type, buttons = [], toastId = "") {
+    const container = document.getElementById("rundown-toast-container");
+    if (!container) return;
+
+    if (toastId && document.getElementById(toastId)) return;
+
+    if (!document.getElementById("rundown-toast-style")) {
+        const style = document.createElement("style");
+        style.id = "rundown-toast-style";
+        style.innerHTML = `
+            @keyframes slideInRight {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+            @keyframes slideOutRight {
+                from { transform: translateX(0); opacity: 1; }
+                to { transform: translateX(100%); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    const toast = document.createElement("div");
+    if (toastId) toast.id = toastId;
+    toast.style.background = "#222";
+    toast.style.border = "2px solid " + (type === "confirm" ? "#ff9800" : "#00e5ff");
+    toast.style.boxShadow = "0 4px 20px rgba(0,0,0,0.5)";
+    toast.style.borderRadius = "8px";
+    toast.style.padding = "12px 16px";
+    toast.style.color = "#fff";
+    toast.style.fontSize = "0.95em";
+    toast.style.fontFamily = "sans-serif";
+    toast.style.display = "flex";
+    toast.style.flexDirection = "column";
+    toast.style.gap = "10px";
+    toast.style.animation = "slideInRight 0.3s ease-out";
+    toast.style.pointerEvents = "auto";
+
+    const text = document.createElement("div");
+    text.innerText = message;
+    text.style.fontWeight = "bold";
+    toast.appendChild(text);
+
+    if (buttons.length > 0) {
+        const btnRow = document.createElement("div");
+        btnRow.style.display = "flex";
+        btnRow.style.gap = "8px";
+        buttons.forEach(btnInfo => {
+            const btn = document.createElement("button");
+            btn.innerText = btnInfo.text;
+            btn.style.padding = "6px 12px";
+            btn.style.border = "none";
+            btn.style.borderRadius = "4px";
+            btn.style.cursor = "pointer";
+            btn.style.fontWeight = "bold";
+            btn.style.fontSize = "0.85em";
+            if (btnInfo.primary) {
+                btn.style.background = "#ff9800";
+                btn.style.color = "#000";
+            } else {
+                btn.style.background = "#444";
+                btn.style.color = "#fff";
+            }
+            btn.onclick = () => {
+                btnInfo.onClick();
+                if (!btnInfo.keepToast) {
+                    toast.remove();
+                }
+            };
+            btnRow.appendChild(btn);
+        });
+        toast.appendChild(btnRow);
+    } else {
+        setTimeout(() => {
+            toast.style.animation = "slideOutRight 0.3s ease-in";
+            setTimeout(() => toast.remove(), 300);
+        }, 4000);
+    }
+
+    container.appendChild(toast);
+}
+
+function showMiniToast(message, type = "info", duration = 4000, toastId = "") {
+    const container = document.getElementById("rundown-toast-container");
+    if (!container) return;
+
+    let toast = toastId ? document.getElementById(toastId) : null;
+    let textEl;
+
+    if (toast) {
+        textEl = toast.querySelector(".mini-toast-text");
+        if (textEl) textEl.innerHTML = message;
+        toast.style.border = "1px solid " + (type === "success" ? "#28a745" : (type === "error" ? "#dc3545" : (type === "loading" ? "#ff9800" : "#00e5ff")));
+
+        if (toast.dataset.timerId) {
+            clearTimeout(parseInt(toast.dataset.timerId));
+            toast.removeAttribute("data-timer-id");
+        }
+    } else {
+        toast = document.createElement("div");
+        if (toastId) toast.id = toastId;
+        toast.style.background = "rgba(18, 18, 18, 0.92)";
+        toast.style.backdropFilter = "blur(6px)";
+        toast.style.webkitBackdropFilter = "blur(6px)";
+        toast.style.border = "1px solid " + (type === "success" ? "#28a745" : (type === "error" ? "#dc3545" : (type === "loading" ? "#ff9800" : "#00e5ff")));
+        toast.style.boxShadow = "0 3px 10px rgba(0,0,0,0.35)";
+        toast.style.borderRadius = "5px";
+        toast.style.padding = "9px 15px";
+        toast.style.color = "#eee";
+        toast.style.fontSize = "0.82em";
+        toast.style.fontWeight = "500";
+        toast.style.fontFamily = "system-ui, -apple-system, sans-serif";
+        toast.style.display = "flex";
+        toast.style.flexDirection = "column";
+        toast.style.gap = "3px";
+        toast.style.animation = "slideInRight 0.25s ease-out";
+        toast.style.pointerEvents = "auto";
+        toast.style.marginBottom = "3px";
+        toast.style.width = "max-content";
+        toast.style.maxWidth = "290px";
+        toast.style.alignSelf = "flex-end";
+
+        textEl = document.createElement("div");
+        textEl.className = "mini-toast-text";
+        textEl.style.whiteSpace = "nowrap";
+        textEl.style.overflow = "hidden";
+        textEl.style.textOverflow = "ellipsis";
+        textEl.style.maxWidth = "270px";
+        textEl.innerHTML = message;
+        toast.appendChild(textEl);
+        container.appendChild(toast);
+    }
+
+    if (duration > 0) {
+        const timerId = setTimeout(() => {
+            toast.style.animation = "slideOutRight 0.25s ease-in";
+            setTimeout(() => toast.remove(), 250);
+        }, duration);
+        toast.dataset.timerId = timerId;
+    }
+}
+
+// Auto initialize Stage Rundown presets list on startup
+function syncRundownStyleFromUI() {
+    const miniTimer = document.getElementById("rundown-mini-timer-size");
+    const miniTitle = document.getElementById("rundown-mini-title-size");
+    const miniTitleAuto = document.getElementById("rundown-mini-title-auto");
+    const fullTimer = document.getElementById("rundown-full-timer-size");
+    const fullTitle = document.getElementById("rundown-full-title-size");
+    const fullTitleAuto = document.getElementById("rundown-full-title-auto");
+    const otFlash = document.getElementById("rundown-overtime-flash");
+    const otColor = document.getElementById("rundown-overtime-flash-color");
+    const otSpeed = document.getElementById("rundown-overtime-flash-speed");
+
+    if (miniTimer) rundownState.miniTimerSize = parseFloat(miniTimer.value) || 80;
+    if (miniTitle) rundownState.miniTitleSize = parseFloat(miniTitle.value) || 40;
+    if (miniTitleAuto) rundownState.miniTitleAuto = miniTitleAuto.checked;
+    if (fullTimer) rundownState.fullTimerSize = parseFloat(fullTimer.value) || 150;
+    if (fullTitle) rundownState.fullTitleSize = parseFloat(fullTitle.value) || 50;
+    if (fullTitleAuto) rundownState.fullTitleAuto = fullTitleAuto.checked;
+    if (otFlash) rundownState.overtimeFlash = otFlash.checked;
+    if (otColor) rundownState.overtimeColor = otColor.value;
+    if (otSpeed) {
+        rundownState.overtimeSpeed = parseFloat(otSpeed.value) || 1.0;
+        const valSpan = document.getElementById("rundown-overtime-flash-speed-val");
+        if (valSpan) valSpan.innerText = rundownState.overtimeSpeed.toFixed(1) + 's';
+    }
+}
+
+function updateRundownStyleUI() {
+    const miniTimer = document.getElementById("rundown-mini-timer-size");
+    const miniTitle = document.getElementById("rundown-mini-title-size");
+    const miniTitleAuto = document.getElementById("rundown-mini-title-auto");
+    const fullTimer = document.getElementById("rundown-full-timer-size");
+    const fullTitle = document.getElementById("rundown-full-title-size");
+    const fullTitleAuto = document.getElementById("rundown-full-title-auto");
+    const otFlash = document.getElementById("rundown-overtime-flash");
+    const otColor = document.getElementById("rundown-overtime-flash-color");
+    const otSpeed = document.getElementById("rundown-overtime-flash-speed");
+    const valSpan = document.getElementById("rundown-overtime-flash-speed-val");
+
+    if (miniTimer) miniTimer.value = rundownState.miniTimerSize !== undefined ? rundownState.miniTimerSize : 80;
+    if (miniTitle) {
+        miniTitle.value = rundownState.miniTitleSize !== undefined ? rundownState.miniTitleSize : 40;
+        miniTitle.disabled = rundownState.miniTitleAuto === true;
+    }
+    if (miniTitleAuto) miniTitleAuto.checked = rundownState.miniTitleAuto !== undefined ? rundownState.miniTitleAuto : true;
+    if (fullTimer) fullTimer.value = rundownState.fullTimerSize !== undefined ? rundownState.fullTimerSize : 150;
+    if (fullTitle) {
+        fullTitle.value = rundownState.fullTitleSize !== undefined ? rundownState.fullTitleSize : 50;
+        fullTitle.disabled = rundownState.fullTitleAuto === true;
+    }
+    if (fullTitleAuto) fullTitleAuto.checked = rundownState.fullTitleAuto !== undefined ? rundownState.fullTitleAuto : true;
+    if (otFlash) otFlash.checked = rundownState.overtimeFlash !== undefined ? rundownState.overtimeFlash : true;
+    if (otColor) otColor.value = rundownState.overtimeColor || "#ff4081";
+    if (otSpeed) {
+        otSpeed.value = rundownState.overtimeSpeed !== undefined ? rundownState.overtimeSpeed : 1.0;
+        if (valSpan) valSpan.innerText = rundownState.overtimeSpeed.toFixed(1) + 's';
+    }
+}
+
+function toggleRundownTitleAuto() {
+    const miniTitle = document.getElementById("rundown-mini-title-size");
+    const miniTitleAuto = document.getElementById("rundown-mini-title-auto");
+    if (miniTitle && miniTitleAuto) {
+        miniTitle.disabled = miniTitleAuto.checked;
+    }
+    const fullTitle = document.getElementById("rundown-full-title-size");
+    const fullTitleAuto = document.getElementById("rundown-full-title-auto");
+    if (fullTitle && fullTitleAuto) {
+        fullTitle.disabled = fullTitleAuto.checked;
+    }
+    // Also sync and send state so it applies in real-time
+    if (typeof syncRundownStyleFromUI === 'function') {
+        syncRundownStyleFromUI();
+        if (typeof sendRundownState === 'function') {
+            sendRundownState();
+        }
+    }
+}
+
+function toggleRundownStyleCollapse() {
+    const content = document.getElementById("rundown-style-collapse-content");
+    const icon = document.getElementById("rundown-style-collapse-icon");
+    if (content && icon) {
+        if (content.style.display === "none") {
+            content.style.display = "flex";
+            icon.innerText = "▼";
+        } else {
+            content.style.display = "none";
+            icon.innerText = "▶";
+        }
+    }
+}
+
+(function () {
+    const initRundown = () => {
+        loadRundownPresetsList();
+
+        // Expose functions globally to prevent obfuscator naming issues
+        window.newRundownPreset = newRundownPreset;
+        window.loadSelectedRundownPreset = loadSelectedRundownPreset;
+        window.deleteRundownPreset = deleteRundownPreset;
+        window.saveRundownPreset = saveRundownPreset;
+        window.saveAsRundownPreset = saveAsRundownPreset;
+        window.setDefaultRundownPreset = setDefaultRundownPreset;
+        window.addRundownItem = addRundownItem;
+        window.toggleActiveRundown = toggleActiveRundown;
+        window.stopActiveRundown = stopActiveRundown;
+        window.adjustRundownTime = adjustRundownTime;
+        window.toggleRundownTransitionMode = toggleRundownTransitionMode;
+        window.confirmRundownNext = confirmRundownNext;
+        window.syncRundownStyleFromUI = syncRundownStyleFromUI;
+        window.updateRundownStyleUI = updateRundownStyleUI;
+        window.toggleRundownTitleAuto = toggleRundownTitleAuto;
+        window.toggleRundownStyleCollapse = toggleRundownStyleCollapse;
+        window.keepRundownOvertime = keepRundownOvertime;
+        window.clearRundownList = clearRundownList;
+        window.deleteRundownItem = deleteRundownItem;
+        window.moveRundownItem = moveRundownItem;
+    };
+
+    if (document.readyState === "complete" || document.readyState === "interactive") {
+        setTimeout(initRundown, 100);
+    } else {
+        document.addEventListener("DOMContentLoaded", initRundown);
+    }
+})();
 
 let layerConfigMain = [];
 let layerConfigLt = [];
@@ -491,7 +1794,9 @@ function getDisplayConfigFromUI() {
         motion: getSafeMotionValue(document.getElementById("motion-input").value), align: document.getElementById("align-input").value,
         v_align: document.getElementById("te-valign") ? document.getElementById("te-valign").value : 'center',
         v_margin: document.getElementById("te-vmargin") ? parseInt(document.getElementById("te-vmargin").value) : 5,
-        pad_x: parseInt(document.getElementById("pad-input").value),
+        margin_x: parseInt(document.getElementById("margin-x-input").value),
+        text_wrap: parseInt(document.getElementById("text-wrap-input").value),
+        pad_x: parseInt(document.getElementById("margin-x-input").value),
         font_size: parseFloat(document.getElementById("font-size-input").value),
         sub_color: document.getElementById("sub-color-input").value,
         sub_size: parseFloat(document.getElementById("sub-size-input").value),
@@ -534,7 +1839,7 @@ let appShortcuts = {
     clear_audio: { ctrlKey: true, shiftKey: false, altKey: false, key: 'A', display: 'CTRL + A' },
     clear_presentation: { ctrlKey: true, shiftKey: false, altKey: false, key: 'P', display: 'CTRL + P' },
     clear_photo: { ctrlKey: true, shiftKey: false, altKey: false, key: 'I', display: 'CTRL + I' },
-    
+
     jump_verse: { ctrlKey: false, shiftKey: false, altKey: false, key: 'V', display: 'V' },
     jump_verse2: { ctrlKey: false, shiftKey: false, altKey: false, key: 'I', display: 'I' },
     jump_pre: { ctrlKey: false, shiftKey: false, altKey: false, key: 'P', display: 'P' },
@@ -542,7 +1847,7 @@ let appShortcuts = {
     jump_chorus2: { ctrlKey: false, shiftKey: false, altKey: false, key: 'X', display: 'X' },
     jump_bridge: { ctrlKey: false, shiftKey: false, altKey: false, key: 'B', display: 'B' },
     jump_tag: { ctrlKey: false, shiftKey: false, altKey: false, key: 'T', display: 'T' },
-    
+
     assign_verse: { ctrlKey: false, shiftKey: true, altKey: false, key: 'V', display: 'SHIFT + V' },
     assign_verse2: { ctrlKey: false, shiftKey: true, altKey: false, key: 'I', display: 'SHIFT + I' },
     assign_pre: { ctrlKey: false, shiftKey: true, altKey: false, key: 'P', display: 'SHIFT + P' },
@@ -559,7 +1864,7 @@ const shortcutActionLabels = {
     clear_audio: "Emergency: Hide/Show Audio",
     clear_presentation: "Emergency: Hide/Show Presentation",
     clear_photo: "Emergency: Hide/Show Image",
-    
+
     jump_verse: "Jump Live: Verse 1",
     jump_verse2: "Jump Live: Verse 2",
     jump_pre: "Jump Live: Pre-Chorus",
@@ -567,7 +1872,7 @@ const shortcutActionLabels = {
     jump_chorus2: "Jump Live: Chorus 2",
     jump_bridge: "Jump Live: Bridge",
     jump_tag: "Jump Live: Tag",
-    
+
     assign_verse: "Tag Lyric Grid: Verse 1",
     assign_verse2: "Tag Lyric Grid: Verse 2",
     assign_pre: "Tag Lyric Grid: Pre-Chorus",
@@ -581,16 +1886,16 @@ const shortcutActionLabels = {
 function matchShortcut(e, action) {
     const s = appShortcuts[action];
     if (!s) return false;
-    
+
     let eventKey = e.key.toUpperCase();
     if (e.code === "Space") eventKey = " ";
-    
+
     let shortcutKey = s.key.toUpperCase();
-    
+
     return eventKey === shortcutKey &&
-           !!e.ctrlKey === !!s.ctrlKey &&
-           !!e.shiftKey === !!s.shiftKey &&
-           !!e.altKey === !!s.altKey;
+        !!e.ctrlKey === !!s.ctrlKey &&
+        !!e.shiftKey === !!s.shiftKey &&
+        !!e.altKey === !!s.altKey;
 }
 
 async function loadAppShortcutsFromServer() {
@@ -1055,16 +2360,16 @@ function startLibrarySongDrag(event, title) {
 // 🎯 LIBRARY SONG CONTEXT MENU (Right-Click)
 function showLibrarySongContextMenu(event, title) {
     event.preventDefault();
-    
+
     // Hapus context menu lama jika ada
     const oldMenu = document.getElementById("library-song-context-menu");
     if (oldMenu) oldMenu.remove();
-    
+
     // Buat context menu baru
     const menu = document.createElement("div");
     menu.id = "library-song-context-menu";
     menu.className = "library-context-menu";
-    
+
     // Option 1: Add to Schedule
     const addOption = document.createElement("div");
     addOption.className = "library-context-item";
@@ -1074,7 +2379,7 @@ function showLibrarySongContextMenu(event, title) {
         menu.remove();
     };
     menu.appendChild(addOption);
-    
+
     // Option 2: Delete
     const delOption = document.createElement("div");
     delOption.className = "library-context-item library-context-danger";
@@ -1084,28 +2389,28 @@ function showLibrarySongContextMenu(event, title) {
         menu.remove();
     };
     menu.appendChild(delOption);
-    
+
     // Tambahkan menu ke body
     document.body.appendChild(menu);
-    
+
     // Positioning logic: jangan sampai terpotong oleh viewport
     const rect = menu.getBoundingClientRect();
     let x = event.clientX;
     let y = event.clientY;
-    
+
     // Cek apakah menu keluar dari kanan layar
     if (x + rect.width > window.innerWidth) {
         x = window.innerWidth - rect.width - 10;
     }
-    
+
     // Cek apakah menu keluar dari bawah layar
     if (y + rect.height > window.innerHeight) {
         y = window.innerHeight - rect.height - 10;
     }
-    
+
     menu.style.left = x + "px";
     menu.style.top = y + "px";
-    
+
     // Hapus menu jika klik di tempat lain
     setTimeout(() => {
         document.addEventListener('click', function removeMenu(e) {
@@ -1203,7 +2508,7 @@ function filterLibrary() {
     // Pake for-loop murni (100x lebih cepat dari .forEach / .map)
     for (let i = 0; i < allSongs.length; i++) {
         const s = allSongs[i];
-        
+
         // Prioritas 1: Cari dari Judul (Pre-cached!)
         if (s.cleanTitle && s.cleanTitle.includes(query)) {
             filtered.push(s);
@@ -1347,7 +2652,7 @@ function renderSchedule() {
                         <div class="sched-note-text ${noteClass}">${noteText}</div>
                     </div>
                 `;
-        
+
         // 🎯 ATTACH EDIT NOTE HANDLER KE NOTE TEXT SAJA
         const noteElement = div.querySelector('.sched-note-text');
         if (noteElement) {
@@ -1357,7 +2662,7 @@ function renderSchedule() {
             };
             noteElement.style.cursor = 'pointer';
         }
-        
+
         container.appendChild(div);
     });
 }
@@ -1385,16 +2690,16 @@ async function removeFromSchedule(index) {
 // 🎯 SCHEDULE CONTEXT MENU (Right-Click)
 function showScheduleContextMenu(event, index, title) {
     event.preventDefault();
-    
+
     // Hapus context menu lama jika ada
     const oldMenu = document.getElementById("schedule-context-menu");
     if (oldMenu) oldMenu.remove();
-    
+
     // Buat context menu baru
     const menu = document.createElement("div");
     menu.id = "schedule-context-menu";
     menu.className = "library-context-menu";
-    
+
     // Option 1: Edit Note
     const editNoteOption = document.createElement("div");
     editNoteOption.className = "library-context-item";
@@ -1404,7 +2709,7 @@ function showScheduleContextMenu(event, index, title) {
         menu.remove();
     };
     menu.appendChild(editNoteOption);
-    
+
     // Option 2: Delete
     const delOption = document.createElement("div");
     delOption.className = "library-context-item library-context-danger";
@@ -1414,28 +2719,28 @@ function showScheduleContextMenu(event, index, title) {
         menu.remove();
     };
     menu.appendChild(delOption);
-    
+
     // Tambahkan menu ke body
     document.body.appendChild(menu);
-    
+
     // Positioning logic: jangan sampai terpotong oleh viewport
     const rect = menu.getBoundingClientRect();
     let x = event.clientX;
     let y = event.clientY;
-    
+
     // Cek apakah menu keluar dari kanan layar
     if (x + rect.width > window.innerWidth) {
         x = window.innerWidth - rect.width - 10;
     }
-    
+
     // Cek apakah menu keluar dari bawah layar
     if (y + rect.height > window.innerHeight) {
         y = window.innerHeight - rect.height - 10;
     }
-    
+
     menu.style.left = x + "px";
     menu.style.top = y + "px";
-    
+
     // Hapus menu jika klik di tempat lain
     setTimeout(() => {
         document.addEventListener('click', function removeMenu(e) {
@@ -1458,25 +2763,25 @@ async function editScheduleNote(index) {
     }
 }
 async function saveActiveSchedule() { await fetch('/api/service', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scheduleList) }); }
-async function fetchSavedSchedules() { 
-    const res = await fetch('/api/schedules'); 
-    savedSchedules = await res.json(); 
-    const select = document.getElementById("saved-sched-select"); 
-    select.innerHTML = '<option value="">-- Select Saved --</option>'; 
-    
+async function fetchSavedSchedules() {
+    const res = await fetch('/api/schedules');
+    savedSchedules = await res.json();
+    const select = document.getElementById("saved-sched-select");
+    select.innerHTML = '<option value="">-- Select Saved --</option>';
+
     // 🎯 GET ALL SCHEDULE NAMES & SORT - MOST RECENT FIRST (MAX 10)
     let scheduleNames = Object.keys(savedSchedules);
-    
+
     // Sort by name in reverse order (most recent first - assuming last added is last in iteration)
     // For proper chronological sorting, backend should return timestamps
     scheduleNames = scheduleNames.reverse().slice(0, 10);
-    
+
     scheduleNames.forEach(name => {
-        const opt = document.createElement("option"); 
-        opt.value = name; 
-        opt.innerText = name; 
-        select.appendChild(opt); 
-    }); 
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.innerText = name;
+        select.appendChild(opt);
+    });
 }
 
 async function saveCurrentGrid() {
@@ -1521,7 +2826,16 @@ async function saveCurrentGrid() {
 }
 
 function loadSong(title) {
+    // Hide stuck PPT loading overlay
+    const pptOverlay = document.getElementById('ppt-grid-overlay');
+    if (pptOverlay) {
+        pptOverlay.classList.remove('show-flex');
+    }
+    window.waitingForPPTId = null;
+    window.waitingForPPTName = null;
+
     if (typeof window.exitPPTRemoteMode === 'function') window.exitPPTRemoteMode();
+
     const song = allSongs.find(s => s.title === title);
     if (song) {
         currentSongTitle = song.title;
@@ -1555,11 +2869,11 @@ function loadSong(title) {
                 presetName = currentGlobalDefaultName;
             }
             // Reset custom DNA jadi netral (biar ga nyolong style lagu sebelumnya)
-            currentSongCustomSettings = { font: 'Cinzel', theme: 'default', color: '#ffffff', glow: 50, fade: 0.5, trans: 'fade', speed: '30s', zoom: 'stay', motion: 'none', align: 'center', pad_x: 10 };
+            currentSongCustomSettings = { font: 'Cinzel', theme: 'default', color: '#ffffff', glow: 50, fade: 0.5, trans: 'fade', speed: '30s', zoom: 'stay', motion: 'none', align: 'center', pad_x: 10, margin_x: 10, text_wrap: 80 };
         } else {
             // Kalau lagu lama, ambil DNA aslinya
             currentSongCustomSettings = s.custom || {};
-            if (!s.custom && s.theme) { currentSongCustomSettings = { font: s.font, theme: s.theme, color: s.color, glow: s.glow, fade: s.fade, trans: s.trans, speed: s.speed, zoom: s.zoom, motion: s.motion, align: s.align, pad_x: s.pad_x }; }
+            if (!s.custom && s.theme) { currentSongCustomSettings = { font: s.font, theme: s.theme, color: s.color, glow: s.glow, fade: s.fade, trans: s.trans, speed: s.speed, zoom: s.zoom, motion: s.motion, align: s.align, pad_x: s.pad_x, margin_x: s.margin_x !== undefined ? s.margin_x : s.pad_x, text_wrap: s.text_wrap !== undefined ? s.text_wrap : (s.pad_x !== undefined ? 100 - 2 * s.pad_x : 80) }; }
         }
 
         // 2. Set UI DNA
@@ -1611,7 +2925,8 @@ function loadSong(title) {
     }
 }
 async function deleteSong(title) {
-    if (!confirm(`Delete "${title}" from library?`)) return;
+    const isOk = await showCustomDialog("confirm", `Delete "${title}" from library?`);
+    if (!isOk) return;
     await fetch(`/api/songs/${title}`, { method: 'DELETE' });
 
     // Cek apakah lagu ada di schedule (Pencarian Object)
@@ -1652,16 +2967,16 @@ function updateGridLyricTexts() {
         if (!fullText) return;
         if (currentGridMode === 'box') {
             // Re-apply truncation: full text is stored, so decode and re-truncate
-            const tmp = document.createElement('div');
-            tmp.innerHTML = fullText;
-            const plain = tmp.innerText;
+            const plain = fullText;
             const truncated = plain.length > 35 ? plain.substring(0, 35) + '...' : plain;
             const safe = document.createElement('div');
-            safe.innerText = truncated;
+            safe.textContent = truncated;
             span.innerHTML = safe.innerHTML;
         } else {
-            // ROW mode: show full untruncated text
-            span.innerHTML = fullText;
+            // ROW mode: show full untruncated text with <br> for newline rendering
+            const tmp = document.createElement('div');
+            tmp.textContent = fullText;
+            span.innerHTML = tmp.innerHTML.replace(/\r?\n/g, '<br>');
         }
     });
 }
@@ -1733,10 +3048,10 @@ function toggleGridDropdown(event) {
 
 async function selectGridMode(mode, event) {
     if (event) event.stopPropagation();
-    
+
     // 🎯 PREVENT ROW MODE WHEN PPT IS ACTIVE
     const isPPTActive = currentSongTitle.startsWith("📊 PPT:");
-    
+
     if (mode === 'row' && isPPTActive) {
         showToast("⚠️ PPT mode requires BOX grid layout", "error", 1000);
         // Force back to box mode
@@ -1748,7 +3063,7 @@ async function selectGridMode(mode, event) {
         if (rowBtn) rowBtn.classList.remove('active');
         return;
     }
-    
+
     currentGridMode = mode;
 
     const menu = document.getElementById("grid-dropdown-menu");
@@ -1756,7 +3071,7 @@ async function selectGridMode(mode, event) {
 
     applyGridModeAndSize();
     updateGridLyricTexts();
-    
+
     // Save to server app_settings.json
     try {
         await fetch('/api/settings', {
@@ -1808,7 +3123,7 @@ async function adjustGridBoxSize(direction) {
     if (nextIndex >= 0 && nextIndex < gridBoxSizes.length) {
         currentGridBoxSizeIndex = nextIndex;
         applyGridModeAndSize();
-        
+
         // Save to server app_settings.json
         try {
             await fetch('/api/settings', {
@@ -1941,7 +3256,7 @@ function renderGrid() {
             if (cat === 'audio') {
                 thumbHtml = `<div class="grid-audio-layer">🎵</div>`;
             } else if (item.type === 'presentation_slide') {
-                let thumbUrl = `/api/media/presentation/${item.bg_id}/slide/${item.slide_num}?t=${item.bg_id}`;
+                let thumbUrl = `/api/media/presentation/${item.bg_id}/slide/${item.slide_num}?thumb=true&t=${item.bg_id}`;
                 thumbHtml = `<img src="${thumbUrl}" class="grid-thumb-layer" onerror="this.style.display='none'">`;
             } else if (item.type === 'remote_ppt_slide') {
                 let baseUrl = currentSender.public_url && currentSender.public_url !== "None"
@@ -1970,20 +3285,27 @@ function renderGrid() {
             if (currentGridMode === 'box') {
                 preview = item.text.length > 35 ? item.text.substring(0, 35) + "..." : item.text;
             }
-            let safeText = document.createElement('div'); safeText.innerText = preview;
+            let safeText = document.createElement('div'); safeText.textContent = preview;
             // Store the full (untruncated) text for live switching
-            const safeFullText = document.createElement('div'); safeFullText.innerText = item.text;
+            const safeFullText = document.createElement('div'); safeFullText.textContent = item.text;
 
             let inlineClearBtn = "";
             if (item.type === 'scripture') {
                 inlineClearBtn = `<button class="btn-inline-clear" onclick="event.stopPropagation(); clearScriptureLive();" title="Matikan Ayat">✖ CLEAR</button>`;
             }
 
+            const escapedFullText = safeFullText.innerHTML.replace(/"/g, '&quot;');
+
+            let displayText = safeText.innerHTML;
+            if (currentGridMode === 'row') {
+                displayText = displayText.replace(/\r?\n/g, '<br>');
+            }
+
             box.innerHTML = `
                 ${thumbHtml}
                 ${inlineClearBtn}
                 <div class="tag-badge">${typeLabel}</div>
-                <span class="grid-lyric-text" data-full-text="${safeFullText.innerHTML}">${safeText.innerHTML}</span>
+                <div class="grid-lyric-text" data-full-text="${escapedFullText}">${displayText}</div>
             `;
         }
 
@@ -2141,7 +3463,8 @@ async function quickEdit(idx) {
     if (newText !== null) {
         // 1. LOGIC HAPUS (Jika teks kosong)
         if (newText.trim() === "") {
-            if (confirm("Delete this lyric slide?")) {
+            const isOk = await showCustomDialog("confirm", "Delete this lyric slide?");
+            if (isOk) {
                 // Hapus dari array data
                 lyricsData.splice(idx, 1);
 
@@ -2188,6 +3511,10 @@ function fireLyric(idx, forceShow = false) {
 
     let wasCleared = (!isShowing || clearStates.video || clearStates.photo || clearStates.presentation || clearStates.audio);
 
+    // Track if we need to clear presentation before destroying cache memory
+    const isPPT = lyricsData[idx] && lyricsData[idx].type === 'presentation_slide';
+    const needClearPPT = (window.currentVisType === 'presentation_slide') && !isPPT;
+
     // 🚨 HANCURKAN CACHE MEMORI! 🚨
     // Hancurkan cache jika slide memiliki MEDIA spesifik, baik saat diklik (forceShow=true) 
     // ATAUPUN saat dinavigasi pakai keyboard next/prev (forceShow=false).
@@ -2221,7 +3548,7 @@ function fireLyric(idx, forceShow = false) {
     highlightBox(idx);
 
     // 1. CEK APAKAH INI SLIDE PPT
-    let isPPT = lyricsData[idx] && lyricsData[idx].type === 'presentation_slide';
+    // (isPPT already computed above)
 
     // 2. CARI MEDIA BACKGROUND (VIDEO/FOTO/AUDIO) MUNDUR KE ATAS
     let activeVisId = null, activeVisType = null, activeVisBehav = "loop", activeVisName = null;
@@ -2269,9 +3596,10 @@ function fireLyric(idx, forceShow = false) {
         }
     } else {
         // Matikan PPT karena slide ini bukan PPT
-        if (window.currentVisType === 'presentation_slide') {
+        if (needClearPPT || window.currentVisType === 'presentation_slide') {
             ws.send(JSON.stringify({ action: "update_presentation", payload: { url: "" } }));
             window.currentSlideNum = null;
+            window.currentVisType = null;
         }
 
         // --- LOGIKA VIDEO & PHOTO BIASA ---
@@ -2285,7 +3613,7 @@ function fireLyric(idx, forceShow = false) {
 
                 // 🎯 STEALTH FIX: Jangan berani-berani nembak video kalau layar lagi di-BLACKOUT (!isVideoCleared)
                 if (!clearStates.video && !isVideoCleared && !window.activeLibraryPlayers?.video) {
-                    const isMuted = lyricsData[idx].bg_muted !== false;
+                    const isMuted = lyricsData[idx].bg_muted === true;
                     const videoUrl = `/api/stream_video/${activeVisId}`;
                     ws.send(JSON.stringify({
                         action: "update_background",
@@ -2435,6 +3763,7 @@ function jumpToType(type) {
 }
 // 🚀 OPTIMASI: Variabel rem tangan untuk WebSocket
 let wsThrottleTimer = null;
+let wsThrottlePayload = null;
 
 // ==========================================
 // 🎛️ MESIN CLEAR SCREEN (LYRICS, VIDEO, BLACKOUT)
@@ -2554,16 +3883,28 @@ function updateSettings() {
     const payload = getDisplayConfigFromUI();
     payload.show = isShowing;
 
-    // 2. TEMBAK KE LAYAR PAKE THROTTLER (ANTI-DDOS SERVER)
-    // Cuma boleh ngirim maksimal 1 kali setiap 40ms (~25 FPS). 
-    // Dijamin server santai, layar preview lancar, dan browser ga patah-patah!
-    if (!wsThrottleTimer) {
-        wsThrottleTimer = setTimeout(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ action: "update_display", payload: payload }));
-            }
-            wsThrottleTimer = null; // Lepas rem
-        }, 150); // 150ms throttle untuk mencegah CPU spike di layar utama saat drag slider
+    // 2. TEMBAK KE LAYAR PAKE THROTTLER DENGAN TRAILING EDGE (ANTI-DDOS & ANTI-LOST)
+    if (wsThrottleTimer) {
+        wsThrottlePayload = payload;
+    } else {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ action: "update_display", payload: payload }));
+        }
+
+        const runThrottle = () => {
+            wsThrottleTimer = setTimeout(() => {
+                if (wsThrottlePayload) {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ action: "update_display", payload: wsThrottlePayload }));
+                    }
+                    wsThrottlePayload = null;
+                    runThrottle();
+                } else {
+                    wsThrottleTimer = null;
+                }
+            }, 150);
+        };
+        runThrottle();
     }
 
     // 3. SIMPAN SETTINGAN BILINGUAL
@@ -2620,10 +3961,10 @@ document.addEventListener('keydown', (e) => {
     if (currentIndex >= 0 && lyricsData[currentIndex]) {
         // CEGAH JIKA INI MEDIA SLIDE, PPT, ATAU SCRIPTURE
         const isMedia = ['video', 'audio', 'photo', 'presentation_slide', 'scripture'].includes(lyricsData[currentIndex].type);
-        
+
         let targetType = null;
         let isAssignAction = false;
-        
+
         if (matchShortcut(e, 'assign_verse')) { targetType = 'verse'; isAssignAction = true; }
         else if (matchShortcut(e, 'assign_verse2')) { targetType = 'verse2'; isAssignAction = true; }
         else if (matchShortcut(e, 'assign_pre')) { targetType = 'pre'; isAssignAction = true; }
@@ -2632,7 +3973,7 @@ document.addEventListener('keydown', (e) => {
         else if (matchShortcut(e, 'assign_bridge')) { targetType = 'bridge'; isAssignAction = true; }
         else if (matchShortcut(e, 'assign_tag')) { targetType = 'tag'; isAssignAction = true; }
         else if (matchShortcut(e, 'assign_unassign')) { targetType = 'normal'; isAssignAction = true; }
-        
+
         if (isAssignAction) {
             e.preventDefault();
             if (isMedia) {
@@ -2653,6 +3994,21 @@ document.addEventListener('keydown', (e) => {
     // 4. Default Navigation & Numbers
     if (!e.shiftKey && !e.ctrlKey && !e.altKey) {
         const key = e.key.toUpperCase();
+
+        // PPT REMOTE MODE: Arrow keys control slide navigation
+        if (pptRemoteMode) {
+            if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.code === "Space") {
+                e.preventDefault();
+                sendRemotePPTAction('next_slide');
+                return;
+            }
+            if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                e.preventDefault();
+                sendRemotePPTAction('prev_slide');
+                return;
+            }
+        }
+
         // B. NUMBER SHORTCUTS -> FORCE SHOW = TRUE (Darurat)
         if (key >= '1' && key <= '9') {
             const idx = parseInt(key) - 1;
@@ -2779,14 +4135,27 @@ function destroyIframeEl(iframe) {
     try {
         iframe.contentWindow?.stop?.();
     } catch (e) { /* cross-origin */ }
+    iframe.removeAttribute('src');
     iframe.src = 'about:blank';
+    iframe.style.display = 'none';
+    iframe.className = 'obsolete-iframe';
+    iframe.removeAttribute('id');
     iframe.remove();
 }
 
 function clearIframeContainer(container) {
     if (!container) return;
-    container.querySelectorAll('iframe').forEach(destroyIframeEl);
-    container.innerHTML = '';
+    container.querySelectorAll('iframe').forEach(iframe => {
+        try {
+            iframe.contentWindow?.stop?.();
+        } catch (e) { }
+        iframe.removeAttribute('src');
+        iframe.src = 'about:blank';
+        iframe.remove();
+    });
+    while (container.firstChild) {
+        container.removeChild(container.firstChild);
+    }
 }
 
 function createControlIframe(src, id, className) {
@@ -2804,17 +4173,95 @@ function suspendMainPreview() {
     // Do nothing so preview stays active
 }
 
-function restoreMainPreview() {
-    // [USER REQUEST] Tidak perlu restore karena preview tidak di-pause
-    // BUT we still need to create it initially if it doesn't exist!
+let currentPreviewMode = 'main';
+
+async function restoreMainPreview() {
     const wrapper = document.getElementById('preview-wrapper');
-    if (!wrapper || document.getElementById('preview-frame')) return;
-    
+    if (!wrapper) return;
+
+    // Destroy existing preview frame if it exists to prevent leak
+    const existingFrame = document.getElementById('preview-frame');
+    if (existingFrame) {
+        destroyIframeEl(existingFrame);
+    }
+    clearIframeContainer(wrapper);
+
+    // Load from settings JSON
+    try {
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+            const settings = await res.json();
+            if (settings.last_preview_mode) {
+                currentPreviewMode = settings.last_preview_mode;
+            }
+        }
+    } catch (e) {
+        console.warn("Failed to load preview settings:", e);
+    }
+
+    // Update dropdown selection
+    const select = document.getElementById('preview-mode-select');
+    if (select) {
+        select.value = currentPreviewMode;
+    }
+
+    // Determine path
+    let src = '/display';
+    if (currentPreviewMode === 'lt') {
+        src = '/lowerthird';
+    } else if (currentPreviewMode === 'fb') {
+        src = '/foldback';
+    }
+
     wrapper.classList.remove('preview-suspended');
-    const iframe = createControlIframe('/display', 'preview-frame', 'preview-frame');
+    const iframe = createControlIframe(src, 'preview-frame', 'preview-frame');
     wrapper.appendChild(iframe);
     requestAnimationFrame(() => resizePreview());
 }
+
+async function changePreviewMode() {
+    const select = document.getElementById('preview-mode-select');
+    if (!select) return;
+    const mode = select.value;
+    if (mode === currentPreviewMode) return;
+
+    currentPreviewMode = mode;
+
+    // Destroy previous iframe to prevent RAM/GPU leaks
+    const wrapper = document.getElementById('preview-wrapper');
+    if (wrapper) {
+        const existingFrame = document.getElementById('preview-frame');
+        if (existingFrame) {
+            destroyIframeEl(existingFrame);
+        }
+        clearIframeContainer(wrapper);
+
+        // Load new iframe ONLY when selected (no loading in background!)
+        let src = '/display';
+        if (mode === 'lt') {
+            src = '/lowerthird';
+        } else if (mode === 'fb') {
+            src = '/foldback';
+        }
+
+        const iframe = createControlIframe(src, 'preview-frame', 'preview-frame');
+        wrapper.appendChild(iframe);
+        requestAnimationFrame(() => resizePreview());
+    }
+
+    // Save to settings JSON on the server
+    try {
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ last_preview_mode: mode })
+        });
+    } catch (e) {
+        console.error("Failed to save preview mode settings:", e);
+    }
+}
+
+window.changePreviewMode = changePreviewMode;
 
 function releaseModalIframeResources(modalId) {
     if (MODAL_OUTPUT_PREVIEW_IDS.has(modalId)) {
@@ -2833,24 +4280,27 @@ function exitModalIframeMode(modalId, onDestroy) {
         if (typeof onDestroy === 'function') onDestroy();
         return;
     }
+    releaseModalIframeResources(modalId);
     if (typeof onDestroy === 'function') onDestroy();
     if (activeIframeModalId === modalId) {
         activeIframeModalId = null;
     }
-    requestAnimationFrame(() => restoreMainPreview());
+    // [USER REQUEST] Do not destroy/restore LIVE PREVIEW when a modal is closed.
 }
 
 function enterModalIframeMode(modalId, onMount) {
+    const wasNull = !activeIframeModalId;
     if (activeIframeModalId && activeIframeModalId !== modalId) {
         releaseModalIframeResources(activeIframeModalId);
         activeIframeModalId = null;
     }
-    if (!activeIframeModalId) {
+    activeIframeModalId = modalId;
+    if (wasNull) {
         suspendMainPreview();
     }
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-            activeIframeModalId = modalId;
+            if (activeIframeModalId !== modalId) return; // Cancel mounting if mode was cleared or changed
             if (typeof onMount === 'function') onMount();
         });
     });
@@ -2858,7 +4308,11 @@ function enterModalIframeMode(modalId, onMount) {
 
 function mountTextEditPreview() {
     const wrapper = document.getElementById('modal-preview-wrapper');
-    if (!wrapper || document.getElementById('modal-preview-frame')) return;
+    if (!wrapper) return;
+
+    // Fix: Forcefully remove existing frame or children if they somehow got stuck
+    clearIframeContainer(wrapper);
+
     const iframe = createControlIframe('/preview_display', 'modal-preview-frame', 'te-preview-frame');
     wrapper.appendChild(iframe);
     attachTextEditPreviewScaler();
@@ -2872,10 +4326,12 @@ function destroyTextEditPreview() {
 function mountScriptureMiniIframes() {
     const dispMount = document.getElementById('scr-mini-display-mount');
     const ltMount = document.getElementById('scr-mini-lt-mount');
-    if (dispMount && !document.getElementById('scr-mini-display')) {
+    if (dispMount) {
+        clearIframeContainer(dispMount);
         dispMount.appendChild(createControlIframe('/scripture', 'scr-mini-display', 'scr-mini-iframe'));
     }
-    if (ltMount && !document.getElementById('scr-mini-lt')) {
+    if (ltMount) {
+        clearIframeContainer(ltMount);
         ltMount.appendChild(createControlIframe('/scripture-lt', 'scr-mini-lt', 'scr-mini-iframe'));
     }
 }
@@ -2886,15 +4342,22 @@ function destroyScriptureMiniIframes() {
 }
 
 // --- AUTO SCALE PREVIEW ---
+let previewResizeScheduled = false;
 function resizePreview() {
-    const wrapper = document.getElementById("preview-wrapper");
-    if (!wrapper || wrapper.classList.contains('preview-suspended')) return;
-    const frame = document.getElementById("preview-frame");
-    if (!wrapper || !frame) return;
-
-    const wrapperWidth = wrapper.offsetWidth;
-    const scale = wrapperWidth / 1920;
-    frame.style.transform = `scale(${scale})`;
+    if (previewResizeScheduled) return;
+    previewResizeScheduled = true;
+    window.requestAnimationFrame(() => {
+        const wrapper = document.getElementById("preview-wrapper");
+        if (wrapper && !wrapper.classList.contains('preview-suspended')) {
+            const frame = document.getElementById("preview-frame");
+            if (frame) {
+                const wrapperWidth = wrapper.offsetWidth;
+                const scale = wrapperWidth / 1920;
+                frame.style.transform = `scale(${scale})`;
+            }
+        }
+        previewResizeScheduled = false;
+    });
 }
 
 window.addEventListener("resize", resizePreview);
@@ -3037,9 +4500,14 @@ async function fetchLTPresets() {
 
     document.getElementById("lt-default-status").innerText = defaultName ? `Default: ${defaultName}` : "Default: None";
 
-    if (defaultName && !sessionStorage.getItem("lt_loaded")) {
-        loadPresetByName(defaultName);
-        sessionStorage.setItem("lt_loaded", "true");
+    if (defaultName) {
+        if (!sessionStorage.getItem("lt_loaded")) {
+            loadPresetByName(defaultName);
+            sessionStorage.setItem("lt_loaded", "true");
+        }
+        select.value = defaultName;
+        currentActiveLTPreset = "DEFAULT - " + defaultName;
+        updateLTBadge();
     }
 }
 
@@ -3069,6 +4537,7 @@ async function overwriteLTPreset() {
         currentActiveLTPreset = name;
         updateLTBadge();
         fetchLTPresets();
+        safeCloseModal('lt-modal');
     } else {
         showToast("Failed to update preset", "error", 3000);
     }
@@ -3094,6 +4563,7 @@ async function saveAsLTPreset() {
         updateLTBadge();
         await fetchLTPresets();
         document.getElementById("lt-preset-select").value = name; // Auto pilih yg baru
+        safeCloseModal('lt-modal');
     } else {
         showToast("Failed to create preset", "error", 3000);
     }
@@ -3143,6 +4613,44 @@ function loadSelectedLTPreset() {
     if (name) loadPresetByName(name);
 }
 
+function updateLTAlignUI(align) {
+    document.getElementById("btn-lt-align-left").style.background = (align === 'left') ? '#007bff' : 'transparent';
+    document.getElementById("btn-lt-align-left").style.color = (align === 'left') ? '#fff' : '#aaa';
+
+    document.getElementById("btn-lt-align-center").style.background = (align === 'center') ? '#007bff' : 'transparent';
+    document.getElementById("btn-lt-align-center").style.color = (align === 'center') ? '#fff' : '#aaa';
+
+    document.getElementById("btn-lt-align-right").style.background = (align === 'right') ? '#007bff' : 'transparent';
+    document.getElementById("btn-lt-align-right").style.color = (align === 'right') ? '#fff' : '#aaa';
+}
+
+function setLTAlign(align) {
+    document.getElementById('lt-align').value = align;
+    updateLTAlignUI(align);
+    markLtCustom();
+    sendLTConfig();
+}
+
+function toggleLtBannerUI() {
+    const mode = document.getElementById("lt-banner-mode").value;
+    const widthContainer = document.getElementById("lt-banner-width-container");
+    const paddingRow = document.getElementById("lt-banner-padding-row");
+
+    if (mode === "none") {
+        if (widthContainer) widthContainer.style.display = "none";
+        if (paddingRow) paddingRow.style.display = "none";
+    } else if (mode === "custom") {
+        if (widthContainer) widthContainer.style.display = "block";
+        if (paddingRow) paddingRow.style.display = "flex";
+    } else { // text, full
+        if (widthContainer) widthContainer.style.display = "none";
+        if (paddingRow) paddingRow.style.display = "flex";
+    }
+}
+
+window.setLTAlign = setLTAlign;
+window.toggleLtBannerUI = toggleLtBannerUI;
+
 function loadPresetByName(name) {
     const config = ltPresetsData[name];
     if (!config) return;
@@ -3158,6 +4666,22 @@ function loadPresetByName(name) {
     document.getElementById('lt-stroke-size').value = config.stroke_size !== undefined ? config.stroke_size : 0;
     document.getElementById('lt-stroke-color').value = config.stroke_color || '#000000';
     document.getElementById('lt-font-select').value = config.font || 'Montserrat';
+
+    // New alignment & padding inputs
+    const align = config.align || 'center';
+    document.getElementById('lt-align').value = align;
+    document.getElementById('lt-pad-x').value = config.pad_x !== undefined ? config.pad_x : 50;
+    updateLTAlignUI(align);
+
+    // New banner inputs
+    document.getElementById('lt-banner-mode').value = config.banner_mode || 'none';
+    document.getElementById('lt-banner-width').value = config.banner_width !== undefined ? config.banner_width : 80;
+    document.getElementById('lt-banner-color').value = config.banner_color || '#000000';
+    document.getElementById('lt-banner-opacity').value = config.banner_opacity !== undefined ? config.banner_opacity : 50;
+    document.getElementById('lt-banner-pad-y').value = config.banner_pad_y !== undefined ? config.banner_pad_y : 10;
+    document.getElementById('lt-banner-pad-x').value = config.banner_pad_x !== undefined ? config.banner_pad_x : 20;
+    document.getElementById('lt-banner-radius').value = config.banner_radius !== undefined ? config.banner_radius : 8;
+    toggleLtBannerUI();
 
     // Ganti status UI
     updateLTPosUI(config.position);
@@ -3180,6 +4704,17 @@ function getLTConfigFromUI() {
         stroke_size: parseInt(document.getElementById('lt-stroke-size').value) || 0,
         stroke_color: document.getElementById('lt-stroke-color').value,
         font: document.getElementById("lt-font-select").value,
+        // New alignment & padding fields
+        align: document.getElementById('lt-align').value,
+        pad_x: parseInt(document.getElementById('lt-pad-x').value) || 0,
+        // New banner fields
+        banner_mode: document.getElementById('lt-banner-mode').value,
+        banner_width: parseInt(document.getElementById('lt-banner-width').value) || 80,
+        banner_color: document.getElementById('lt-banner-color').value,
+        banner_opacity: parseInt(document.getElementById('lt-banner-opacity').value) || 0,
+        banner_pad_y: parseInt(document.getElementById('lt-banner-pad-y').value) || 0,
+        banner_pad_x: parseInt(document.getElementById('lt-banner-pad-x').value) || 0,
+        banner_radius: parseInt(document.getElementById('lt-banner-radius').value) || 0,
     };
 }
 
@@ -3224,11 +4759,11 @@ async function fetchDisplayPresets() {
 
         // Kasih lencana bintang kalo dia default
         // Lencana Default yang Gede, ditaruh di pojok kanan atas kotak
-        let isDefault = name === defaultName ? '<div style="position:absolute; top:0; right:0; background:#ffc107; color:#000; font-size:10px; font-weight:bold; padding:2px 5px; border-bottom-left-radius:6px; z-index: 2; letter-spacing:0.5px; box-shadow: -2px 2px 5px rgba(0,0,0,0.5);">★ DEFAULT</div>' : '';
+        let isDefault = name === defaultName ? '<div style="position:absolute; top:0; right:0; background:#ffc107; color:#000; font-size:10px; font-weight:bold; padding:2px 5px; border-bottom-left-radius:6px; z-index: 2; letter-spacing:0.5px;">★ DEFAULT</div>' : '';
         // Gambar UI Kartunya (Model Horizontal Kapsul)
         card.innerHTML = `
                     ${isDefault}
-                    <div class="preset-preview" style="font-family: '${config.font || 'Cinzel'}'; color: ${config.color || '#fff'}; text-shadow: 0 0 5px ${config.color || '#fff'};">Aa</div>
+                    <div class="preset-preview" style="font-family: '${config.font || 'Cinzel'}'; color: ${config.color || '#fff'};">Aa</div>
                     <div class="preset-name" title="${name}">${name}</div>
                 `;
         visualContainer.appendChild(card);
@@ -3362,13 +4897,19 @@ function applyDisplayPresetToUI(config) {
     document.getElementById("align-input").value = config.align || 'center';
 
     // --- UPDATE SLIDER PADDING & TEKSNYA ---
-    const padVal = config.pad_x !== undefined ? config.pad_x : 10;
-    document.getElementById("pad-input").value = padVal;
-    document.getElementById("val-pad").innerText = padVal + '%';
+    const marginXVal = config.margin_x !== undefined ? config.margin_x : (config.pad_x !== undefined ? config.pad_x : 10);
+    const textWrapVal = config.text_wrap !== undefined ? config.text_wrap : (config.pad_x !== undefined ? (100 - 2 * config.pad_x) : 80);
+    document.getElementById("margin-x-input").value = marginXVal;
+    document.getElementById("val-margin-x").innerText = marginXVal + '%';
+    document.getElementById("text-wrap-input").value = textWrapVal;
+    document.getElementById("val-text-wrap").innerText = textWrapVal + '%';
 
-    const fontSizeVal = config.font_size !== undefined ? config.font_size : 5;
+    let fontSizeVal = config.font_size !== undefined ? config.font_size : 96;
+    if (fontSizeVal <= 15) {
+        fontSizeVal = Math.round(fontSizeVal * 19.2);
+    }
     document.getElementById("font-size-input").value = fontSizeVal;
-    document.getElementById("val-font-size").innerText = fontSizeVal + 'vw';
+    document.getElementById("val-font-size").innerText = fontSizeVal + 'px';
 
     document.getElementById("shadow-int-input").value = config.shadow_int !== undefined ? config.shadow_int : 0;
     document.getElementById("shadow-color-input").value = config.shadow_color || '#000000';
@@ -3431,6 +4972,8 @@ function applyDisplayPresetToUI(config) {
     const savedFont = config.font || 'Cinzel';
     document.getElementById("font-select").value = savedFont;
     injectFont(savedFont);
+
+    updateTextPreview(false);
 }
 
 
@@ -3449,6 +4992,7 @@ function openFBConfig() {
 
 function setFBLayout(mode) {
     document.getElementById('fb-layout').value = mode;
+    markFbCustom();
     sendFBConfig();
 }
 
@@ -3482,10 +5026,14 @@ async function fetchFBPresets() {
     }
     document.getElementById("fb-default-status").innerText = defaultName ? `Default: ${defaultName}` : "Default: None";
 
-    // UI Auto-load
-    if (defaultName && !sessionStorage.getItem("fb_loaded")) {
-        applyFBPresetToUI(fbPresetsData[defaultName]);
-        sessionStorage.setItem("fb_loaded", "true");
+    if (defaultName) {
+        if (!sessionStorage.getItem("fb_loaded")) {
+            applyFBPresetToUI(fbPresetsData[defaultName]);
+            sessionStorage.setItem("fb_loaded", "true");
+        }
+        select.value = defaultName;
+        currentActiveFBPreset = "DEFAULT - " + defaultName;
+        updateFBBadge();
     }
 }
 
@@ -3511,7 +5059,10 @@ async function overwriteFBPreset() {
 
     if (res.ok) {
         showToast(`Preset "${name}" updated!`, "success", 2000);
+        currentActiveFBPreset = name;
+        updateFBBadge();
         fetchFBPresets();
+        safeCloseModal('fb-modal');
     } else {
         showToast("Failed to update preset", "error", 3000);
     }
@@ -3532,8 +5083,11 @@ async function saveAsFBPreset() {
 
     if (res.ok) {
         showToast(`Preset "${name}" saved!`, "success", 2000);
+        currentActiveFBPreset = name;
+        updateFBBadge();
         await fetchFBPresets();
         document.getElementById("fb-preset-select").value = name; // Auto pilih yg baru
+        safeCloseModal('fb-modal');
     } else {
         showToast("Failed to create preset", "error", 3000);
     }
@@ -3552,6 +5106,10 @@ async function deleteFBPreset() {
 
     if (res.ok) {
         showToast("Preset deleted!", "success", 2000);
+        if (currentActiveFBPreset === name) {
+            currentActiveFBPreset = "- Custom / Unsaved -";
+            updateFBBadge();
+        }
         fetchFBPresets();
     } else {
         showToast("Failed to delete", "error", 3000);
@@ -3578,6 +5136,8 @@ function loadSelectedFBPreset() {
     const name = document.getElementById("fb-preset-select").value;
     if (name && fbPresetsData[name]) {
         applyFBPresetToUI(fbPresetsData[name]);
+        currentActiveFBPreset = name;
+        updateFBBadge();
         sendFBConfig(); // Kirim ke layar
     }
 }
@@ -3590,6 +5150,12 @@ function applyFBPresetToUI(c) {
     document.getElementById('fb-next-size').value = c.next_size;
     document.getElementById('fb-next-color').value = c.next_color;
     document.getElementById('fb-bg-color').value = c.bg_color;
+    if (document.getElementById('fb-curr-auto')) {
+        document.getElementById('fb-curr-auto').checked = c.curr_auto !== undefined ? c.curr_auto : true;
+    }
+    if (document.getElementById('fb-next-auto')) {
+        document.getElementById('fb-next-auto').checked = c.next_auto !== undefined ? c.next_auto : true;
+    }
 }
 
 function getFBConfigFromUI() {
@@ -3599,7 +5165,9 @@ function getFBConfigFromUI() {
         curr_color: document.getElementById('fb-curr-color').value,
         next_size: parseInt(document.getElementById('fb-next-size').value),
         next_color: document.getElementById('fb-next-color').value,
-        bg_color: document.getElementById('fb-bg-color').value
+        bg_color: document.getElementById('fb-bg-color').value,
+        curr_auto: document.getElementById('fb-curr-auto') ? document.getElementById('fb-curr-auto').checked : true,
+        next_auto: document.getElementById('fb-next-auto') ? document.getElementById('fb-next-auto').checked : true
     };
 }
 
@@ -3630,14 +5198,17 @@ function toggleAlert() {
 
     updateNavBlinker();
 
-    // TAMBAHIN SPEED DI PAYLOAD
+    // TAMBAHIN SPEED, FONT, SIZE, COLOR DI PAYLOAD
     const payload = {
         text: text,
         show: isAlertOn,
         targets: targets,
         position: document.getElementById("alert-pos").value,
         color: document.getElementById("alert-color").value,
-        speed: parseInt(document.getElementById("alert-speed").value) || 15
+        speed: parseInt(document.getElementById("alert-speed").value) || 15,
+        font: document.getElementById("alert-font-select").value,
+        size: parseInt(document.getElementById("alert-font-size").value) || 28,
+        text_color: document.getElementById("alert-text-color").value
     };
     ws.send(JSON.stringify({ action: "alert", payload: payload }));
 }
@@ -3657,7 +5228,10 @@ function updateLiveAlert() {
         targets: targets,
         position: document.getElementById("alert-pos").value,
         color: document.getElementById("alert-color").value,
-        speed: parseInt(document.getElementById("alert-speed").value) || 15
+        speed: parseInt(document.getElementById("alert-speed").value) || 15,
+        font: document.getElementById("alert-font-select").value,
+        size: parseInt(document.getElementById("alert-font-size").value) || 28,
+        text_color: document.getElementById("alert-text-color").value
     };
     ws.send(JSON.stringify({ action: "alert", payload: payload }));
 }
@@ -3788,7 +5362,10 @@ async function overwriteAlertPreset() {
         targets: targets,
         position: document.getElementById("alert-pos").value,
         color: document.getElementById("alert-color").value,
-        speed: parseInt(document.getElementById("alert-speed").value) || 15
+        speed: parseInt(document.getElementById("alert-speed").value) || 15,
+        font: document.getElementById("alert-font-select").value,
+        size: parseInt(document.getElementById("alert-font-size").value) || 28,
+        text_color: document.getElementById("alert-text-color").value
     };
 
     const res = await fetch('/api/alert_presets', {
@@ -3819,7 +5396,10 @@ async function saveAsAlertPreset() {
         targets: targets,
         position: document.getElementById("alert-pos").value,
         color: document.getElementById("alert-color").value,
-        speed: parseInt(document.getElementById("alert-speed").value) || 15
+        speed: parseInt(document.getElementById("alert-speed").value) || 15,
+        font: document.getElementById("alert-font-select").value,
+        size: parseInt(document.getElementById("alert-font-size").value) || 28,
+        text_color: document.getElementById("alert-text-color").value
     };
 
     const res = await fetch('/api/alert_presets', {
@@ -3872,6 +5452,11 @@ function loadSelectedAlertPreset() {
 
         document.getElementById("chk-main").checked = c.targets && c.targets.includes('main');
         document.getElementById("chk-lt").checked = c.targets && c.targets.includes('lt');
+
+        // New fields for alert settings
+        document.getElementById("alert-font-select").value = c.font || "";
+        document.getElementById("alert-font-size").value = c.size || 28;
+        document.getElementById("alert-text-color").value = c.text_color || "#ffffff";
     }
 }
 
@@ -4100,7 +5685,7 @@ async function safeCloseModal(modalId) {
 
     if (modalEl) {
         if (IFRAME_MANAGED_MODALS.has(modalId)) {
-            exitModalIframeMode(modalId, () => releaseModalIframeResources(modalId));
+            exitModalIframeMode(modalId);
         } else {
             destroyModalOutputPreview(modalId);
         }
@@ -4201,12 +5786,14 @@ function captureOutputModalSnapshot(type) {
     if (type === 'lt') {
         outputModalSnapshots.lt = {
             preset: document.getElementById('lt-preset-select')?.value || '',
-            config: getLTConfigFromUI()
+            config: getLTConfigFromUI(),
+            activePreset: currentActiveLTPreset
         };
     } else if (type === 'fb') {
         outputModalSnapshots.fb = {
             preset: document.getElementById('fb-preset-select')?.value || '',
-            config: getFBConfigFromUI()
+            config: getFBConfigFromUI(),
+            activePreset: currentActiveFBPreset
         };
     }
 }
@@ -4219,11 +5806,15 @@ function applyOutputModalSnapshot(type) {
         const select = document.getElementById('lt-preset-select');
         if (select) select.value = snapshot.preset || '';
         applyLTConfigToUI(snapshot.config);
+        currentActiveLTPreset = snapshot.activePreset || "- Custom / Unsaved -";
+        updateLTBadge();
         sendLTConfig();
     } else if (type === 'fb') {
         const select = document.getElementById('fb-preset-select');
         if (select) select.value = snapshot.preset || '';
         applyFBPresetToUI(snapshot.config);
+        currentActiveFBPreset = snapshot.activePreset || "- Custom / Unsaved -";
+        updateFBBadge();
         sendFBConfig();
     }
 }
@@ -4301,6 +5892,7 @@ async function saveOutputPreset(type) {
             updateLTBadge();
             captureOutputModalSnapshot('lt');
             showToast(`Preset "${name}" saved!`, "success", 1800);
+            safeCloseModal('lt-modal');
         } else {
             showToast("Failed to save preset", "error", 3000);
         }
@@ -4323,8 +5915,11 @@ async function saveOutputPreset(type) {
         if (res.ok) {
             await fetchFBPresets();
             if (select) select.value = name;
+            currentActiveFBPreset = name;
+            updateFBBadge();
             captureOutputModalSnapshot('fb');
             showToast(`Preset "${name}" saved!`, "success", 1800);
+            safeCloseModal('fb-modal');
         } else {
             showToast("Failed to save preset", "error", 3000);
         }
@@ -4365,7 +5960,13 @@ function destroyModalOutputPreview(modalId) {
     if (iframe) {
         destroyIframeEl(iframe);
     }
-    if (shell) shell.innerHTML = '';
+    if (shell) {
+        Array.from(shell.children).forEach(child => {
+            if (!child.classList.contains('obsolete-iframe')) {
+                child.remove();
+            }
+        });
+    }
     modal.classList.remove('has-output-preview');
 }
 
@@ -4388,7 +5989,10 @@ function openFullEditModal() {
         return;
     }
 
-    if (!currentSongTitle) return alert("Load a song first!");
+    if (!currentSongTitle) {
+        showToast("Load a song first!", "error", 1500);
+        return;
+    }
     document.getElementById("edit-song-title").value = currentSongTitle;
     editorSlides = lyricsData.length > 0 ? JSON.parse(JSON.stringify(lyricsData)) : [{ text: "", type: "normal" }];
     editorHistory = [];
@@ -4439,7 +6043,7 @@ async function saveFullEdit() {
     const currentSongData = allSongs.find(s => s.title === oldTitle);
     const savedSettings = currentSongData && currentSongData.settings
         ? { ...currentSongData.settings, motion: getSafeMotionValue((currentSongData.settings || {}).motion || 'none') }
-        : { font: getCurrentFont(), theme: document.getElementById("theme-input").value, color: document.getElementById("color-input").value, zoom: document.getElementById("zoom-input").value, speed: document.getElementById("speed-input").value, glow: parseInt(document.getElementById("glow-input").value), fade: parseFloat(document.getElementById("fade-input").value), trans: document.getElementById("trans-input").value, motion: getSafeMotionValue(document.getElementById("motion-input").value), align: document.getElementById("align-input").value, pad_x: parseInt(document.getElementById("pad-input").value) };
+        : { font: getCurrentFont(), theme: document.getElementById("theme-input").value, color: document.getElementById("color-input").value, zoom: document.getElementById("zoom-input").value, speed: document.getElementById("speed-input").value, glow: parseInt(document.getElementById("glow-input").value), fade: parseFloat(document.getElementById("fade-input").value), trans: document.getElementById("trans-input").value, motion: getSafeMotionValue(document.getElementById("motion-input").value), align: document.getElementById("align-input").value, pad_x: parseInt(document.getElementById("margin-x-input").value), margin_x: parseInt(document.getElementById("margin-x-input").value), text_wrap: parseInt(document.getElementById("text-wrap-input").value) };
 
     const payload = { title: newTitle, data: newData, settings: savedSettings };
 
@@ -4517,9 +6121,9 @@ function renderEditor(mode) {
         // - Standalone slide
         // - Previous slide was standalone
         const isGroupStart = (
-            idx === 0 || 
-            (!isStandalone && slide.type !== 'normal') || 
-            isStandalone || 
+            idx === 0 ||
+            (!isStandalone && slide.type !== 'normal') ||
+            isStandalone ||
             prevIsStandalone
         );
 
@@ -4564,7 +6168,7 @@ function renderEditor(mode) {
             else if (group.type === 'chorus2') { groupColor = "var(--color-chorus2)"; groupTitleText = "CHORUS 2 SECTION"; }
             else if (group.type === 'bridge') { groupColor = "var(--color-bridge)"; groupTitleText = "BRIDGE SECTION"; }
             else if (group.type === 'tag') { groupColor = "var(--color-tag)"; groupTitleText = "TAG SECTION"; }
-            
+
             if (group.type !== 'normal') {
                 groupGlow = `rgba(${group.type === 'verse' ? '6,182,212' : group.type === 'verse2' ? '139,92,246' : group.type === 'pre' ? '245,158,11' : group.type === 'chorus' ? '239,68,68' : group.type === 'chorus2' ? '236,72,153' : group.type === 'bridge' ? '16,185,129' : '249,115,22'}, 0.2)`;
                 bgOpacity = "0.03";
@@ -4599,7 +6203,7 @@ function renderEditor(mode) {
             row.style.setProperty("--group-glow", groupGlow);
 
             const isStandalone = ['video', 'audio', 'photo'].includes(slide.type);
-            
+
             // Get current tag visual metadata
             let tagText = "NORMAL";
             let tagColor = "#555";
@@ -4736,20 +6340,20 @@ function renderEditor(mode) {
 function toggleTagDropdown(idx, mode, badgeEl) {
     // Remove other dropdowns first
     document.querySelectorAll('.slide-tag-dropdown').forEach(el => el.remove());
-    
+
     // Check if we are already showing it
     if (badgeEl.dataset.dropdownOpen === 'true') {
         badgeEl.dataset.dropdownOpen = 'false';
         return;
     }
-    
+
     // Mark as open
     badgeEl.dataset.dropdownOpen = 'true';
-    
+
     // Create the dropdown menu
     const dropdown = document.createElement('div');
     dropdown.className = 'slide-tag-dropdown';
-    
+
     const types = [
         { type: 'normal', name: 'NORMAL', label: 'Default (D)', color: '#555' },
         { type: 'verse', name: 'VERSE 1', label: 'Verse 1 (V)', color: 'var(--color-verse)' },
@@ -4760,7 +6364,7 @@ function toggleTagDropdown(idx, mode, badgeEl) {
         { type: 'bridge', name: 'BRIDGE', label: 'Bridge (B)', color: 'var(--color-bridge)' },
         { type: 'tag', name: 'TAG', label: 'Tag (T)', color: 'var(--color-tag)' }
     ];
-    
+
     types.forEach(opt => {
         const item = document.createElement('div');
         item.className = 'dropdown-item';
@@ -4781,9 +6385,9 @@ function toggleTagDropdown(idx, mode, badgeEl) {
         };
         dropdown.appendChild(item);
     });
-    
+
     badgeEl.parentElement.appendChild(dropdown);
-    
+
     const outsideClickListener = (e) => {
         if (!badgeEl.contains(e.target) && !dropdown.contains(e.target)) {
             dropdown.remove();
@@ -4791,7 +6395,7 @@ function toggleTagDropdown(idx, mode, badgeEl) {
             document.removeEventListener('click', outsideClickListener);
         }
     };
-    
+
     setTimeout(() => {
         document.addEventListener('click', outsideClickListener);
     }, 10);
@@ -4807,10 +6411,10 @@ function hexToRgb(hex) {
         if (hex.includes('color-bridge')) return '16,185,129';
         if (hex.includes('color-tag')) return '249,115,22';
     }
-    
+
     let c = hex.substring(1);
-    if(c.length === 3){
-        c = c[0]+c[0]+c[1]+c[1]+c[2]+c[2];
+    if (c.length === 3) {
+        c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
     }
     let num = parseInt(c, 16);
     return `${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}`;
@@ -4848,7 +6452,7 @@ function parseSectionLabel(line, isStandaloneBlock) {
     const clean = line.trim().toLowerCase();
     // Remove enclosing brackets, parentheses, colons, and hyphens
     const unwrapped = clean.replace(/^\[|\]$|^\(|\)$/g, '').replace(/[:\-]/g, ' ').replace(/\s+/g, ' ').trim();
-    
+
     // Explicit mappings
     if (unwrapped === 'verse 2' || unwrapped === 'v2') return 'verse2';
     if (unwrapped === 'verse' || unwrapped === 'verse 1' || unwrapped === 'v1') return 'verse';
@@ -4857,7 +6461,7 @@ function parseSectionLabel(line, isStandaloneBlock) {
     if (unwrapped === 'pre chorus' || unwrapped === 'prechorus' || unwrapped === 'pre' || unwrapped === 'pc') return 'pre';
     if (unwrapped === 'bridge' || unwrapped === 'br') return 'bridge';
     if (unwrapped === 'outro' || unwrapped === 'tag' || unwrapped === 'ending') return 'tag';
-    
+
     // Standalone or structured labels support short symbols
     const hasStructure = (clean.startsWith('[') && clean.endsWith(']')) || clean.endsWith(':') || (clean.startsWith('(') && clean.endsWith(')'));
     if (isStandaloneBlock || hasStructure) {
@@ -4866,7 +6470,7 @@ function parseSectionLabel(line, isStandaloneBlock) {
         if (unwrapped === 'b') return 'bridge';
         if (unwrapped === 't' || unwrapped === 'o') return 'tag';
     }
-    
+
     return null;
 }
 
@@ -4891,48 +6495,24 @@ async function smartBulkPaste(mode) {
     // Normalize line endings
     text = text.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-    let blocks = [];
-    if (text.includes('\n\n')) {
-        // split by double or more newlines (paragraphs/stanzas)
-        blocks = text.split(/\n\n+/);
-    } else {
-        // split by single newlines
-        blocks = text.split(/\n+/);
-    }
-
+    const lines = text.split('\n');
     const newSlides = [];
     let pendingType = 'normal';
 
-    for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i].trim();
-        if (block === "") continue;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line === "") continue;
 
-        const lines = block.split('\n');
-        
-        // Check if the block is a standalone section header
-        if (lines.length === 1) {
-            const detectedType = parseSectionLabel(lines[0], true);
-            if (detectedType) {
-                pendingType = detectedType;
-                continue;
-            }
-        }
-
-        // Check if the first line of the block is a section header
-        let slideText = block;
-        let slideType = pendingType;
-        pendingType = 'normal'; // reset
-
-        const detectedType = parseSectionLabel(lines[0], false);
+        // Check if the line is a section label (e.g. verse, chorus)
+        const detectedType = parseSectionLabel(line, true);
         if (detectedType) {
-            slideType = detectedType;
-            // Remove the first line
-            slideText = lines.slice(1).join('\n').trim();
+            pendingType = detectedType;
+            continue;
         }
 
-        if (slideText !== "") {
-            newSlides.push({ text: slideText, type: slideType });
-        }
+        // Add line as a separate slide
+        newSlides.push({ text: line, type: pendingType });
+        pendingType = 'normal'; // Reset back to default for the next slides
     }
 
     if (newSlides.length > 0) {
@@ -4965,7 +6545,7 @@ async function saveCurrentSchedule() {
     // Kalau belum milih dari dropdown (bikin baru)
     if (!name) {
         if (scheduleList.length === 0) {
-            alert("Running Order is empty!");
+            showToast("Running Order is empty!", "error", 1500);
             return;
         }
         name = await showCustomDialog("prompt", "Name your new schedule<br><small>(e.g. Sunday Morning)</small>:");
@@ -4979,7 +6559,7 @@ async function saveCurrentSchedule() {
     const payload = { name: name, items: scheduleList };
     await fetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
-    alert(`Schedule "${name}" saved!`);
+    showToast(`Schedule "${name}" saved!`, "success", 1500);
 
     // Refresh list dan otomatis pilih nama yang barusan disave
     await fetchSavedSchedules();
@@ -4989,7 +6569,7 @@ async function saveCurrentSchedule() {
 // 3. LOAD SCHEDULE
 async function loadSavedSchedule() {
     const name = document.getElementById("saved-sched-select").value;
-    if (!name) { alert("Select a schedule from the dropdown!"); return; }
+    if (!name) { showToast("Select a schedule from the dropdown!", "error", 1500); return; }
     const isOk = await showCustomDialog("confirm", `Load running order <b>"${name}"</b>?`);
     if (!isOk) return;
 
@@ -5004,7 +6584,7 @@ async function loadSavedSchedule() {
 // 4. DELETE SCHEDULE
 async function deleteSavedSchedule() {
     const name = document.getElementById("saved-sched-select").value;
-    if (!name) { alert("Select a schedule to delete!"); return; }
+    if (!name) { showToast("Select a schedule to delete!", "error", 1500); return; }
     const isOk = await showCustomDialog("confirm", `Delete schedule <b>"${name}"</b> permanently?`);
     if (!isOk) return;
 
@@ -5095,6 +6675,12 @@ function applySongStyle() {
 // --- CUSTOM DIALOG ENGINE (UPGRADED + DROPDOWN) ---
 // ==========================================
 function showCustomDialog(type, message, defaultValue = "", currentSelected = "") {
+    // Hide progress/toast modal if open, so it doesn't block the dialog
+    const toastModal = document.getElementById("save-progress-modal");
+    if (toastModal) {
+        toastModal.style.display = "none";
+    }
+
     return new Promise((resolve) => {
         const overlay = document.getElementById("dialog-overlay");
         const title = document.getElementById("dialog-title");
@@ -5106,6 +6692,8 @@ function showCustomDialog(type, message, defaultValue = "", currentSelected = ""
         msg.innerHTML = message;
         overlay.style.display = "flex";
 
+        btnCancel.style.display = ""; // Restore default display style
+
         // Bersihkan select/dropdown lama kalau ada
         let existingSelect = document.getElementById("dialog-select-dynamic");
         if (existingSelect) existingSelect.remove();
@@ -5116,7 +6704,15 @@ function showCustomDialog(type, message, defaultValue = "", currentSelected = ""
         let selectEl = null;
         let textareaEl = null;
 
-        if (type === "prompt") {
+        if (type === "alert") {
+            title.innerText = "ℹ️ INFORMATION";
+            title.style.color = "#00e5ff";
+            overlay.querySelector('.modal-box').style.borderColor = "#00e5ff";
+            btnOk.style.background = "#00e5ff"; btnOk.style.color = "#000";
+            input.style.display = "none";
+            btnCancel.style.display = "none";
+
+        } else if (type === "prompt") {
             title.innerText = "📝 INPUT";
             title.style.color = "#ffc107";
             overlay.querySelector('.modal-box').style.borderColor = "#ffc107";
@@ -5236,6 +6832,8 @@ function showCustomDialog(type, message, defaultValue = "", currentSelected = ""
 async function loadWindowsFonts() {
     const datalistMain = document.getElementById("font-datalist");
     const datalistLt = document.getElementById("lt-font-datalist"); // <--- Tambahan buat LT
+    const datalistAlert = document.getElementById("alert-font-datalist"); // <--- Tambahan buat Alert
+    const datalistScr = document.getElementById("scr-font-datalist"); // <--- Tambahan buat Scripture
 
     try {
         const availableFonts = await window.queryLocalFonts();
@@ -5245,6 +6843,8 @@ async function loadWindowsFonts() {
 
         datalistMain.innerHTML = "";
         if (datalistLt) datalistLt.innerHTML = "";
+        if (datalistAlert) datalistAlert.innerHTML = "";
+        if (datalistScr) datalistScr.innerHTML = "";
 
         const sortedFonts = Array.from(fontFamilies).sort();
 
@@ -5256,9 +6856,17 @@ async function loadWindowsFonts() {
                 const opt2 = document.createElement("option"); opt2.value = family;
                 datalistLt.appendChild(opt2);
             }
+            if (datalistAlert) {
+                const opt3 = document.createElement("option"); opt3.value = family;
+                datalistAlert.appendChild(opt3);
+            }
+            if (datalistScr) {
+                const opt4 = document.createElement("option"); opt4.value = family;
+                datalistScr.appendChild(opt4);
+            }
         });
 
-        console.log(`✅ Loaded ${sortedFonts.length} fonts from Windows for Lyrics & LT!`);
+        console.log(`✅ Loaded ${sortedFonts.length} fonts from Windows for Lyrics, LT, Alert & Scripture!`);
     } catch (err) {
         console.error("Failed to load Windows fonts:", err);
         const fallbackFonts = ["Arial", "Calibri", "Cambria", "Comic Sans MS", "Consolas", "Courier New", "Georgia", "Impact", "Segoe UI", "Tahoma", "Times New Roman", "Trebuchet MS", "Verdana"];
@@ -5268,6 +6876,14 @@ async function loadWindowsFonts() {
             if (datalistLt) {
                 const opt2 = document.createElement("option"); opt2.value = family;
                 datalistLt.appendChild(opt2);
+            }
+            if (datalistAlert) {
+                const opt3 = document.createElement("option"); opt3.value = family;
+                datalistAlert.appendChild(opt3);
+            }
+            if (datalistScr) {
+                const opt4 = document.createElement("option"); opt4.value = family;
+                datalistScr.appendChild(opt4);
             }
         });
     }
@@ -5294,38 +6910,7 @@ function injectFont(fontName) {
 let isAlertOn = false;
 let isMessageOn = false;
 
-function toggleAlert() {
-    isAlertOn = !isAlertOn; // Balik statenya
-    const btn = document.getElementById("btn-toggle-alert");
 
-    // 1. Ambil Settingan dari UI
-    const text = document.getElementById("alert-input").value;
-    let targets = [];
-    if (document.getElementById("chk-main").checked) targets.push('main');
-    if (document.getElementById("chk-lt").checked) targets.push('lt');
-
-    // 2. Ubah Tampilan Tombol
-    if (isAlertOn) {
-        btn.innerHTML = "🛑 HIDE ALERT";
-        btn.style.background = "#dc3545"; // Merah
-    } else {
-        btn.innerHTML = "📢 SHOW ALERT";
-        btn.style.background = "#28a745"; // Balik hijau
-    }
-
-    // 3. Update Kedip di NAV
-    updateNavBlinker();
-
-    // 4. Kirim ke Server/Layar via WebSocket
-    const payload = {
-        text: text,
-        show: isAlertOn, // Pake status nyala/mati yg baru
-        targets: targets,
-        position: document.getElementById("alert-pos").value,
-        color: document.getElementById("alert-color").value
-    };
-    ws.send(JSON.stringify({ action: "alert", payload: payload }));
-}
 
 function toggleMessage() {
     isMessageOn = !isMessageOn; // Balik statenya
@@ -5418,8 +7003,36 @@ function updateLTBadge() {
 
 // Fungsi kalau user iseng ganti angka manual, statusnya jadi Custom
 function markLtCustom() {
-    currentActiveLTPreset = "- Custom (Edited) -";
+    let base = currentActiveLTPreset;
+    if (base.startsWith("DEFAULT - ")) {
+        base = base.replace("DEFAULT - ", "");
+    }
+    if (base !== "- Custom / Unsaved -" && base !== "- Custom (Edited) -" && !base.endsWith(" (EDITED)")) {
+        currentActiveLTPreset = base + " (EDITED)";
+    } else if (base === "- Custom / Unsaved -") {
+        currentActiveLTPreset = "- Custom (Edited) -";
+    }
     updateLTBadge();
+}
+
+let currentActiveFBPreset = "- Custom / Unsaved -";
+
+function updateFBBadge() {
+    const badge = document.getElementById("fb-active-badge");
+    if (badge) badge.innerText = currentActiveFBPreset;
+}
+
+function markFbCustom() {
+    let base = currentActiveFBPreset;
+    if (base.startsWith("DEFAULT - ")) {
+        base = base.replace("DEFAULT - ", "");
+    }
+    if (base !== "- Custom / Unsaved -" && base !== "- Custom (Edited) -" && !base.endsWith(" (EDITED)")) {
+        currentActiveFBPreset = base + " (EDITED)";
+    } else if (base === "- Custom / Unsaved -") {
+        currentActiveFBPreset = "- Custom (Edited) -";
+    }
+    updateFBBadge();
 }
 
 function updateLTPosUI(pos) {
@@ -5471,7 +7084,7 @@ function exportSchedule() {
     const schedName = document.getElementById("saved-sched-select").value;
 
     if (!schedName) {
-        alert("Select an exported schedule from the dropdown first!");
+        showToast("Select a schedule from the dropdown first!", "error", 1500);
         return;
     }
 
@@ -5484,7 +7097,7 @@ async function importBundle(input) {
     const file = input.files[0];
 
     if (!file.name.endsWith('.zip')) {
-        alert("File must be in .zip format!");
+        showToast("File must be in .zip format!", "error", 1500);
         return;
     }
 
@@ -5501,17 +7114,17 @@ async function importBundle(input) {
         const data = await res.json();
 
         if (data.status === "success") {
-            alert(data.message);
+            await showCustomDialog("alert", data.message);
 
             // REFRESH TOTAL: Biar Library dan Dropdown Schedule otomatis narik data terbaru dari server
             window.location.reload();
 
         } else {
-            alert("Import failed: " + data.message);
+            await showCustomDialog("alert", "Import failed: " + data.message);
         }
     } catch (e) {
         console.error("Bundle import error:", e);
-        alert("An error occurred during import!");
+        await showCustomDialog("alert", "An error occurred during import!");
     }
 
     // Balikin UI dan reset input
@@ -5577,19 +7190,45 @@ console.error = function () {
 // ==========================================
 
 function updateTextPreview(triggerLiveSync = true) {
-    document.getElementById('val-font-size').innerText = document.getElementById("font-size-input").value + 'vw';
-    document.getElementById('val-pad').innerText = document.getElementById("pad-input").value + '%';
+    document.getElementById('val-font-size').innerText = document.getElementById("font-size-input").value + 'px';
+    if (document.getElementById("text-wrap-input")) {
+        document.getElementById('val-text-wrap').innerText = document.getElementById("text-wrap-input").value + '%';
+    }
+    if (document.getElementById("margin-x-input")) {
+        document.getElementById('val-margin-x').innerText = document.getElementById("margin-x-input").value + '%';
+    }
     document.getElementById('val-glow').innerText = document.getElementById("glow-input").value;
     document.getElementById('val-stroke').innerText = document.getElementById("stroke-size-input").value + 'px';
     document.getElementById('val-shadow').innerText = document.getElementById("shadow-int-input").value;
+
+    const zoomInput = document.getElementById("zoom-input");
+    const speedInput = document.getElementById("speed-input");
+    if (zoomInput && speedInput) {
+        if (zoomInput.value === 'stay') {
+            speedInput.disabled = true;
+            speedInput.style.opacity = '0.5';
+            speedInput.style.pointerEvents = 'none';
+        } else {
+            speedInput.disabled = false;
+            speedInput.style.opacity = '1';
+            speedInput.style.pointerEvents = 'auto';
+        }
+    }
+
     if (triggerLiveSync) updateSettings();
 }
+let modalPreviewResizeScheduled = false;
 function scaleModalPreview() {
-    const wrapper = document.getElementById("modal-preview-wrapper");
-    const frame = document.getElementById("modal-preview-frame");
-    if (wrapper && frame && activeIframeModalId === 'text-edit-modal') {
-        frame.style.transform = `scale(${wrapper.offsetWidth / 1920})`;
-    }
+    if (modalPreviewResizeScheduled) return;
+    modalPreviewResizeScheduled = true;
+    window.requestAnimationFrame(() => {
+        const wrapper = document.getElementById("modal-preview-wrapper");
+        const frame = document.getElementById("modal-preview-frame");
+        if (wrapper && frame && activeIframeModalId === 'text-edit-modal') {
+            frame.style.transform = `scale(${wrapper.offsetWidth / 1920})`;
+        }
+        modalPreviewResizeScheduled = false;
+    });
 }
 window.addEventListener("resize", scaleModalPreview);
 
@@ -5806,7 +7445,7 @@ function showGridContextMenu(e, idx) {
         // 🎯 OPSI MUTE KHUSUS VIDEO
         if (bgType === 'video') {
             const btnMute = document.createElement("div");
-            const isMuted = lyricsData[idx].bg_muted !== false; // Default: Muted
+            const isMuted = lyricsData[idx].bg_muted === true; // Default: Unmuted
             btnMute.innerHTML = isMuted ? "🔊 Unmute Video" : "🔇 Mute Video";
             btnMute.className = "grid-context-menu-item";
             btnMute.onclick = () => {
@@ -5987,7 +7626,7 @@ window.closeFloatingPlayer = function (category, playerId) {
     window.activeLibraryPlayers[category] = false;
 
     // 2. Tembak layar biar kosong / mati
-    if (category === 'video') { ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } })); }
+    if (category === 'video') { ws.send(JSON.stringify({ action: "update_background", payload: { url: "", clear_type: "force_close" } })); }
     else if (category === 'audio') { ws.send(JSON.stringify({ action: "update_audio", payload: { url: "" } })); }
     else if (category === 'photo') { ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } })); }
 
@@ -6112,7 +7751,7 @@ function clearLayer(layer) {
         if (layer === 'lyrics') {
             sendUpdate("");
         }
-        else if (layer === 'video') { window.currentVisId = null; ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } })); }
+        else if (layer === 'video') { window.currentVisId = null; ws.send(JSON.stringify({ action: "update_background", payload: { url: "", clear_type: "clearlayer" } })); }
         else if (layer === 'audio') { window.currentAudId = null; ws.send(JSON.stringify({ action: "update_audio", payload: { url: "" } })); }
         else if (layer === 'photo') { window.currentVisId = null; ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } })); }
         else if (layer === 'presentation') {
@@ -6165,7 +7804,18 @@ window.openPPTPreview = async function (mediaId, mediaName) {
         document.getElementById('ppt-preview-modal').classList.add('show-flex');
     } catch (e) { }
 };
-window.closePPTPreview = () => document.getElementById('ppt-preview-modal').classList.remove('show-flex');
+window.closePPTPreview = () => {
+    document.getElementById('ppt-preview-modal').classList.remove('show-flex');
+    const imgEl = document.getElementById('ppt-preview-img');
+    if (imgEl) {
+        // Set to 1x1 transparent GIF to force browser/Chromium to unload the big image texture
+        imgEl.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        imgEl.removeAttribute('src');
+    }
+    pptPreviewId = null;
+    pptPreviewCurrent = 1;
+    pptPreviewTotal = 0;
+};
 window.prevPPTPreview = () => { if (pptPreviewCurrent > 1) { pptPreviewCurrent--; window.updatePPTPreviewImg(); } };
 window.nextPPTPreview = () => { if (pptPreviewCurrent < pptPreviewTotal) { pptPreviewCurrent++; window.updatePPTPreviewImg(); } };
 window.updatePPTPreviewImg = () => {
@@ -6229,8 +7879,8 @@ window.loadPPTToGrid = async function (mediaId, mediaName) {
         }
 
         currentIndex = -1; renderGrid();
-    } catch (err) { 
-        showToast("Failed to load PPT", "error", 3000); 
+    } catch (err) {
+        showToast("Failed to load PPT", "error", 3000);
     }
 
     // Hanya hilangkan overlay jika data count > 0 (tidak sedang menunggu konversi)
@@ -6474,6 +8124,7 @@ let iframeScaleObserver = null;
 
 function attachTextEditPreviewScaler() {
     detachTextEditPreviewScaler();
+    window._lastIframeScaleWidth = 0; // Reset cache so that the first ResizeObserver callback always runs!
     const wrapper = document.getElementById('modal-preview-wrapper');
     const iframe = document.getElementById('modal-preview-frame');
     if (!wrapper || !iframe) return;
@@ -6503,6 +8154,7 @@ function detachTextEditPreviewScaler() {
         iframeScaleObserver.disconnect();
         iframeScaleObserver = null;
     }
+    window._lastIframeScaleWidth = 0; // Reset cache on detach as well
 }
 
 
@@ -6566,10 +8218,10 @@ function openTextEditModal(mode = 'current') {
     }
 
     enterModalIframeMode('text-edit-modal', () => {
-        mountTextEditPreview();
         if (modal) modal.classList.add('modal-active');
+        mountTextEditPreview();
         // Saat baru buka modal, TIDAK PERLU broadcast ulang (menghindari CPU Spike massal di semua layar)
-        updateTextPreview(false); 
+        updateTextPreview(false);
     });
 }
 
@@ -6792,7 +8444,7 @@ async function loadBibleTranslations() {
         data.translations.forEach((t, index) => {
             const isChecked = index === 0 ? "checked" : ""; // Default: centang yang pertama aja
             container.innerHTML += `
-                <label class="translation-item">
+                <label class="translation-item" oncontextmenu="showTranslationContextMenu(event, '${t.replace(/'/g, "\\'")}')">
                     <input type="checkbox" class="bible-version-cb" value="${t}" ${isChecked} onchange="handleTranslationCheck()">
                     ${t}
                 </label>
@@ -6842,10 +8494,21 @@ window.handleTranslationCheck = function (e) {
 // 🎯 FIX ERROR SETTINGS: Placeholder untuk Fase 4
 
 async function loadBibleBooks(version) {
-    populateBibleDatalist(); // Bypass API server, kita pakai standar global 66 Kitab
+    try {
+        const res = await fetch(`/api/scripture/books?version=${encodeURIComponent(version)}`);
+        const data = await res.json();
+        if (data && Array.isArray(data.books) && data.books.length > 0) {
+            populateBibleDatalist(data.books);
+        } else {
+            populateBibleDatalist();
+        }
+    } catch (e) {
+        console.error("Error loading Bible books:", e);
+        populateBibleDatalist();
+    }
 }
 
-function populateBibleDatalist() {
+function populateBibleDatalist(availableBooks = null) {
     const lang = document.getElementById('scr-global-lang')?.value || 'id';
     const datalist = document.getElementById("bible-books-list");
     const inputBook = document.getElementById("bible-book");
@@ -6854,12 +8517,23 @@ function populateBibleDatalist() {
     datalist.innerHTML = "";
     const map = getBibleBooksMap(); // Panggil dengan aman
 
-    const books = lang === 'en' ? Object.keys(map) : Object.values(map);
-    books.forEach(b => {
-        datalist.innerHTML += `<option value="${b}">`;
+    const booksToUse = Array.isArray(availableBooks) ? availableBooks : Object.keys(map);
+
+    booksToUse.forEach(b => {
+        const translated = translateBookName(b, lang);
+        datalist.innerHTML += `<option value="${translated}">`;
     });
 
     if (inputBook) inputBook.placeholder = lang === 'en' ? "Book (e.g. John)" : "Kitab (Cth: Yohanes)";
+}
+
+function handleLanguageChange() {
+    const checked = document.querySelectorAll(".bible-version-cb:checked");
+    if (checked.length > 0) {
+        loadBibleBooks(checked[0].value);
+    } else {
+        populateBibleDatalist();
+    }
 }
 // 🎯 FIX MUTLAK: Pastikan ada (silent = false) agar tidak error saat dipanggil dari checkbox
 // ==========================================
@@ -6901,7 +8575,8 @@ async function searchScripture(silent = false) {
 
         if (data.status === "success") {
             const targetLang = document.getElementById('scr-title-lang')?.value || 'id';
-            const finalBookName = translateBookName(engBook, targetLang);
+            const canonicalBookName = data.book_name || engBook;
+            const finalBookName = translateBookName(canonicalBookName, targetLang);
 
             // Update label "current loaded" — tanpa mengganggu currentSongTitle
             const loadedLabel = document.getElementById("now-loaded-text");
@@ -6914,7 +8589,7 @@ async function searchScripture(silent = false) {
             // Populate scriptureData — BUKAN lyricsData
             scriptureData = data.data.map(item => ({
                 verse: item.verse,
-                book: finalBookName,
+                book: canonicalBookName,
                 chapter: chapter,
                 text1: item.text1,
                 text2: item.text2 || "",
@@ -7057,7 +8732,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Dengarkan kalau VJ ganti bahasa di Modal
     const langSelect = document.getElementById('scr-title-lang');
-    if (langSelect) langSelect.addEventListener('change', populateBibleDatalist);
+    if (langSelect) langSelect.addEventListener('change', handleLanguageChange);
 });
 
 // ==========================================
@@ -7067,10 +8742,10 @@ document.addEventListener("DOMContentLoaded", () => {
 function openScriptureSettings() {
     const modal = document.getElementById('scripture-settings-modal');
     enterModalIframeMode('scripture-settings-modal', () => {
-        mountScriptureMiniIframes();
         if (modal) {
             modal.classList.add('modal-active');
             modal.classList.remove('te-hidden');
+            mountScriptureMiniIframes();
             updateScrLayoutUI();
         }
     });
@@ -7306,7 +8981,7 @@ async function setDefaultScrPreset(pfx) {
 }
 
 window.handleScrLanguageChange = function () {
-    populateBibleDatalist();
+    handleLanguageChange();
     applyScriptureSettings();
 }
 
@@ -7636,6 +9311,28 @@ function handleScrFollowDisplay() {
         ltEditor?.classList.remove('disabled-panel');
         ltPresetArea?.classList.remove('disabled-panel');
         ltEnableWrapper?.classList.remove('disabled-panel'); // LT Enable Chk bisa diubah
+
+        // 🎯 FALLBACK KE PRESET LOWER THIRD YANG TERAKHIR / DEFAULT
+        const selectLt = document.getElementById('scr-lt-preset-select');
+        if (selectLt && selectLt.value) {
+            loadScrPreset('lt', selectLt.value);
+        } else {
+            let defaultPresetName = "";
+            if (selectLt) {
+                for (let i = 0; i < selectLt.options.length; i++) {
+                    const opt = selectLt.options[i];
+                    if (opt.text && opt.text.includes("(Default)")) {
+                        defaultPresetName = opt.value;
+                        break;
+                    }
+                }
+            }
+            if (defaultPresetName) {
+                loadScrPreset('lt', defaultPresetName);
+            } else {
+                setScrConfigToUI('lt', getFallbackScrConfig('lt'));
+            }
+        }
     }
 
     applyScriptureSettings();
@@ -7689,6 +9386,11 @@ window.enterPPTRemoteMode = function (sender) {
     pptRemoteMode = true;
     currentSender = sender;
 
+    // Ensure presentation layer is NOT cleared/dimmed when entering remote mode
+    if (typeof clearStates !== 'undefined' && clearStates['presentation']) {
+        clearLayer('presentation');
+    }
+
     // UI Update Title
     currentSongTitle = `🌐 REMOTE PPT: ${sender.device_name}`;
     const loadedLabel = document.getElementById("now-loaded-text");
@@ -7701,15 +9403,18 @@ window.enterPPTRemoteMode = function (sender) {
 
     // Tentukan Base URL & WS URL
     let baseUrl = `http://${sender.ip}:${sender.ws_port}`;
-    let wsUrl = `ws://${sender.ip}:${sender.ws_port}/ws`;
+    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
+    let wsUrl = `ws://${sender.ip}:${sender.ws_port}/ws${tokenParam}`;
 
-    // Fix Layout: Ensure grid-container doesn't break our 2-column layout
+    // Fix Layout: Completely reset grid-container styling for PPT remote mode
     const container = document.getElementById("grid-container");
     if (container) {
         container.classList.add("ppt-remote-active");
+        // Force inline styles to override any specificity from .grid-container, .grid-mode-row etc.
+        container.style.cssText = "display:flex !important; flex-direction:column !important; height:100% !important; width:100% !important; overflow:hidden !important; padding:0 !important; margin:0 !important; grid-template-columns:none !important; align-content:stretch !important;";
         container.innerHTML = `<div class="ppt-remote-loading">
             <div class="spinner"></div>
-            <div id="ppt-remote-loading-text">TRY TO CONNECTING DESKTOP...</div>
+            <div id="ppt-remote-loading-text">CONNECTING TO DESKTOP...</div>
         </div>`;
     }
 
@@ -7751,7 +9456,8 @@ window.enterPPTRemoteMode = function (sender) {
                 updateRemotePPTUI();
 
                 // Sync ke Output Display (KOMP B)
-                if (pptRemoteMode && lastSenderInfo.is_running) {
+                // Send regardless of is_running - exported thumbnails are always available
+                if (pptRemoteMode && lastSenderInfo.current_slide > 0) {
                     const thumbUrl = `/api/senders/proxy/${currentSender.ip}/${currentSender.ws_port}/hd_thumbs/slide_${lastSenderInfo.current_slide}`;
                     ws.send(JSON.stringify({
                         action: "update_presentation",
@@ -7796,6 +9502,7 @@ window.exitPPTRemoteMode = function () {
     const container = document.getElementById("grid-container");
     if (container) {
         container.classList.remove("ppt-remote-active");
+        container.style.cssText = ""; // Restore to CSS class defaults
         container.innerHTML = '<div id="lyrics-display" class="lyrics-display"></div>';
     }
 
@@ -7809,7 +9516,7 @@ window.exitPPTRemoteMode = function () {
 }
 
 // No blob cache needed - use direct image loading instead
-window.loadRemoteImage = function(url, imgElement) {
+window.loadRemoteImage = function (url, imgElement) {
     if (!url || !imgElement) return;
     // Direct image loading - backend returns Content-Disposition: inline
     // This prevents IDM from triggering
@@ -7873,6 +9580,7 @@ function renderRemotePPTGrid(slides) {
 
     // Use direct remote URL without proxy to avoid IDM detection
     const baseUrl = `http://${currentSender.ip}:${currentSender.ws_port}`;
+    const tokenParam = currentSender.token ? `&auth=${currentSender.token}` : '';
 
     slides.forEach((s, i) => {
         const num = i + 1;
@@ -7880,21 +9588,21 @@ function renderRemotePPTGrid(slides) {
         thumb.className = "ppt-remote-thumb";
         thumb.id = `remote-thumb-${num}`;
         thumb.onclick = () => jumpToRemoteSlide(num);
-        
+
         const img = document.createElement("img");
         img.loading = "lazy";
-        
+
         const baseS = s.split('.')[0];
         // Use direct remote URL like bg.js does - not proxy
-        const thumbUrl = `${baseUrl}/thumbs/${baseS}?t=${Date.now()}`;
+        const thumbUrl = `${baseUrl}/thumbs/${baseS}?t=${Date.now()}${tokenParam}`;
         img.src = thumbUrl;
-        
+
         thumb.appendChild(img);
         const span = document.createElement("span");
         span.className = "ppt-remote-idx";
         span.innerText = num;
         thumb.appendChild(span);
-        
+
         gridArea.appendChild(thumb);
     });
 
@@ -7923,9 +9631,8 @@ window.sendRemotePPTAction = function (action) {
         lastSenderInfo.current_slide = nextIdx;
         updateRemotePPTUI();
 
-        // Use direct remote URL without proxy
-        const baseUrl = `http://${currentSender.ip}:${currentSender.ws_port}`;
-        const thumbUrl = `${baseUrl}/hd_thumbs/slide_${nextIdx}`;
+        // Use proxy URL served from localhost to avoid IDM intercepting
+        const thumbUrl = `/api/senders/proxy/${currentSender.ip}/${currentSender.ws_port}/hd_thumbs/slide_${nextIdx}`;
         ws.send(JSON.stringify({
             action: "update_presentation",
             payload: { url: thumbUrl, name: `Slide ${nextIdx}` }
@@ -7943,9 +9650,8 @@ window.jumpToRemoteSlide = function (num) {
         lastSenderInfo.current_slide = num;
         updateRemotePPTUI();
 
-        // Use direct remote URL without proxy
-        const baseUrl = `http://${currentSender.ip}:${currentSender.ws_port}`;
-        const thumbUrl = `${baseUrl}/hd_thumbs/slide_${num}`;
+        // Use proxy URL served from localhost to avoid IDM intercepting
+        const thumbUrl = `/api/senders/proxy/${currentSender.ip}/${currentSender.ws_port}/hd_thumbs/slide_${num}`;
         ws.send(JSON.stringify({
             action: "update_presentation",
             payload: { url: thumbUrl, name: `Slide ${num}` }
@@ -7962,7 +9668,8 @@ function updateRemotePPTUI() {
     if (previewImg) {
         // Use direct remote URL without proxy to avoid IDM detection
         const baseUrl = `http://${currentSender.ip}:${currentSender.ws_port}`;
-        const thumbUrl = `${baseUrl}/thumbs/slide_${lastSenderInfo.current_slide}?t=${Date.now()}`;
+        const tokenParam = currentSender.token ? `&auth=${currentSender.token}` : '';
+        const thumbUrl = `${baseUrl}/thumbs/slide_${lastSenderInfo.current_slide}?t=${Date.now()}${tokenParam}`;
         previewImg.src = thumbUrl;
 
         if (statusText) {
@@ -7993,10 +9700,10 @@ let recordingListener = null;
 function openShortcutEditorModal() {
     // Clone appShortcuts into tempShortcuts so changes are temporary until saved
     tempShortcuts = JSON.parse(JSON.stringify(appShortcuts));
-    
+
     // Hide settings modal to avoid visual clutter
     safeCloseModal('settings-modal');
-    
+
     // Populate list and open modal
     renderShortcutList();
     document.getElementById("shortcut-editor-modal").style.display = "flex";
@@ -8011,11 +9718,11 @@ function renderShortcutList() {
     const container = document.getElementById("shortcut-list-container");
     if (!container) return;
     container.innerHTML = "";
-    
+
     for (const action in tempShortcuts) {
         const label = shortcutActionLabels[action] || action;
         const s = tempShortcuts[action];
-        
+
         const row = document.createElement("div");
         row.className = "shortcut-item-row";
         row.innerHTML = `
@@ -8033,7 +9740,7 @@ function recordShortcutKey(action) {
     if (recordingAction) {
         cancelRecording();
     }
-    
+
     recordingAction = action;
     const btn = document.getElementById(`btn-record-${action}`);
     if (btn) {
@@ -8042,16 +9749,16 @@ function recordShortcutKey(action) {
         btn.style.color = "#fff";
         btn.style.borderColor = "#dc3545";
     }
-    
+
     recordingListener = function (e) {
         // Ignore standalone modifier key presses
         if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
             return;
         }
-        
+
         e.preventDefault();
         e.stopPropagation();
-        
+
         // Count modifier keys
         let modifiers = 0;
         const ctrl = !!e.ctrlKey;
@@ -8060,25 +9767,25 @@ function recordShortcutKey(action) {
         if (ctrl) modifiers++;
         if (shift) modifiers++;
         if (alt) modifiers++;
-        
+
         if (modifiers > 2) {
             showToast("Maksimal 2 modifier key (CTRL, SHIFT, ALT)!", "error", 2000);
             return;
         }
-        
+
         // Capture character key
         let key = e.key.toUpperCase();
-        
+
         // Allow arrows, enter, escape, backspace, tab, space
         const allowedSpecialKeys = ['ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT', 'ENTER', 'ESCAPE', 'BACKSPACE', 'TAB', 'SPACE'];
         if (e.code === "Space") key = "SPACE";
-        
+
         const isSpecialKey = allowedSpecialKeys.includes(key);
         if (key.length > 1 && !isSpecialKey) {
             // Ignore other standalone function keys
             return;
         }
-        
+
         // Update temporary clone
         tempShortcuts[action] = {
             ctrlKey: ctrl,
@@ -8087,11 +9794,11 @@ function recordShortcutKey(action) {
             key: key === "SPACE" ? " " : key,
             display: (ctrl ? 'CTRL + ' : '') + (shift ? 'SHIFT + ' : '') + (alt ? 'ALT + ' : '') + key
         };
-        
+
         cancelRecording();
         renderShortcutList();
     };
-    
+
     window.addEventListener('keydown', recordingListener, true);
 }
 
@@ -8113,7 +9820,7 @@ function cancelRecording() {
 async function saveEditedShortcuts() {
     // Apply temporary shortcuts globally
     appShortcuts = JSON.parse(JSON.stringify(tempShortcuts));
-    
+
     // Save to server app_settings.json
     showToast("Saving shortcuts...", "loading");
     try {
@@ -8122,7 +9829,7 @@ async function saveEditedShortcuts() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ shortcuts: appShortcuts })
         });
-        
+
         if (res.ok) {
             showToast("Shortcuts saved successfully!", "success", 2000);
             closeShortcutEditorModal();
@@ -8197,7 +9904,7 @@ function _drawQRCode(containerId, urlText) {
             generated.style.borderRadius = '6px';
             generated.style.display = 'block';
         }
-    } catch(e) {
+    } catch (e) {
         console.error('[QR Draw Error]', e);
         container.innerHTML = '<div style="width:140px;height:140px;background:#1a1a2e;display:flex;align-items:center;justify-content:center;border-radius:6px;color:#ef4444;font-size:10px;">QR Error</div>';
     }
@@ -8222,15 +9929,15 @@ async function openAdvancedOutputModal() {
             const data = await res.json();
             localIP = data.ip || '127.0.0.1';
         }
-    } catch(e) {
+    } catch (e) {
         console.warn('[AdvOutput] Could not fetch local IP:', e);
     }
 
     const PORT = 18888;
     const outputDefs = [
         { key: 'main', canvasId: 'qr-main', urlElId: 'qr-url-main', path: '/display' },
-        { key: 'lt',   canvasId: 'qr-lt',   urlElId: 'qr-url-lt',   path: '/lowerthird' },
-        { key: 'fb',   canvasId: 'qr-fb',   urlElId: 'qr-url-fb',   path: '/foldback'  },
+        { key: 'lt', canvasId: 'qr-lt', urlElId: 'qr-url-lt', path: '/lowerthird' },
+        { key: 'fb', canvasId: 'qr-fb', urlElId: 'qr-url-fb', path: '/foldback' },
     ];
 
     // 2. Generate QR codes for each output
@@ -8281,7 +9988,7 @@ async function openAdvancedOutputModal() {
                 }
             }
         }
-    } catch(e) {
+    } catch (e) {
         console.warn('[AdvOutput] Could not load resolution settings:', e);
     }
 }
@@ -8339,7 +10046,7 @@ async function applyOutputResolution(type) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-    } catch(e) {
+    } catch (e) {
         console.error('[AdvOutput] Failed to save resolution:', e);
     }
 
@@ -8368,3 +10075,521 @@ window.setResMode = setResMode;
 window.applyResPreset = applyResPreset;
 window.applyOutputResolution = applyOutputResolution;
 
+/**
+ * Copy the URL text to clipboard and show a toast notification.
+ */
+async function copyOutputUrl(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const text = el.textContent || el.innerText;
+    if (!text || text === 'Loading...') return;
+
+    try {
+        await navigator.clipboard.writeText(text);
+        if (typeof showToast === 'function') {
+            showToast("Link output berhasil disalin!", "success", 2000);
+        }
+    } catch (e) {
+        console.error('[AdvOutput] Clipboard API failed, trying fallback:', e);
+        // Fallback for non-HTTPS or older browsers
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            if (typeof showToast === 'function') {
+                showToast("Link output berhasil disalin!", "success", 2000);
+            }
+        } catch (err) {
+            console.error('[AdvOutput] Fallback copy failed:', err);
+            if (typeof showToast === 'function') {
+                showToast("Gagal menyalin link!", "error", 2000);
+            }
+        }
+        document.body.removeChild(textarea);
+    }
+}
+window.copyOutputUrl = copyOutputUrl;
+
+
+// License Expiration Notification
+document.addEventListener("DOMContentLoaded", function () {
+    if (sessionStorage.getItem('license_toast_shown')) return;
+
+    setTimeout(async () => {
+        try {
+            const res = await fetch('/api/license/status');
+            const data = await res.json();
+
+            if (data.status === 'active' && data.expiryDate) {
+                const expDate = new Date(data.expiryDate);
+                const now = new Date();
+
+                // Normalize time to compare accurate days
+                expDate.setHours(0, 0, 0, 0);
+                now.setHours(0, 0, 0, 0);
+
+                const diffTime = expDate.getTime() - now.getTime();
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                if (diffDays >= 0 && diffDays <= 7) {
+                    sessionStorage.setItem('license_toast_shown', 'true');
+
+                    let msg = diffDays === 0
+                        ? "<h3 style='color:#dc3545;margin-bottom:10px;'>Your license expires TODAY!</h3>Please renew your license to continue using ShowLyrics."
+                        : `<h3 style='color:#ffc107;margin-bottom:10px;'>Your license will expire in ${diffDays} day(s)!</h3>Please renew your license soon to avoid interruptions.`;
+
+                    if (typeof showCustomDialog === 'function') {
+                        const btnOk = document.getElementById("dialog-btn-ok");
+                        const btnCancel = document.getElementById("dialog-btn-cancel");
+
+                        let origOkText = btnOk ? btnOk.innerText : "OK";
+                        let origCancelText = btnCancel ? btnCancel.innerText : "CANCEL";
+
+                        if (btnOk) btnOk.innerText = "RENEW NOW";
+                        if (btnCancel) btnCancel.innerText = "CLOSE";
+
+                        const isOk = await showCustomDialog("confirm", msg);
+
+                        if (btnOk) btnOk.innerText = origOkText;
+                        if (btnCancel) btnCancel.innerText = origCancelText;
+
+                        if (isOk) {
+                            if (window.electronAPI && window.electronAPI.openExternal) {
+                                window.electronAPI.openExternal("https://showlyrics-app.web.app");
+                            } else {
+                                window.open("https://showlyrics-app.web.app", "_blank");
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Failed to check license expiration:", e);
+        }
+    }, 2500); // Wait 2.5 seconds to ensure the main UI is fully ready
+});
+
+// ==========================================
+// 📚 BIBLE TRANSLATION CONTEXT MENU
+// ==========================================
+let selectedTranslationCtx = null;
+
+window.showTranslationContextMenu = function(e, dbName) {
+    e.preventDefault();
+    selectedTranslationCtx = dbName;
+    
+    const menu = document.getElementById("scr-translation-ctx-menu");
+    if (!menu) return;
+    
+    menu.style.display = "flex";
+    
+    // Position logic to avoid clipping
+    let x = e.clientX;
+    let y = e.clientY;
+    
+    // Fallback if width/height is not computed correctly because display:none before flex
+    const menuWidth = menu.offsetWidth || 150;
+    const menuHeight = menu.offsetHeight || 80;
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    
+    if (x + menuWidth > windowWidth) {
+        x = windowWidth - menuWidth - 5;
+    }
+    
+    if (y + menuHeight > windowHeight) {
+        y = windowHeight - menuHeight - 5;
+    }
+    
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+};
+
+document.addEventListener("click", function(e) {
+    const menu = document.getElementById("scr-translation-ctx-menu");
+    if (menu && menu.style.display !== "none") {
+        menu.style.display = "none";
+    }
+});
+
+window.renameTranslationAction = async function() {
+    if (!selectedTranslationCtx) return;
+    const dbName = selectedTranslationCtx;
+    
+    const newName = await showCustomDialog("prompt", `Rename Translation '<b>${dbName}</b>' to:`, dbName);
+    if (newName !== null && newName !== false) {
+        const trimmedName = newName.trim();
+        if (trimmedName && trimmedName !== dbName) {
+            try {
+                const res = await fetch(`/api/scripture/translations/${encodeURIComponent(dbName)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ new_name: trimmedName })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast(data.message, 'success');
+                    loadBibleTranslations(); // Refresh list
+                } else {
+                    showToast(data.message, 'error');
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('Failed to rename', 'error');
+            }
+        }
+    }
+};
+
+window.deleteTranslationAction = async function() {
+    if (!selectedTranslationCtx) return;
+    const dbName = selectedTranslationCtx;
+    
+    const confirmed = await showCustomDialog("confirm", `Are you sure you want to delete the '<b>${dbName}</b>' translation?`);
+    if (confirmed) {
+        try {
+            const res = await fetch(`/api/scripture/translations/${encodeURIComponent(dbName)}`, {
+                method: 'DELETE'
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                showToast(data.message, 'success');
+                loadBibleTranslations(); // Refresh list
+            } else {
+                showToast(data.message, 'error');
+            }
+        } catch (err) {
+            console.error(err);
+            showToast('Failed to delete', 'error');
+        }
+    }
+};
+
+// ------------------------------------------------------------------
+// SHOWLYRICS BACKUP & RESTORE DATA HANDLERS
+// ------------------------------------------------------------------
+window.pendingImportFile = null;
+
+window.exportShowLyricsData = function() {
+    window.location.href = '/api/backup/export';
+};
+
+window.importShowLyricsData = function(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    window.pendingImportFile = file;
+    document.getElementById('import-confirm-modal').style.display = 'flex';
+};
+
+window.closeImportConfirmModal = function() {
+    window.pendingImportFile = null;
+    document.getElementById('import-confirm-modal').style.display = 'none';
+};
+
+window.closeReplaceConfirmModal = function() {
+    document.getElementById('import-replace-confirm-input').value = '';
+    document.getElementById('import-replace-confirm-modal').style.display = 'none';
+};
+
+window.executeImport = async function(mode) {
+    if (mode === 'replace') {
+        // Close the first confirm modal
+        document.getElementById('import-confirm-modal').style.display = 'none';
+        // Clear confirm input and show safety replace modal
+        document.getElementById('import-replace-confirm-input').value = '';
+        document.getElementById('import-replace-confirm-modal').style.display = 'flex';
+        return;
+    }
+    
+    // Normal append mode execution
+    const file = window.pendingImportFile;
+    if (!file) return;
+    
+    // Close modal
+    window.closeImportConfirmModal();
+    
+    // Start import process
+    await performImportAPI(file, 'append');
+};
+
+window.executeReplaceImport = async function() {
+    const confirmVal = document.getElementById('import-replace-confirm-input').value;
+    if (confirmVal !== 'REPLACE') {
+        showToast("Please type REPLACE to confirm!", "error", 2000);
+        return;
+    }
+    
+    const file = window.pendingImportFile;
+    if (!file) return;
+    
+    // Close safety replace modal
+    window.closeReplaceConfirmModal();
+    window.pendingImportFile = null;
+    
+    // Start import process
+    await performImportAPI(file, 'replace');
+};
+
+async function performImportAPI(file, mode) {
+    showToast("Importing backup...", "loading");
+    
+    const formData = new FormData();
+    formData.append("file", file);
+    
+    try {
+        const response = await fetch(`/api/backup/import?mode=${mode}`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        if (result.status === 'success') {
+            showToast("Backup imported successfully! Reloading...", "success", 2000);
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            showToast("Import failed: " + (result.message || "Unknown error"), "error", 4000);
+        }
+    } catch (error) {
+        console.error("Backup import error:", error);
+        showToast("Backup import error occurred.", "error", 4000);
+    }
+}
+
+
+// =============================================================================
+// 🌐 NETWORK GUARD UI — CDN Strike Modal & Toast System
+// =============================================================================
+
+/**
+ * Handle pesan network_strike dari backend.
+ *   Strike 1 → Toast ringan di pojok kanan bawah (auto-dismiss 8s)
+ *   Strike 2 → Modal dismissible, app berjalan normal
+ *   Strike 3 → Modal BLOCKING (tidak bisa dismiss), watermark aktif
+ *
+ * @param {object} data — payload dari backend:
+ *   { level, max, dismissible, block_app, title, message, internet_score }
+ */
+function _handleNetworkStrike(data) {
+    const level      = data.level || 1;
+    const max        = data.max   || 3;
+    const dismissible = data.dismissible !== false;
+    const title      = data.title   || "⚠️ Server Tidak Terjangkau";
+    const message    = data.message || "";
+    const inetScore  = data.internet_score || "?/4";
+
+    // Hapus modal lama jika ada
+    const old = document.getElementById("modal-net-strike");
+    if (old) old.remove();
+
+    if (level === 1) {
+        // Strike 1: toast ringan saja — tidak perlu modal penuh
+        _showNetworkToast(message, "warning");
+        return;
+    }
+
+    // Strike 2 & 3: Modal
+    const isBlocking  = level >= 3;
+    const accentColor = isBlocking ? "#ef4444" : "#f59e0b";
+    const glowColor   = isBlocking ? "#ef444420" : "#f59e0b15";
+    const borderColor = isBlocking ? "#ef444440" : "#f59e0b40";
+
+    // Inject CSS animation sekali saja
+    if (!document.getElementById("net-guard-css")) {
+        const s = document.createElement("style");
+        s.id = "net-guard-css";
+        s.textContent = [
+            "@keyframes netModalIn{from{opacity:0;transform:scale(.93)}to{opacity:1;transform:scale(1)}}",
+            "@keyframes slideInNetToast{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}",
+        ].join("");
+        document.head.appendChild(s);
+    }
+
+    // Progress dots (strike indicator)
+    const dots = [1, 2, 3].map(i =>
+        `<div style="width:26px;height:5px;border-radius:3px;
+             background:${i <= level ? accentColor : "#3f3f46"};
+             transition:background .3s;"></div>`
+    ).join("");
+
+    const modal = document.createElement("div");
+    modal.id = "modal-net-strike";
+    modal.style.cssText = [
+        "position:fixed;inset:0;z-index:99999;",
+        "background:rgba(0,0,0,0.88);",
+        "display:flex;align-items:center;justify-content:center;",
+        "backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);",
+    ].join("");
+
+    modal.innerHTML = `
+    <div style="background:#18181b;border:1px solid ${borderColor};
+                border-radius:18px;padding:40px 36px;max-width:480px;
+                width:90%;text-align:center;
+                box-shadow:0 0 80px ${glowColor},0 0 0 1px ${borderColor};
+                animation:netModalIn .25s ease;">
+
+        <div style="font-size:2.8rem;margin-bottom:12px;">
+            ${isBlocking ? "🚫" : "⚠️"}
+        </div>
+
+        <h2 style="color:${accentColor};margin:0 0 10px;font-size:1.2rem;
+                   font-weight:600;letter-spacing:-0.01em;">
+            ${title}
+        </h2>
+
+        <!-- Strike progress dots -->
+        <div style="display:flex;gap:6px;justify-content:center;margin-bottom:18px;">
+            ${dots}
+        </div>
+
+        <p style="color:#a1a1aa;line-height:1.65;margin:0 0 8px;font-size:0.92em;">
+            ${message}
+        </p>
+
+        <!-- Diagnostic info -->
+        <div style="background:#09090b;border:1px solid #27272a;border-radius:8px;
+                    padding:10px 14px;margin:14px 0 20px;font-size:0.8em;
+                    color:#52525b;text-align:left;line-height:1.8;">
+            🌐 Internet:
+            <strong style="color:#22c55e;">${inetScore} server OK</strong>
+            &nbsp;|&nbsp;
+            📡 CDN ShowLyrics:
+            <strong style="color:#ef4444;">Tidak terjangkau</strong>
+        </div>
+
+        <!-- Tombol aksi -->
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+            <button id="btn-net-retry"
+                    style="background:#3b82f6;color:#fff;border:none;
+                           padding:10px 22px;border-radius:8px;cursor:pointer;
+                           font-size:0.9em;font-weight:500;transition:opacity .2s;">
+                🔄 Coba Lagi
+            </button>
+
+            ${dismissible ? `
+            <button onclick="document.getElementById('modal-net-strike').remove()"
+                    style="background:#27272a;color:#a1a1aa;border:1px solid #3f3f46;
+                           padding:10px 22px;border-radius:8px;cursor:pointer;
+                           font-size:0.9em;transition:background .2s;">
+                Tutup
+            </button>` : ""}
+
+            <button onclick="window.close()"
+                    style="background:#1c1c1e;color:#71717a;border:1px solid #27272a;
+                           padding:10px 22px;border-radius:8px;cursor:pointer;
+                           font-size:0.9em;">
+                Keluar
+            </button>
+        </div>
+
+        <p style="color:#3f3f46;font-size:0.75em;margin-top:14px;margin-bottom:0;">
+            Hubungi support jika masalah berlanjut.
+        </p>
+    </div>`;
+
+    document.body.appendChild(modal);
+
+    document.getElementById("btn-net-retry").addEventListener("click", function () {
+        _retryNetworkCheck(modal);
+    });
+}
+
+
+/**
+ * Panggil endpoint /api/network/retry-check ke backend.
+ * Backend akan evaluate ulang (CDN first, 3 retry) dan broadcast hasilnya.
+ * Jika CDN pulih → backend broadcast "network_restored" → modal dihapus via _dismissNetworkModals.
+ * Jika masih gagal → tampilkan toast error.
+ */
+function _retryNetworkCheck(modal) {
+    const btn = document.getElementById("btn-net-retry");
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = "⏳ Mengecek...";
+    btn.style.opacity = "0.6";
+
+    fetch("/api/network/retry-check", { method: "POST" })
+        .then(r => r.json())
+        .then(data => {
+            if (data.cdn_ok) {
+                // CDN pulih — backend sudah broadcast "network_restored"
+                // Modal akan dihapus oleh _dismissNetworkModals() via WS handler
+                // Tapi untuk jaga-jaga, hapus manual juga
+                if (modal && modal.parentNode) modal.remove();
+                _showNetworkToast("Server ShowLyrics kembali dapat dijangkau.", "success");
+            } else {
+                btn.disabled = false;
+                btn.textContent = "🔄 Coba Lagi";
+                btn.style.opacity = "1";
+                _showNetworkToast("Server masih tidak bisa dijangkau. Coba lagi nanti.", "error");
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.textContent = "🔄 Coba Lagi";
+            btn.style.opacity = "1";
+        });
+}
+
+
+/**
+ * Tampilkan toast kecil di pojok kanan bawah.
+ * Auto-dismiss setelah 8 detik. Bisa diklik untuk dismiss lebih cepat.
+ *
+ * @param {string} msg
+ * @param {"warning"|"error"|"success"} type
+ */
+function _showNetworkToast(msg, type) {
+    const old = document.getElementById("toast-network");
+    if (old) old.remove();
+
+    const colorMap = { warning: "#f59e0b", error: "#ef4444", success: "#22c55e" };
+    const iconMap  = { warning: "⚠️",      error: "❌",       success: "✅"      };
+    const labelMap = { warning: "Peringatan Jaringan", error: "Gagal Terhubung", success: "Koneksi Pulih" };
+
+    const color = colorMap[type] || colorMap.warning;
+    const icon  = iconMap[type]  || iconMap.warning;
+    const label = labelMap[type] || labelMap.warning;
+
+    const toast = document.createElement("div");
+    toast.id = "toast-network";
+    toast.style.cssText = [
+        "position:fixed;bottom:24px;right:24px;z-index:99998;",
+        `background:#18181b;border:1px solid ${color}40;`,
+        "border-radius:12px;padding:14px 18px;max-width:360px;",
+        `box-shadow:0 4px 24px ${color}20;`,
+        "font-size:0.88em;color:#d4d4d8;line-height:1.55;",
+        "animation:slideInNetToast .25s ease;",
+        "cursor:pointer;user-select:none;",
+    ].join("");
+
+    toast.innerHTML = `
+        <div style="display:flex;align-items:flex-start;gap:8px;">
+            <span style="font-size:1.1em;flex-shrink:0;">${icon}</span>
+            <div>
+                <div style="font-weight:600;color:${color};margin-bottom:3px;">${label}</div>
+                <div>${msg}</div>
+            </div>
+        </div>`;
+
+    toast.addEventListener("click", () => toast.remove());
+    document.body.appendChild(toast);
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 8000);
+}
+
+
+/**
+ * Dismiss semua modal/toast network.
+ * Dipanggil saat CDN pulih (action: "network_restored" dari backend).
+ */
+function _dismissNetworkModals() {
+    ["modal-net-strike", "toast-network"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    });
+}

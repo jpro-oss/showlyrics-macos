@@ -7,6 +7,19 @@ body {
             background-color: transparent;
         }
 
+        .scale-wrapper {
+            width: 1920px;
+            height: 1080px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(1);
+            transform-origin: center center;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 10;
+        }
+
         #lt-container {
             position: absolute;
             left: 0;
@@ -15,6 +28,13 @@ body {
             padding: 20px 50px;
             transition: all 0.3s ease-out;
             opacity: 0;
+        }
+
+        .lt-banner {
+            display: inline-block;
+            box-sizing: border-box;
+            transition: background 0.3s ease, padding 0.3s ease, border-radius 0.3s ease, width 0.3s ease;
+            max-width: 100%;
         }
 
         .lt-text {
@@ -48,8 +68,7 @@ body {
             z-index: 999;
             /* Paling atas */
             padding: 10px 0;
-            /* Default font size, nanti di-override JS */
-            font-size: 2.5vw;
+            font-size: 48px;
         }
 
         .crawl-content {
@@ -68,6 +87,7 @@ body {
             border: none;
             z-index: 9999;
             pointer-events: none;
+            background: transparent !important;
         }
 
         .cam-output-iframe {
@@ -89,6 +109,7 @@ body {
             width: 100%;
             height: 100%;
             border: none;
+            background: transparent !important;
         }
 
         .layer-audio {

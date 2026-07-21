@@ -1,317 +1,409 @@
 const { app, BrowserWindow, screen, ipcMain, dialog, powerSaveBlocker, shell, session } = require('electron');
 const path = require('path');
-const { spawn, execSync } = require('child_process'); // Tambah execSync untuk hard kill
-const os = require('os'); // Buat jalanin EXE
+const { spawn, execSync } = require('child_process');
+const os = require('os');
 const http = require('http');
 const fs = require('fs');
 const crypto = require('crypto');
 
-// Generate a secure dynamic token for backend requests
+// ─────────────────────────────────────────────────────────────────────────────
+// PRODUCTION LOG GUARD
+// Semua log hanya aktif di dev mode (npm start), zero overhead di build produksi
+// ─────────────────────────────────────────────────────────────────────────────
+const isDev = !app.isPackaged;
+const log  = (...args) => isDev && console.log(...args);
+const logE = (...args) => isDev && console.error(...args);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECURE SESSION TOKEN
+// ─────────────────────────────────────────────────────────────────────────────
 const secretToken = crypto.randomBytes(16).toString('hex');
 process.env.SHOWLYRICS_SECRET = secretToken;
 
-// Write token to WorshipEngineData/.session_token for fallback/manual backend launch
-const userDocs = path.join(os.homedir(), 'Documents');
+const userDocs  = path.join(os.homedir(), 'Documents');
 const appFolder = path.join(userDocs, 'WorshipEngineData');
 const tokenFile = path.join(appFolder, '.session_token');
 
 try {
-  if (!fs.existsSync(appFolder)) {
-    fs.mkdirSync(appFolder, { recursive: true });
-  }
+  if (!fs.existsSync(appFolder)) fs.mkdirSync(appFolder, { recursive: true });
   fs.writeFileSync(tokenFile, secretToken, 'utf8');
-  console.log("Secure session token stored at:", tokenFile);
+  log('Secure session token stored at:', tokenFile);
 } catch (err) {
-  console.error("Failed to write session token:", err.message);
+  logE('Failed to write session token:', err.message);
 }
 
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('enable-oop-rasterization');
-app.commandLine.appendSwitch('enable-zero-copy');
+// ═════════════════════════════════════════════════════════════════════════════
+// BLOK 1 — GPU CORE: Hardware Acceleration Maksimal (macOS)
+// Gunakan Metal backend — GPU API native Apple untuk performa optimal
+// ═════════════════════════════════════════════════════════════════════════════
+app.commandLine.appendSwitch('ignore-gpu-blocklist');                          // Paksa aktifkan GPU walau masuk daftar hitam Chromium
+app.commandLine.appendSwitch('enable-gpu-rasterization');                      // Rasterisasi via GPU (bukan CPU)
+app.commandLine.appendSwitch('enable-oop-rasterization');                      // Out-of-process rasterization (lebih stabil)
+app.commandLine.appendSwitch('enable-zero-copy');                              // Bypass CPU copy buffer ke GPU (DMA langsung)
+app.commandLine.appendSwitch('enable-accelerated-video-decode');               // Hardware video decode (macOS VideoToolbox)
+app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');         // Video frame langsung di VRAM (bukan RAM)
+app.commandLine.appendSwitch('enable-hardware-overlays', 'preferred');         // Hardware overlay compositing
 
-// 2. Cegah CPU mengambil alih tugas render video (Meringankan beban prosesor)
-app.commandLine.appendSwitch('disable-software-rasterizer');
-app.commandLine.appendSwitch('enable-accelerated-video-decode');
-app.commandLine.appendSwitch('enable-hardware-overlays', 'preferred');
-app.commandLine.appendSwitch('force-high-performance-gpu');
+// ═════════════════════════════════════════════════════════════════════════════
+// BLOK 2 — macOS METAL BACKEND: Pilih GPU terkuat via Metal (Apple API)
+// ═════════════════════════════════════════════════════════════════════════════
+app.commandLine.appendSwitch('force-high-performance-gpu');                    // Paksa high-performance GPU (discrete GPU di MacBook Pro)
+app.commandLine.appendSwitch('use-angle', 'metal');                            // ANGLE backend: Metal (macOS native — bukan D3D11)
+// Catatan: enable-direct-composition DIHAPUS — Windows-only Direct Composition API
+// Catatan: enable-native-gpu-memory-buffers DIHAPUS — DXGI Windows-specific
 
-// 3. 🎯 FIX BUG VIDEO BERHENTI SAAT ALT-TAB ATAU MINIMIZE!
-app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
-app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-// 🎯 FIX CRUSIAL WINDOWS OCCLUSION & SLEEPING BACKGROUND
-// Cegah Windows menghentikan engine render (freezing/patah-patah) saat window tertutup aplikasi lain atau sedang minimizer
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling');
-app.commandLine.appendSwitch('enable-features', 'OverlayFullscreenVideo,DirectCompositionVideoOverlays,DirectCompositionHardwareOverlays');
-// Bypass batasan browser terhadap background video
-app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+// ═════════════════════════════════════════════════════════════════════════════
+// BLOK 3 — ANTI-FREEZE: Cegah Render Berhenti saat Minimize / Mission Control
+// Krusial untuk projector display yang harus tetap render walau di-backgroundkan
+// ═════════════════════════════════════════════════════════════════════════════
+app.commandLine.appendSwitch('disable-software-rasterizer');                   // WAJIB: Cegah fallback ke software (CPU) render
+app.commandLine.appendSwitch('disable-renderer-backgrounding');                // Cegah renderer di-throttle saat window minimize
+app.commandLine.appendSwitch('disable-background-timer-throttling');           // Cegah timer JS di-throttle saat background
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');        // Cegah freeze saat window tertutup aplikasi lain
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');   // Video autoplay tanpa interaksi user
 
-// 4. 🎯 CAMERA PERMISSION FIXES FOR ELECTRON
-app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', 'http://localhost:18888');
+// ═════════════════════════════════════════════════════════════════════════════
+// BLOK 4 — FEATURES: Aktifkan yang perlu, Nonaktifkan yang tidak terpakai
+// ═════════════════════════════════════════════════════════════════════════════
+app.commandLine.appendSwitch('disable-features', [
+  // Catatan: CalculateNativeWinOcclusion DIHAPUS — Windows Win32 API only
+  'IntensiveWakeUpThrottling',                      // Cegah throttle agresif timer background
+  'ThrottleDisplayNoneAndVisibilityHiddenFrameSinks', // Cegah frame sink di-throttle (penting untuk projector)
+  'Translate',                                      // Nonaktifkan Google Translate
+  'AutofillServerCommunication',                    // Nonaktifkan Autofill sync ke server
+  'WebXR',                                          // Nonaktifkan WebXR (AR/VR tidak digunakan)
+  'SpeechSynthesis',                                // Nonaktifkan Speech API
+  'MediaRouter',                                    // Nonaktifkan Chromecast / Cast SDK
+  'OptimizationGuideModelDownloading',              // Nonaktifkan AI model download Chromium
+  'Reporting',                                      // Nonaktifkan Reporting API
+  'CrashReporting',                                 // Nonaktifkan crash reporting ke Google
+  'BackForwardCache',                               // Nonaktifkan back-forward cache (hemat RAM signifikan)
+  'PrefetchPrivacyChanges',                         // Nonaktifkan prefetch tracking
+].join(','));
+
+app.commandLine.appendSwitch('enable-features', [
+  'OverlayFullscreenVideo',              // Overlay video di fullscreen tanpa re-composite
+  'CanvasOopRasterization',             // Canvas rasterisasi di proses terpisah (lebih stabil)
+  'MetalForWebGL',                      // macOS Metal backend untuk WebGL (performa lebih baik dari OpenGL)
+  // Catatan: D3D11VideoDecoder, D3D12VideoDecoder, MediaFoundationVideoCapture,
+  // DirectCompositionVideoOverlays, DirectCompositionHardwareOverlays — SEMUA DIHAPUS
+  // Alasan: Windows-only APIs, tidak relevan dan bisa menyebabkan error di macOS
+].join(','));
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BLOK 5 — SERVICES TIDAK TERPAKAI: Matikan Semua Service yang Tidak Diperlukan
+// ═════════════════════════════════════════════════════════════════════════════
+app.commandLine.appendSwitch('disable-spell-checking');                        // Nonaktifkan spell check (tidak perlu)
+app.commandLine.appendSwitch('disable-pdf-extension');                         // Nonaktifkan PDF viewer bawaan Chromium
+app.commandLine.appendSwitch('disable-extensions');                            // Nonaktifkan semua Chromium extension
+app.commandLine.appendSwitch('no-pings');                                      // Cegah hyperlink ping beacon tracking
+app.commandLine.appendSwitch('disable-domain-reliability');                    // Nonaktifkan domain reliability monitoring
+app.commandLine.appendSwitch('disable-sync');                                  // Nonaktifkan Chrome data sync
+app.commandLine.appendSwitch('disable-breakpad');                              // Nonaktifkan crash reporter breakpad (hemat RAM)
+app.commandLine.appendSwitch('no-crash-upload');                               // Cegah upload crash report ke server
+app.commandLine.appendSwitch('disable-component-update');                      // Cegah Chromium update komponen secara diam-diam
+app.commandLine.appendSwitch('disable-client-side-phishing-detection');        // Nonaktifkan phishing detector (tidak perlu)
+app.commandLine.appendSwitch('disable-hang-monitor');                          // Kurangi overhead timer hang-monitor CPU
+app.commandLine.appendSwitch('disable-print-preview');                         // Nonaktifkan print preview (hemat memori)
+app.commandLine.appendSwitch('disable-logging');                               // Nonaktifkan internal logging Chromium
+app.commandLine.appendSwitch('log-level', '3');                                // Log level: Fatal only
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BLOK 6 — MEMORY & V8: Tuning untuk Video Playback + Low-to-High End Devices
+// Memory sengaja diberi ruang besar karena background.html load & play video
+// ═════════════════════════════════════════════════════════════════════════════
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=1536');
+// Catatan: --optimize-for-size, --flush-bytecode, --gc-interval=500 DIHAPUS.
+// --optimize-for-size → membuat V8 generate kode lebih lambat demi ukuran kecil (buruk untuk video player)
+// --flush-bytecode   → menyebabkan re-kompilasi JIT saat fungsi dipanggil lagi (micro-jank)
+// --gc-interval=500  → GC terlalu sering = GC pause saat render frame = frame drop / patah-patah
+
+app.commandLine.appendSwitch('disk-cache-size', '268435456');                  // Cache disk 256MB — penting untuk video asset caching
+app.commandLine.appendSwitch('num-raster-threads', '4');                       // 4 thread rasterisasi parallel — video frame lebih smooth
+// disable-frame-rate-limit — DIHAPUS: KRITIS! Flag ini membuang vsync alignment.
+// Video 60fps butuh frame dikirim tepat tiap 16.67ms aligned ke refresh rate display.
+// Tanpa limiter → Chromium kirim frame tak teratur → GPU overload → stutter/patah-patah.
+// process-per-site — DIHAPUS: menyebabkan projector window masuk renderer berbeda → instabilitas multi-window
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BLOK 7 — CAMERA / LOCALHOST ACCESS
+// ═════════════════════════════════════════════════════════════════════════════
+app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', 'http://localhost:18888,http://127.0.0.1:18888');
 app.commandLine.appendSwitch('allow-http-camera-access');
 
-// 5. Batasi RAM untuk V8 Engine Javascript (Maksimal 2GB biar sisa RAM 8GB lega)
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=2048');
-
-
-
+// ─────────────────────────────────────────────────────────────────────────────
+// WINDOW & PROCESS VARIABLES
+// ─────────────────────────────────────────────────────────────────────────────
 let mainWindow;
 let splashWindow;
-let pyProc = null; // Variable buat nyimpen proses Python
+let pyProc = null;
 
-// --- FUNGSI JALANIN PYTHON ---
-// --- FUNGSI JALANIN PYTHON ---
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNGSI: JALANKAN PYTHON BACKEND
+// ─────────────────────────────────────────────────────────────────────────────
 const createPyProc = () => {
-  let script = path.join(process.resourcesPath, 'bin', 'ShowLyrics.exe');
-
+  // macOS: binary tanpa ekstensi .exe
+  let script = path.join(process.resourcesPath, 'bin', 'ShowLyrics');
   if (!app.isPackaged) {
-    script = path.join(__dirname, '../bin/ShowLyrics.exe');
+    script = path.join(__dirname, '../bin/ShowLyrics');
   }
+  log('Starting Python Backend from:', script);
 
-  console.log("Starting Python Backend from:", script);
-
-  // TAMBAHIN ARRAY KOSONG [] DAN { windowsHide: true } DI SINI 👇
   pyProc = spawn(script, [], {
-    windowsHide: true,
-    env: {
-      ...process.env,
-      SHOWLYRICS_SECRET: secretToken
-    }
+    env: { ...process.env, SHOWLYRICS_SECRET: secretToken }
   });
 
-  pyProc.stdout.on('data', (data) => {
-    console.log(`Python: ${data}`);
-  });
-
-  pyProc.stderr.on('data', (data) => {
-    console.error(`Python Error: ${data}`);
-  });
+  pyProc.stdout.on('data', (data) => log(`Python: ${data}`));
+  pyProc.stderr.on('data', (data) => logE(`Python Error: ${data}`));
 };
 
-// --- FUNGSI MATIKAN PYTHON ---
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNGSI: MATIKAN PYTHON BACKEND
+// ─────────────────────────────────────────────────────────────────────────────
 const exitPyProc = () => {
   try {
     if (fs.existsSync(tokenFile)) {
       fs.unlinkSync(tokenFile);
-      console.log("Secure session token deleted.");
+      log('Secure session token deleted.');
     }
   } catch (err) {}
 
   if (pyProc) {
-    console.log("Membunuh Python Backend...");
-    if (os.platform() === 'win32') {
-      // JURUS SAKTI WINDOWS: Bunuh process beserta anak-anaknya secara paksa
-      try {
-        execSync(`taskkill /pid ${pyProc.pid} /t /f`);
-      } catch (e) {
-        console.log("Taskkill warning (mungkin sudah mati):", e.message);
-      }
-    } else {
-      pyProc.kill();
+    log('Membunuh Python Backend...');
+    try {
+      // macOS: gunakan SIGKILL agar semua child process (Go engine) juga mati
+      process.kill(pyProc.pid, 'SIGKILL');
+    } catch (e) {
+      log('Kill warning:', e.message);
+      try { pyProc.kill(); } catch (_) {}
     }
     pyProc = null;
-    console.log("Python Backend BENAR-BENAR MATI.");
+    log('Python Backend BENAR-BENAR MATI.');
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNGSI: SPLASH SCREEN
+// ─────────────────────────────────────────────────────────────────────────────
 function createSplashWindow() {
   splashWindow = new BrowserWindow({
     width: 450,
     height: 300,
-    transparent: true,      // Background tembus pandang
-    frame: false,           // Gak ada bar minimize/close
-    alwaysOnTop: true,      // Selalu di atas
-    show: false,            // Render dulu baru ditampilin biar gak kedip
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    show: false,
     webPreferences: {
-      nodeIntegration: false
+      nodeIntegration: false,
+      contextIsolation: true,
+      backgroundThrottling: false,  // Tetap render walau behind main window
+      spellcheck: false,            // Tidak perlu spell check di splash
+      devTools: false,              // DevTools dimatikan total
+      disableBlinkFeatures: 'AutomationControlled'
     }
   });
 
-  // Load UI Loading Screen
   splashWindow.loadFile(path.join(__dirname, 'splash.html'));
 
   splashWindow.once('ready-to-show', () => {
     splashWindow.show();
-    checkBackendAndLoad(); // Mulai proses Ping!
+    checkBackendAndLoad();
   });
 }
 
-// --- FUNGSI PING (NUNGGU SERVER NYALA) ---
-// --- FUNGSI PING (NUNGGU SERVER NYALA) ---
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNGSI: PING BACKEND (tunggu sampai server Python nyala)
+// ─────────────────────────────────────────────────────────────────────────────
 function checkBackendAndLoad() {
-  console.log("Mencari sinyal dari 127.0.0.1:18888...");
+  log('Mencari sinyal dari 127.0.0.1:18888...');
 
-  // Nembak ke server tiap 0.5 detik (500ms)
   const pingInterval = setInterval(() => {
-    // PENTING: Pake 127.0.0.1 biar gak bentrok IPv6 Node.js vs IPv4 Python
     const options = {
-      headers: {
-        'X-ShowLyrics-Secret': secretToken
-      }
+      hostname: '127.0.0.1',
+      port: 18888,
+      path: '/',
+      method: 'GET',
+      headers: { 'X-ShowLyrics-Secret': secretToken }
     };
-    http.get('http://127.0.0.1:18888/', options, (res) => {
 
-      // Terima status 200 (OK) atau 3xx (Redirect)
+    const req = http.request(options, (res) => {
       if (res.statusCode >= 200 && res.statusCode < 400) {
-        clearInterval(pingInterval); // Stop ping
-        console.log("Server Ditemukan! Membuka Controller...");
-
+        clearInterval(pingInterval);
+        log('Server Ditemukan! Membuka Controller...');
         createMainWindow();
       }
-    }).on('error', (err) => {
-      // Server belum nyala (Connection Refused), diem aja nunggu ping selanjutnya...
-      // console.log("Menunggu server...");
+      // Drain response agar socket tidak hang
+      res.resume();
     });
+
+    req.on('error', () => {
+      // Server belum nyala — tunggu ping berikutnya
+    });
+
+    req.setTimeout(400, () => req.destroy());
+    req.end();
   }, 500);
 }
 
-// --- STARTUP ELECTRON ---
+// ─────────────────────────────────────────────────────────────────────────────
+// STARTUP ELECTRON
+// ─────────────────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
-  // Register header interceptor to secure Python backend pages
-  const filter = {
-    urls: [
-      'http://localhost/*',
-      'http://127.0.0.1/*'
-    ]
-  };
+
+  // Intercept semua request ke backend → inject secret token header
+  const filter = { urls: ['http://localhost/*', 'http://127.0.0.1/*'] };
 
   session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-    if (details.url.startsWith('http://localhost:18888') || details.url.startsWith('http://127.0.0.1:18888')) {
+    if (
+      details.url.startsWith('http://localhost:18888') ||
+      details.url.startsWith('http://127.0.0.1:18888')
+    ) {
       details.requestHeaders['X-ShowLyrics-Secret'] = secretToken;
     }
     callback({ requestHeaders: details.requestHeaders });
   });
 
-  // 🎯 CAMERA PERMISSION HANDLER (Auto-grant camera & microphone access)
+  // Auto-grant camera & microphone permission (default session)
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    console.log(`[Default Session] Permission requested: ${permission}`);
-    if (permission === 'camera' || permission === 'microphone' || permission === 'mediaStream' || permission === 'video' || permission === 'audio' || permission === 'media') {
-      console.log(`[Default Session] Granting ${permission} permission for camera panel`);
-      callback(true); // Auto-grant permission
-    } else {
-      console.log(`[Default Session] Denying ${permission} permission`);
-      callback(false); // Deny other permissions
-    }
+    const allowed = ['camera', 'microphone', 'mediaStream', 'video', 'audio', 'media'];
+    callback(allowed.includes(permission));
   });
 
-  // 🎯 Set device permission handler for default session
-  session.defaultSession.setDevicePermissionHandler((details, callback) => {
-    console.log(`[Default Session] Device permission requested for:`, details.deviceType);
-    if (details.deviceType === 'camera' || details.deviceType === 'microphone') {
-      console.log(`[Default Session] Granting device permission for ${details.deviceType}`);
-      callback(true); // Auto-grant device permission
-    } else {
-      callback(false); // Deny other device permissions
-    }
+  session.defaultSession.setDevicePermissionHandler((details) => {
+    return details.deviceType === 'camera' || details.deviceType === 'microphone';
   });
 
-  // 🚀 ANTI-SLEEP ENGINE: Tahan sistem OS dan GPU agar tidak iddle/sleep selama aplikasi ibadah on duty!
+  // ─────────────────────────────────────────────────────────────────────────
+  // PROJECTOR SESSION — Renderer Process Isolation
+  // ─────────────────────────────────────────────────────────────────────────
+  // KRITIS: Controller window dan projector window keduanya membuka localhost:18888.
+  // Tanpa partition, Chromium memasukkan mereka ke SATU renderer process yang sama.
+  // Akibatnya: JS WebSocket + DOM manipulation controller MENCURI thread time dari
+  // projector yang sedang render video + CSS animation → patah-patah / lag.
+  //
+  // Dengan partition 'persist:sl-projector':
+  //   ✓ Projector windows mendapat renderer process TERPISAH
+  //   ✓ Full thread priority untuk rendering video & CSS
+  //   ✓ Cache tetap persist antar sesi (asset video ter-cache)
+  //   ✓ Auth header tetap diinject via onBeforeSendHeaders projector session
+  const projectorFilter = { urls: ['http://localhost/*', 'http://127.0.0.1/*'] };
+  const projectorSess = session.fromPartition('persist:sl-projector', { cache: true });
+
+  projectorSess.webRequest.onBeforeSendHeaders(projectorFilter, (details, callback) => {
+    if (
+      details.url.startsWith('http://localhost:18888') ||
+      details.url.startsWith('http://127.0.0.1:18888')
+    ) {
+      details.requestHeaders['X-ShowLyrics-Secret'] = secretToken;
+    }
+    callback({ requestHeaders: details.requestHeaders });
+  });
+
+  projectorSess.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ['camera', 'microphone', 'mediaStream', 'video', 'audio', 'media'];
+    callback(allowed.includes(permission));
+  });
+
+  projectorSess.setDevicePermissionHandler((details) => {
+    return details.deviceType === 'camera' || details.deviceType === 'microphone';
+  });
+
+  // Anti-sleep: tahan display & sistem agar tidak idle/sleep selama ibadah
   powerSaveBlocker.start('prevent-display-sleep');
   powerSaveBlocker.start('prevent-app-suspension');
 
   createPyProc();
-
-  // JANGAN PAKE SET_TIMEOUT LAGI, LANGSUNG BUKA SPLASH SCREEN!
   createSplashWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0 && !splashWindow) {
-      createMainWindow();
-    }
-  });
 });
-// Matikan Python pas aplikasi ditutup
-app.on('will-quit', exitPyProc);
 
+// Matikan Python saat aplikasi ditutup
+app.on('will-quit', () => {
+  exitPyProc();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROJECTOR WINDOWS REGISTRY
+// ─────────────────────────────────────────────────────────────────────────────
 let projectorWindows = {
   main: null,
   lt: null,
   fb: null
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNGSI: MAIN CONTROLLER WINDOW
+// ─────────────────────────────────────────────────────────────────────────────
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
     minWidth: 1024,
     minHeight: 720,
-    title: "ShowLyrics Controller",
-    icon: path.join(__dirname, 'app.ico'),
-    show: false, // <--- 1. TAMBAHIN INI (Tahan dulu layarnya)
+    title: 'ShowLyrics Controller',
+    icon: path.join(__dirname, 'app.icns'),  // macOS: gunakan .icns
+    show: false,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      backgroundThrottling: false,
-      sandbox: false,
-      webSecurity: false,
+      backgroundThrottling: false,  // Jangan throttle walau di-background
+      sandbox: false,               // Nonaktifkan sandbox untuk performa maksimal
+      webSecurity: false,           // Request ke local backend tanpa CORS block
       enableRemoteModule: false,
-      allowRunningInsecureContent: true
+      allowRunningInsecureContent: true,
+      spellcheck: false,            // Spell check tidak diperlukan
+      devTools: false,              // DevTools dimatikan total
+      disableBlinkFeatures: 'AutomationControlled',
+      v8CacheOptions: 'bypassHeatCheck', // Cache bytecode lebih agresif
     }
   });
 
-  // 🎯 Set permission handler for this specific window's session
+  // Auto-grant camera & microphone permission untuk window ini
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    console.log(`[Window Session] Permission requested: ${permission}`);
-    if (permission === 'camera' || permission === 'microphone' || permission === 'mediaStream' || permission === 'video' || permission === 'audio' || permission === 'media') {
-      console.log(`[Window Session] Granting ${permission} permission`);
-      callback(true); // Auto-grant permission
-    } else {
-      console.log(`[Window Session] Denying ${permission} permission`);
-      callback(false); // Deny other permissions
-    }
+    const allowed = ['camera', 'microphone', 'mediaStream', 'video', 'audio', 'media'];
+    callback(allowed.includes(permission));
   });
 
-  // 🎯 Also set device permission handler for device access
-  mainWindow.webContents.session.setDevicePermissionHandler((details, callback) => {
-    console.log(`[Window Session] Device permission requested for:`, details.deviceType);
-    if (details.deviceType === 'camera' || details.deviceType === 'microphone') {
-      console.log(`[Window Session] Granting device permission for ${details.deviceType}`);
-      callback(true); // Auto-grant device permission
-    } else {
-      callback(false); // Deny other device permissions
-    }
+  mainWindow.webContents.session.setDevicePermissionHandler((details) => {
+    return details.deviceType === 'camera' || details.deviceType === 'microphone';
   });
 
-  mainWindow.setMenu(null);
+  // Di macOS, setMenu(null) akan menghapus seluruh menu bar termasuk menu Quit.
+  // Menu sudah diset via Menu.setApplicationMenu() di bagian bawah file ini.
   mainWindow.loadURL('http://localhost:18888');
 
   mainWindow.once('ready-to-show', () => {
-    // 1. Tampilkan Controller lu
     mainWindow.show();
 
-    // 2. Tutup splash screen
     if (splashWindow && !splashWindow.isDestroyed()) {
       splashWindow.close();
     }
 
-    // 3. Kasih jeda 0.1 detik (100ms) biar HTML/CSS beres kerender, 
-    // lalu paksa kursor buat fokus ke halaman web lu secara natural
     setTimeout(() => {
-      mainWindow.focus(); // Fokusin jendela aplikasinya
-      mainWindow.webContents.focus(); // Fokusin isi web-nya (bikin <input> bisa langsung diketik)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.focus();
+        mainWindow.webContents.focus();
+      }
     }, 100);
   });
 
-  // --- TAMBAHKAN KODE INI BUAT CEGAT TOMBOL CLOSE ---
+  // Konfirmasi sebelum tutup aplikasi
   mainWindow.on('close', (e) => {
-    // Munculkan Pop-up Native Windows
     const choice = dialog.showMessageBoxSync(mainWindow, {
       type: 'warning',
       buttons: ['Close App', 'Cancel'],
       title: 'Exit Confirmation',
       message: 'Are you sure want to close ShowLyrics?',
       detail: 'All display Output (Main, Lower Third, Stage) will be closed!',
-      defaultId: 1, // Default fokus ke tombol 'Batal' biar aman kalau kepencet Enter
+      defaultId: 1,
       cancelId: 1
     });
 
     if (choice === 1) {
-      e.preventDefault(); // Batalkan kalau milih Batal
+      e.preventDefault();
     } else {
-      // 1. TUTUP SEMUA PROJECTOR WINDOW YANG MASIH NYALA
+      // Tutup semua projector window
       Object.keys(projectorWindows).forEach(key => {
         if (projectorWindows[key] && !projectorWindows[key].isDestroyed()) {
           projectorWindows[key].close();
@@ -319,13 +411,14 @@ function createMainWindow() {
         }
       });
       exitPyProc();
-      // 3. PAKSA APLIKASI KELUAR
       app.exit();
     }
   });
-  // --------------------------------------------------
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: GET DISPLAYS
+// ─────────────────────────────────────────────────────────────────────────────
 ipcMain.handle('get-displays', () => {
   return screen.getAllDisplays().map((disp, index) => ({
     id: disp.id,
@@ -334,6 +427,9 @@ ipcMain.handle('get-displays', () => {
   }));
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: TEST DISPLAYS
+// ─────────────────────────────────────────────────────────────────────────────
 ipcMain.on('test-displays', () => {
   const displays = screen.getAllDisplays();
   displays.forEach((disp, index) => {
@@ -348,7 +444,12 @@ ipcMain.on('test-displays', () => {
       alwaysOnTop: true,
       autoHideMenuBar: true,
       backgroundColor: '#000000',
-      webPreferences: { nodeIntegration: false, backgroundThrottling: false }
+      webPreferences: {
+        nodeIntegration: false,
+        backgroundThrottling: false,
+        spellcheck: false,
+        devTools: false
+      }
     });
 
     const htmlContent = `
@@ -370,27 +471,10 @@ ipcMain.on('test-displays', () => {
               text-align: center;
               font-size: 16px;
             }
-            img {
-              width: 150px;
-              margin-bottom: 30px;
-            }
-            h1 {
-              font-size: 8vw;
-              margin: 0;
-              font-weight: 900;
-            }
-            h2 {
-              font-size: 3vw;
-              color: #aaa;
-              margin-top: 20px;
-              font-weight: 300;
-            }
-            h3 {
-              font-size: 2vw;
-              color: #888;
-              margin-top: 80px;
-              letter-spacing: 5px;
-            }
+            img { width: 150px; margin-bottom: 30px; }
+            h1 { font-size: 8vw; margin: 0; font-weight: 900; }
+            h2 { font-size: 3vw; color: #aaa; margin-top: 20px; font-weight: 300; }
+            h3 { font-size: 2vw; color: #888; margin-top: 80px; letter-spacing: 5px; }
           </style>
         </head>
         <body>
@@ -402,16 +486,11 @@ ipcMain.on('test-displays', () => {
       </html>
     `;
 
-    // Buat file HTML sementara
     const tempFilePath = path.join(os.tmpdir(), `display-test-${index}.html`);
     fs.writeFileSync(tempFilePath, htmlContent, 'utf8');
-
     win.loadFile(tempFilePath);
 
-    win.once('ready-to-show', () => {
-      win.show();
-    });
-
+    win.once('ready-to-show', () => win.show());
     win.setIgnoreMouseEvents(true);
     win.setAutoHideMenuBar(true);
     if (typeof win.webContents.setFrameRate === 'function') {
@@ -421,18 +500,15 @@ ipcMain.on('test-displays', () => {
     setTimeout(() => {
       if (!win.isDestroyed()) {
         win.close();
-        // Hapus file sementara setelah close
-        try {
-          fs.unlinkSync(tempFilePath);
-        } catch (err) {
-          console.error('Error deleting temp file:', err);
-        }
+        try { fs.unlinkSync(tempFilePath); } catch (err) {}
       }
     }, 2000);
   });
 });
 
-// --- SET OUTPUT RESOLUTION HELPERS ---
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS: OUTPUT RESOLUTION
+// ─────────────────────────────────────────────────────────────────────────────
 function setWindowResolution(type, mode, width, height) {
   const win = projectorWindows[type];
   if (!win || win.isDestroyed()) return;
@@ -456,7 +532,7 @@ function setWindowResolution(type, mode, width, height) {
         overflow: hidden !important;
       }
     `);
-    console.log(`[RESOLUTION] ${type} set to custom ${width}x${height} (scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)})`);
+    log(`[RESOLUTION] ${type} set to custom ${width}x${height} (scale: ${scaleX.toFixed(3)}x${scaleY.toFixed(3)})`);
   } else {
     win.webContents.insertCSS(`
       html {
@@ -471,7 +547,7 @@ function setWindowResolution(type, mode, width, height) {
         overflow: hidden !important;
       }
     `);
-    console.log(`[RESOLUTION] ${type} reset to default`);
+    log(`[RESOLUTION] ${type} reset to default`);
   }
 }
 
@@ -484,9 +560,7 @@ function applySavedResolutionForType(type) {
     port: 18888,
     path: '/api/output_resolution',
     method: 'GET',
-    headers: {
-      'X-ShowLyrics-Secret': secretToken
-    }
+    headers: { 'X-ShowLyrics-Secret': secretToken }
   };
 
   const req = http.request(options, (res) => {
@@ -496,25 +570,23 @@ function applySavedResolutionForType(type) {
       try {
         const saved = JSON.parse(data);
         const cfg = saved[type];
-        if (cfg) {
-          setWindowResolution(type, cfg.mode, cfg.width, cfg.height);
-        }
+        if (cfg) setWindowResolution(type, cfg.mode, cfg.width, cfg.height);
       } catch (err) {
-        console.error(`[RESOLUTION] Error parsing saved resolution for ${type}:`, err);
+        logE(`[RESOLUTION] Error parsing saved resolution for ${type}:`, err);
       }
     });
   });
 
-  req.on('error', (err) => {
-    console.error(`[RESOLUTION] Error fetching resolution for ${type}:`, err);
-  });
-
+  req.on('error', (err) => logE(`[RESOLUTION] Error fetching resolution for ${type}:`, err));
   req.end();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: TOGGLE PROJECTION (buka / tutup projector window)
+// ─────────────────────────────────────────────────────────────────────────────
 ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
   if (action === 'stop') {
-    if (projectorWindows[type]) {
+    if (projectorWindows[type] && !projectorWindows[type].isDestroyed()) {
       projectorWindows[type].close();
       projectorWindows[type] = null;
     }
@@ -522,37 +594,55 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
   }
 
   if (action === 'start') {
-    if (projectorWindows[type]) {
+    // Tutup window lama jika ada
+    if (projectorWindows[type] && !projectorWindows[type].isDestroyed()) {
       projectorWindows[type].close();
     }
 
     const displays = screen.getAllDisplays();
     const targetDisplay = displays.find(d => String(d.id) === String(displayId)) || displays[0];
+    const { x, y, width, height } = targetDisplay.bounds;
 
-    // JUDUL WINDOW (PENTING BUAT ALT-TAB)
-    let winTitle = "Projector Output";
-    if (type === 'main') winTitle = "Main Display (Projector)";
-    if (type === 'lt') winTitle = "Lower Third (Overlay)";
-    if (type === 'fb') winTitle = "Foldback (Stage)";
+    let winTitle = 'Projector Output';
+    if (type === 'main') winTitle = 'Main Display (Projector)';
+    if (type === 'lt')   winTitle = 'Lower Third (Overlay)';
+    if (type === 'fb')   winTitle = 'Foldback (Stage)';
 
+    // ⚠️ PENTING: TIDAK gunakan fullscreen: true di secondary display!
+    // fullscreen:true memicu OS display mode switching → interrupt video / stuck.
+    // Ganti dengan frameless window yang menutupi SELURUH area display secara manual.
+    // Ini lebih stabil dan video tetap jalan tanpa interupsi apapun.
     projectorWindows[type] = new BrowserWindow({
-      x: targetDisplay.bounds.x,
-      y: targetDisplay.bounds.y,
-      width: targetDisplay.bounds.width,
-      height: targetDisplay.bounds.height,
-      title: winTitle,        // Title biar nongol di Alt-Tab
-      fullscreen: true,
-      frame: false,           // Tanpa bingkai
-      transparent: false,     // WAJIB FALSE: Nutupin Desktop Wallpaper
+      x,
+      y,
+      width,
+      height,
+      title: winTitle,
+      fullscreen: false,          // OS fullscreen dimatikan — pakai manual full-size window
+      frame: false,               // Tanpa frame/titlebar
+      transparent: false,         // WAJIB FALSE: Nutupin Desktop Wallpaper
       alwaysOnTop: true,
       autoHideMenuBar: true,
-      focusable: false,      // Selalu di atas
-      skipTaskbar: false,     // WAJIB FALSE: Biar muncul di Alt-Tab/Taskbar
+      focusable: true,            // OS perlakukan dengan prioritas render normal
+      show: false,                // Tahan dulu, tampilkan setelah render siap
+      skipTaskbar: false,         // Muncul di Alt-Tab/Taskbar
       hasShadow: false,
-      backgroundColor: '#000000', // WAJIB HITAM PEKAT
+      resizable: false,           // Projector tidak perlu di-resize
+      movable: false,             // Projector tidak perlu dipindah
+      backgroundColor: '#000000', // Hitam sejak awal — tidak ada flash putih
       webPreferences: {
+        partition: 'persist:sl-projector', // KRITIS: Dedicated renderer process — isolated dari controller
         nodeIntegration: false,
-        backgroundThrottling: false,
+        contextIsolation: true,
+        backgroundThrottling: false,  // WAJIB: Tetap render walau di-backgroundkan
+        sandbox: false,               // Nonaktifkan sandbox untuk video render maksimal
+        webSecurity: false,           // Request ke local backend tanpa CORS
+        allowRunningInsecureContent: true,
+        spellcheck: false,
+        devTools: false,              // DevTools dimatikan total
+        offscreen: false,             // Render ke layar fisik (bukan offscreen buffer)
+        paintWhenInitiallyHidden: true,
+        v8CacheOptions: 'bypassHeatCheck',
       }
     });
 
@@ -560,22 +650,138 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
 
     win.setIgnoreMouseEvents(true);
     win.setAutoHideMenuBar(true);
+
+    // 'pop-up-menu' lebih stabil dari 'screen-saver' untuk render engine
+    win.setAlwaysOnTop(true, 'pop-up-menu');
+
+    // Kunci zoom level = 1.0 — cegah kalkulasi layout zoom yang tidak perlu
+    win.webContents.setZoomFactor(1.0);
+    win.webContents.setZoomLevel(0);
+    win.webContents.setVisualZoomLevelLimits(1, 1);
+
     if (typeof win.webContents.setFrameRate === 'function') {
       win.webContents.setFrameRate(60);
     }
 
-    win.setAlwaysOnTop(true, "screen-saver");
+    // Inject CSS hitam secepat mungkin saat navigasi mulai (sebelum konten load)
+    // Mencegah flash putih/kosong selama halaman belum selesai render
+    win.webContents.on('did-start-navigation', () => {
+      win.webContents.insertCSS(`
+        html, body {
+          background: #000 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+      `).catch(() => {});
+    });
 
     win.webContents.on('did-finish-load', () => {
+      // CSS 1: Layout & visual dasar
       win.webContents.insertCSS(`
-        html, body { 
-          cursor: none !important; 
-          overflow: hidden !important; 
+        html, body {
+          background: #000 !important;
+          cursor: none !important;
+          overflow: hidden !important;
           user-select: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
         }
       `);
-      // Auto-apply saved custom resolution when loading finishes
+
+      // CSS 2: GPU Compositing Hint — hanya untuk iframe video (#frame-video)
+      // User request: optimasi HANYA untuk iframe video, bukan semua elemen.
+      // #frame-video adalah iframe yang memuat /background (background.html dengan <video>).
+      // will-change: transform, opacity memberikan hint ke compositor untuk
+      // menjadikan iframe ini GPU compositing layer tersendiri yang stabil.
+      win.webContents.insertCSS(`
+        #frame-video {
+          will-change: transform, opacity;
+          backface-visibility: hidden;
+          -webkit-backface-visibility: hidden;
+        }
+      `).catch(() => {});
+
+      // 🎯 VIDEO ANTI-STALL GUARD — PARENT FRAME
+      // Inject di parent document: menjangkau video langsung DAN video di dalam iframe same-origin
+      // KRITIS: display.html/lowerthird.html menggunakan <iframe> untuk load /background
+      // sehingga <video> ada di dalam iframe, bukan di parent. Guard HARUS masuk ke iframe juga.
+      win.webContents.executeJavaScript(`
+        (function() {
+          'use strict';
+
+          // Fungsi guard satu dokumen (parent atau iframe)
+          function guardDoc(doc) {
+            if (!doc) return;
+            doc.querySelectorAll('video').forEach(function(v) {
+              if (v._slGuarded) return;
+              v._slGuarded = true;
+              v.addEventListener('pause', function() {
+                if (!v._intentionalPause) {
+                  setTimeout(function() { v.play().catch(function(){}); }, 80);
+                }
+              });
+              // Tambahan: jaga agar video tidak ter-pause via visibility change
+              doc.addEventListener('visibilitychange', function() {
+                if (doc.hidden) return; // jangan lakukan apa-apa saat hidden
+                if (!v.paused || v._intentionalPause) return;
+                v.play().catch(function(){});
+              });
+            });
+          }
+
+          // Guard parent document
+          guardDoc(document);
+
+          // Guard semua iframe same-origin yang sudah ada (termasuk /background)
+          function guardIframes() {
+            document.querySelectorAll('iframe').forEach(function(iframe) {
+              if (iframe._slIframeGuarded) return;
+              // Guard saat iframe sudah selesai load
+              var tryGuard = function() {
+                try {
+                  var doc = iframe.contentDocument;
+                  if (doc && doc.readyState !== 'loading') {
+                    iframe._slIframeGuarded = true;
+                    guardDoc(doc);
+                    // Watch perubahan DOM di dalam iframe (video lazy load)
+                    var iObs = new MutationObserver(function() { guardDoc(doc); });
+                    iObs.observe(doc.documentElement, { childList: true, subtree: true });
+                  }
+                } catch(e) {}
+              };
+              iframe.addEventListener('load', tryGuard);
+              tryGuard(); // coba langsung jika sudah ada
+            });
+          }
+
+          guardIframes();
+
+          // Watch iframe baru yang ditambahkan secara dinamis
+          var obs = new MutationObserver(function() {
+            guardDoc(document);
+            guardIframes();
+          });
+          obs.observe(document.documentElement, { childList: true, subtree: true });
+
+          // API global untuk pause/resume yang disengaja oleh app
+          window._slPauseVideo = function(v) { v._intentionalPause = true; v.pause(); };
+          window._slResumeVideo = function(v) { v._intentionalPause = false; v.play().catch(function(){}); };
+        })();
+      `).catch(() => {});
+
       applySavedResolutionForType(type);
+    });
+
+    // CATATAN: did-frame-finish-load subframe injection DIHAPUS.
+    // executeJavaScript() selalu berjalan di MAIN frame context, bukan di subframe.
+    // Guard video di iframe ditangani oleh guardIframes() di parent frame (same-origin access).
+    // guardIframes() mengakses iframe.contentDocument langsung (cross-frame same-origin access).
+
+    // Tampilkan secara inactive agar tidak merebut fokus dari Controller
+    win.once('ready-to-show', () => {
+      win.showInactive();
+      // Pastikan window benar-benar menutupi seluruh display area
+      win.setBounds({ x, y, width, height });
     });
 
     win.loadURL(url);
@@ -589,34 +795,85 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// APP: MENU BAR (macOS — wajib ada agar Cmd+Q berfungsi dan OS tidak complain)
+// ─────────────────────────────────────────────────────────────────────────────
+const { Menu } = require('electron');
+const macAppMenu = Menu.buildFromTemplate([
+  {
+    label: app.name,
+    submenu: [
+      { role: 'about', label: `About ${app.name}` },
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide', label: `Hide ${app.name}` },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit', label: `Quit ${app.name}`, accelerator: 'Cmd+Q' }
+    ]
+  }
+]);
+Menu.setApplicationMenu(macAppMenu);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// APP: WINDOW-ALL-CLOSED
+// Di macOS, app tetap aktif di Dock setelah semua window ditutup (konvensi macOS)
+// ─────────────────────────────────────────────────────────────────────────────
 app.on('window-all-closed', () => {
+  // macOS: app tetap berjalan di background (behavior standar macOS)
+  // User bisa re-open via Dock. Quit hanya via Cmd+Q atau menu Quit.
+  // Jika ingin quit saat semua window ditutup, hapus kondisi ini.
   if (process.platform !== 'darwin') app.quit();
 });
 
-// --- OPEN EXTERNAL LINK IN SYSTEM BROWSER ---
-// Mencegah Electron membuka blank sub-window saat link download diklik
+// ─────────────────────────────────────────────────────────────────────────────
+// APP: ACTIVATE (macOS Dock click — re-buka window jika sudah ditutup)
+// ─────────────────────────────────────────────────────────────────────────────
+app.on('activate', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createSplashWindow();
+  } else {
+    mainWindow.show();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: OPEN EXTERNAL LINK (buka di browser sistem, bukan sub-window Electron)
+// ─────────────────────────────────────────────────────────────────────────────
 ipcMain.on('open-external', (_event, url) => {
-  // Validasi URL: hanya izinkan http/https
   if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
     shell.openExternal(url);
   }
 });
 
-// --- SET OUTPUT RESOLUTION (Custom Scale Transform) ---
-// Ketika output window dibuka dengan custom resolution, inject CSS scale
-// agar konten di-render pada resolusi target lalu di-stretch ke layar fisik.
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: SET OUTPUT RESOLUTION (custom scale via CSS transform)
+// ─────────────────────────────────────────────────────────────────────────────
 ipcMain.on('set-output-resolution', (_event, { type, mode, width, height }) => {
   setWindowResolution(type, mode, width, height);
 });
 
-// 🎯 CAMERA PERMISSION HANDLER (Electron)
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: CAMERA PERMISSION
+// ─────────────────────────────────────────────────────────────────────────────
 ipcMain.handle('request-camera-permission', async () => {
   try {
-    console.log("Camera permission requested from renderer");
-    // Permission will be auto-granted by setPermissionRequestHandler in app.on('ready')
-    return true;
+    log('Camera permission requested from renderer');
+    return true; // Auto-granted via setPermissionRequestHandler
   } catch (err) {
-    console.error("Camera permission request failed:", err);
+    logE('Camera permission request failed:', err);
     return false;
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: RELAUNCH APP (restart seluruh aplikasi)
+// Dipanggil dari renderer via electronAPI.relaunchApp()
+// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.on('relaunch-app', () => {
+  log('Relaunch requested — restarting app...');
+  app.relaunch();
+  app.exit(0);
 });
