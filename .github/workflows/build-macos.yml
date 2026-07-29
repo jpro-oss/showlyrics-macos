@@ -238,18 +238,28 @@ jobs:
         run: npm ci
 
       # ─────────────────────────────────────────────────────────────
-      # 11. BUILD ELECTRON DMG (arch sesuai matrix)
-      #     dist:arm64 / dist:x64 → DMG + ZIP per arsitektur
+      # 11. PRE-BUILD: Disable Spotlight (mencegah hdiutil 'Resource busy')
+      # ─────────────────────────────────────────────────────────────
+      - name: Disable Spotlight Indexing
+        run: |
+          # Spotlight (mds/mdworker) di macOS 15 langsung scan DMG yang baru dibuat
+          # sehingga hdiutil detach gagal dengan 'Resource busy'.
+          # Matikan sementara selama build berlangsung.
+          sudo mdutil -a -i off || true
+          echo "Spotlight indexing disabled."
+
+      # ─────────────────────────────────────────────────────────────
+      # 12. BUILD ELECTRON DMG (arch sesuai matrix)
       # ─────────────────────────────────────────────────────────────
       - name: Build Electron App (${{ matrix.arch }})
         timeout-minutes: 20
         run: |
           echo "Building Electron for ${{ matrix.arch }}..."
-          # FIX: npm tidak forward flags setelah nama script tanpa '--'
-          # Gunakan npx electron-builder langsung agar --arm64/--x64 ter-forward dengan benar
-          npx electron-builder --mac ${{ matrix.electron_arch }}
+          # --publish never: cegah electron-builder auto-upload ke GitHub Release
+          # (tanpa ini terjadi retry loop 5x yang terus re-mount/detach DMG
+          # dan memperparah masalah 'hdiutil: Resource busy')
+          npx electron-builder --mac ${{ matrix.electron_arch }} --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       # ─────────────────────────────────────────────────────────────
