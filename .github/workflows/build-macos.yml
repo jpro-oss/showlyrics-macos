@@ -25,8 +25,9 @@ jobs:
       fail-fast: false   # Jika 1 arch gagal, arch lain tetap jalan
       matrix:
         include:
-          # Apple Silicon — macOS 14 Sonoma runner (ARM64 native)
-          - os: macos-14
+          # Apple Silicon — macOS 15 Sequoia runner (ARM64 native)
+          # macos-14 juga bisa dipakai, macos-15 lebih baru
+          - os: macos-15
             arch: arm64
             go_arch: arm64
             ffmpeg_zip: ffmpeg81arm.zip
@@ -34,8 +35,10 @@ jobs:
             electron_arch: "--arm64"
             artifact_suffix: "arm64"
 
-          # Intel Mac — macOS 13 Ventura runner (x86_64 native)
-          - os: macos-13
+          # Intel Mac — macOS 15 Intel runner (x86_64 native)
+          # PENTING: macos-13 sudah RETIRED (4 Des 2025) → gunakan macos-15-intel
+          # Didukung hingga Agustus 2027 (Intel EOL dari Apple)
+          - os: macos-15-intel
             arch: x86_64
             go_arch: amd64
             ffmpeg_zip: ffmpeg80intel.zip
