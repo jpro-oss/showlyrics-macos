@@ -8,6 +8,7 @@ import uvicorn
 import asyncio
 import subprocess
 import atexit
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlparse
 
@@ -46,9 +47,41 @@ from connection_manager import ConnectionManager
 from middleware import secure_electron_pages, log_requests, system_logs
 
 # ==========================================
+# 🚀 LIFESPAN — Startup & Shutdown Events
+# ==========================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan: gantikan @app.on_event('startup') yang sudah deprecated."""
+    # ──────────────────────── STARTUP ────────────────────────
+    loop = asyncio.get_running_loop()
+    _default_exc_handler = loop.get_exception_handler()
+    def _suppressed_exc_handler(loop, context):
+        exc = context.get('exception')
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError)):
+            return  # Suppress harmless remote-close errors silently
+        if _default_exc_handler:
+            _default_exc_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+    loop.set_exception_handler(_suppressed_exc_handler)
+    print("[SYSTEM] Starting Go Playback Engine...")
+    start_go_engine()
+    print("[SYSTEM] Starting background license validation...")
+    asyncio.create_task(license_check.async_license_check())
+    loop.run_in_executor(None, manager.sync_state_from_go)
+    asyncio.create_task(bg_tasks.run_media_migration_check())
+    asyncio.create_task(bg_tasks.start_presentation_worker())
+    asyncio.create_task(_integrity_startup())
+    asyncio.create_task(_startup_network_check())
+    yield
+    # ──────────────────────── SHUTDOWN ────────────────────────
+    # stop_go_engine() dipanggil via atexit.register()
+
+
+# ==========================================
 # 🚀 INIT APP
 # ==========================================
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 # Templates (satu instance global, dishare ke routes_pages)
 templates = Jinja2Templates(directory=get_resource_path("templates"))
@@ -163,39 +196,6 @@ def stop_go_engine():
 
 atexit.register(stop_go_engine)
 
-
-# ==========================================
-# 🚀 STARTUP EVENT
-# ==========================================
-@app.on_event("startup")
-async def startup_event():
-    """Inisialisasi background tasks dan konfigurasi event loop."""
-    
-    # Suppress ConnectionResetError dan BrokenPipeError yang muncul saat browser
-    # menutup koneksi TCP secara paksa (normal behavior — harmless tapi verbose).
-    loop = asyncio.get_running_loop()
-    _default_exc_handler = loop.get_exception_handler()
-    def _suppressed_exc_handler(loop, context):
-        exc = context.get('exception')
-        if isinstance(exc, (ConnectionResetError, BrokenPipeError)):
-            return  # Suppress harmless remote-close errors silently
-        if _default_exc_handler:
-            _default_exc_handler(loop, context)
-        else:
-            loop.default_exception_handler(context)
-    loop.set_exception_handler(_suppressed_exc_handler)
-    print("[SYSTEM] Starting Go Playback Engine...")
-    start_go_engine()
-    print("[SYSTEM] Starting background license validation...")
-    asyncio.create_task(license_check.async_license_check())
-    # Sync initial timeline state from Go Playback Engine
-    loop.run_in_executor(None, manager.sync_state_from_go)
-    asyncio.create_task(bg_tasks.run_media_migration_check())
-    asyncio.create_task(bg_tasks.start_presentation_worker())
-    # Mulai file integrity system (delay 2 detik — beri waktu license check selesai)
-    asyncio.create_task(_integrity_startup())
-    # Mulai network guard check (delay 3 detik — beri waktu client connect dulu)
-    asyncio.create_task(_startup_network_check())
 
 
 async def _integrity_startup():

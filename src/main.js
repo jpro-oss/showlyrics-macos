@@ -20,8 +20,8 @@ const logE = (...args) => isDev && console.error(...args);
 const secretToken = crypto.randomBytes(16).toString('hex');
 process.env.SHOWLYRICS_SECRET = secretToken;
 
-const userDocs  = path.join(os.homedir(), 'Documents');
-const appFolder = path.join(userDocs, 'WorshipEngineData');
+const userDocs  = path.join(os.homedir(), 'Library', 'Application Support', 'ShowLyrics');
+const appFolder = userDocs;
 const tokenFile = path.join(appFolder, '.session_token');
 
 try {

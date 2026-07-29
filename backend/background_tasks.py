@@ -274,7 +274,7 @@ def extract_pdf_page_sync(pdf_path: str, output_folder: str, page_num: int):
         print(f"[PDF_EXTRACT] Thumbnail generation error on slide {page_num+1}: {e_pil}")
 
 async def extract_pdf_to_slides(pdf_path: str, output_folder: str, item_id: str, filename: str):
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     slide_count = await loop.run_in_executor(None, get_pdf_page_count_sync, pdf_path)
     
     if slide_count == 0:
@@ -431,7 +431,7 @@ def process_single_pptx_thumbnail_sync(output_folder: str, temp_file: str, slide
         print(f"[PPTX_EXTRACT] Thumbnail error slide {slide_num}: {e}")
 
 async def extract_pptx_to_slides(pptx_path: str, output_folder: str, item_id: str, filename: str):
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     res = await loop.run_in_executor(None, run_pptx_export_sync, pptx_path, output_folder)
     
     if res.get("status") == "success":
@@ -543,7 +543,7 @@ async def run_media_migration_check():
     print("[SYSTEM] Starting background media library migration check...")
     
     categories = ["video", "photo", "audio", "presentation"]
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     
     for cat in categories:
         try:

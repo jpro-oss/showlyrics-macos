@@ -1,0 +1,43 @@
+# ShowLyrics — Git Line Ending Configuration
+# Ensures shell scripts always use UNIX LF regardless of OS
+# KRITIS: macOS bash gagal parse script dengan CRLF (\r\n) endings
+
+# Default: auto CRLF handling untuk text files
+* text=auto
+
+# Shell scripts — WAJIB LF (Unix line endings)
+*.sh  text eol=lf
+
+# Python — LF
+*.py  text eol=lf
+
+# Go — LF
+*.go  text eol=lf
+
+# YAML/JSON/Config — LF
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.spec text eol=lf
+
+# JavaScript — LF
+*.js   text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+
+# Binary files — no CRLF conversion
+*.exe      binary
+*.dmg      binary
+*.zip      binary
+*.png      binary
+*.jpg      binary
+*.ico      binary
+*.icns     binary
+ffmpeg     binary
+ffmpeg80intel.zip binary
+ffmpeg81arm.zip   binary
+playback-engine   binary
+playback-engine-arm64  binary
+playback-engine-amd64  binary

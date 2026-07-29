@@ -1,37 +1,41 @@
 # ShowLyrics macOS — Python Dependencies
 # Install dengan: pip install -r requirements-macos.txt
-# Python 3.10+ direkomendasikan
+# Python 3.11 (recommended) — tested dan stabil untuk semua package ini
 #
-# Catatan: av (PyAV) membutuhkan FFmpeg tersedia di sistem.
-# Install via Homebrew: brew install ffmpeg
-# Atau gunakan ffmpeg binary yang sudah tersedia di folder backend/
+# CATATAN VERSIONING:
+#   - Lower bound (>=): pastikan fitur minimum tersedia
+#   - Upper bound (<): cegah breaking changes dari major update
+#   - Setiap kali upgrade version, test terlebih dahulu di dev environment
 
 # ─── Core Framework ────────────────────────────────────────────────
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
+fastapi>=0.104.0,<1.0.0          # FastAPI — REST + WebSocket server
+uvicorn[standard]>=0.24.0,<1.0.0 # ASGI server dengan WebSocket support
 
 # ─── Media Processing ──────────────────────────────────────────────
-av>=11.0.0            # PyAV: video thumbnail & metadata via FFmpeg
-Pillow>=10.0.0        # Image processing, PPTX slide thumbnails
-PyMuPDF>=1.23.0       # PDF rendering (fitz), PPTX fallback export
+av>=11.0.0,<14.0.0               # PyAV: video thumbnail & metadata via FFmpeg
+Pillow>=10.0.0,<12.0.0           # Image processing, PPTX slide thumbnails
+PyMuPDF>=1.23.0,<1.26.0          # PDF rendering (fitz) — API berubah di 1.26+
 
 # ─── Presentation (PPTX) ───────────────────────────────────────────
-python-pptx>=0.6.21   # PPTX parsing (fallback jika LibreOffice tidak ada)
-                      # Untuk kualitas terbaik, install LibreOffice:
-                      # brew install --cask libreoffice
+python-pptx>=0.6.21,<2.0.0       # PPTX parsing (fallback jika LibreOffice tidak ada)
+                                  # Untuk kualitas terbaik, install LibreOffice:
+                                  # brew install --cask libreoffice
 
 # ─── Data & Storage ────────────────────────────────────────────────
-cryptography>=41.0.0  # Enkripsi license data (Fernet)
-requests>=2.31.0      # HTTP untuk Firebase license validation
+cryptography>=41.0.0,<44.0.0     # Enkripsi license data (Fernet, PBKDF2)
+requests>=2.31.0,<3.0.0          # HTTP untuk Firebase license validation
 
 # ─── System & Process ──────────────────────────────────────────────
-psutil>=5.9.0         # System info untuk diagnostics
+psutil>=5.9.0,<7.0.0             # System info untuk diagnostics
 
 # ─── OSC (Open Sound Control) ──────────────────────────────────────
-python-osc>=1.8.0     # OSC sender/receiver
+python-osc>=1.8.0,<2.0.0         # OSC sender/receiver
 
 # ─── WebSocket Support (sudah di uvicorn[standard]) ────────────────
-websockets>=11.0.0    # Diperlukan oleh uvicorn untuk WebSocket
+websockets>=11.0.0,<14.0.0       # Diperlukan oleh uvicorn untuk WebSocket
+
+# ─── HTTP Client (untuk sender.py proxy) ───────────────────────────
+httpx>=0.24.0,<1.0.0             # Async HTTP client
 
 # ─── Build Tools (untuk PyInstaller) ───────────────────────────────
-pyinstaller>=6.0.0    # Build standalone binary
+pyinstaller>=6.0.0,<7.0.0        # Build standalone binary — HARUS 6.x untuk macOS

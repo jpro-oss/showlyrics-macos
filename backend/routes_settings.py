@@ -123,8 +123,7 @@ async def browse_folder_dialog():
 
     lock = _dialog_lock or asyncio.Lock()
     async with lock:
-        loop = asyncio.get_event_loop()
-        folder_path = await loop.run_in_executor(None, _run_osascript, script)
+        folder_path = await asyncio.to_thread(_run_osascript, script)
 
     if folder_path:
         # Hilangkan trailing slash dari osascript output
@@ -149,8 +148,7 @@ async def browse_file_dialog():
     """
     lock = _dialog_lock or asyncio.Lock()
     async with lock:
-        loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, _run_osascript, script)
+        raw = await asyncio.to_thread(_run_osascript, script)
 
     if raw:
         files = [f.strip() for f in raw.strip().split('\n') if f.strip()]
@@ -196,8 +194,7 @@ async def browse_file_dialog_cat(category: str):
 
     lock = _dialog_lock or asyncio.Lock()
     async with lock:
-        loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, _run_osascript, script)
+        raw = await asyncio.to_thread(_run_osascript, script)
 
     if raw:
         files = [f.strip() for f in raw.strip().split('\n') if f.strip()]

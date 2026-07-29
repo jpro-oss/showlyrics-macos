@@ -1,8 +1,10 @@
 name: Build ShowLyrics macOS (Dual Arch)
 
-# Trigger: push ke branch main, atau manual dari GitHub Actions tab
+# Trigger: push ke branch main, PR ke main, atau manual dari GitHub Actions tab
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -237,9 +239,12 @@ jobs:
       #     dist:arm64 / dist:x64 → DMG + ZIP per arsitektur
       # ─────────────────────────────────────────────────────────────
       - name: Build Electron App (${{ matrix.arch }})
+        timeout-minutes: 20
         run: |
           echo "Building Electron for ${{ matrix.arch }}..."
-          npm run dist ${{ matrix.electron_arch }}
+          # FIX: npm tidak forward flags setelah nama script tanpa '--'
+          # Gunakan npx electron-builder langsung agar --arm64/--x64 ter-forward dengan benar
+          npx electron-builder --mac ${{ matrix.electron_arch }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
@@ -283,23 +288,36 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: build-macos
-    if: ${{ github.event.inputs.create_release == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download all artifacts
+      - name: Download all DMG artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-assets/
           pattern: ShowLyricsApp-macOS-*-DMG
+          merge-multiple: true
+
+      - name: List release assets
+        run: |
+          echo "=== Release assets ==="
+          find release-assets/ -name "*.dmg" | sort
+          DMG_COUNT=$(find release-assets/ -name "*.dmg" | wc -l)
+          echo "Total DMGs: $DMG_COUNT"
+          if [ "$DMG_COUNT" -eq 0 ]; then
+            echo "ERROR: No DMG files found for release!"
+            exit 1
+          fi
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}
+          tag_name: v2.5.0-build.${{ github.run_number }}
           name: ShowLyricsApp v2.5.0 (Build ${{ github.run_number }})
           draft: false
           prerelease: false
+          fail_on_unmatched_files: false
           files: |
             release-assets/**/*.dmg
         env:

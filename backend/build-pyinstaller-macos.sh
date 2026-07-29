@@ -1,5 +1,5 @@
 #!/bin/bash
-# ════════════════════════════════════════════════════════════════════════════
+# ╔════════════════════════════════════════════════════════════════════════════
 # build-pyinstaller-macos.sh
 # ShowLyrics macOS — PyInstaller Build Script (Optimized)
 #
@@ -7,20 +7,24 @@
 #   - Separator --add-data pakai ':' bukan ';'
 #   - Tidak ada .exe di binary (ffmpeg, playback-engine)
 #   - Tidak ada Windows-only imports (tkinter, win32com, pythoncom, pywintypes)
-#   - Tidak ada PyArmor (skip untuk macOS compatibility release)
-#   - Universal Binary: Intel (x86_64) + Apple Silicon (arm64)
-#   - Strip debug symbols untuk binary lebih kecil
-#   - UPX dimatikan (tidak kompatibel dengan macOS universal2)
+#   - target-arch mengikuti env ARCH atau arsitektur mesin secara otomatis
+#   - TIDAK pakai --target-arch=universal2 (crash dengan single-arch pip wheels)
+#   - TIDAK pakai --strip (merusak code signing Apple)
+#   - UPX dimatikan (tidak kompatibel dengan macOS)
 #
 # Cara pakai:
-#   cd e:/SHOWLYRICS/V135-2-MACOS/backend   (di macOS)
+#   cd /path/to/project/backend
 #   chmod +x build-pyinstaller-macos.sh
 #   ./build-pyinstaller-macos.sh
+#
+# Untuk target arsitektur spesifik:
+#   ARCH=arm64  ./build-pyinstaller-macos.sh
+#   ARCH=x86_64 ./build-pyinstaller-macos.sh
 #
 # Prasyarat:
 #   pip install -r requirements-macos.txt
 #   (ffmpeg dan playback-engine harus sudah ada di folder backend/)
-# ════════════════════════════════════════════════════════════════════════════
+# ╚════════════════════════════════════════════════════════════════════════════
 
 set -e
 
@@ -28,7 +32,21 @@ echo ""
 echo "ShowLyrics - PyInstaller macOS Build"
 echo "--------------------------------------"
 
-# Cek prasyarat
+# Deteksi target architecture
+# Prioritas: env var ARCH > arsitektur mesin yang berjalan
+if [ -n "$ARCH" ] && { [ "$ARCH" = "arm64" ] || [ "$ARCH" = "x86_64" ]; }; then
+    TARGET_ARCH="$ARCH"
+else
+    MACHINE=$(uname -m)
+    if [ "$MACHINE" = "arm64" ]; then
+        TARGET_ARCH="arm64"
+    else
+        TARGET_ARCH="x86_64"
+    fi
+fi
+echo "Target architecture: $TARGET_ARCH"
+
+# Cek prasyarat binary
 for binary in ffmpeg playback-engine; do
     if [ ! -f "$binary" ]; then
         echo "ERROR: '$binary' tidak ditemukan di folder ini!"
@@ -37,19 +55,31 @@ for binary in ffmpeg playback-engine; do
     fi
     chmod +x "$binary"
     echo "OK: $binary ditemukan ($(du -sh "$binary" | cut -f1))"
+    file "$binary"
 done
 
+# Cek icon - gunakan .icns di src/ jika ada, fallback ke .ico di backend/
+ICON_FLAG=""
+if [ -f "../src/app.icns" ]; then
+    ICON_FLAG="--icon=../src/app.icns"
+    echo "OK: Menggunakan icon ../src/app.icns"
+elif [ -f "app.ico" ]; then
+    ICON_FLAG="--icon=app.ico"
+    echo "OK: Menggunakan icon app.ico (fallback)"
+else
+    echo "WARNING: Tidak ada icon ditemukan, build tanpa custom icon."
+fi
+
 echo ""
-echo "Memulai PyInstaller build..."
+echo "Memulai PyInstaller build untuk $TARGET_ARCH..."
 echo ""
 
 python -m PyInstaller \
     --name="ShowLyrics" \
     --onedir \
-    --icon="app.icns" \
+    $ICON_FLAG \
     --contents-directory="internal" \
-    --target-arch=universal2 \
-    --strip \
+    --target-arch="$TARGET_ARCH" \
     --noupx \
     --noconfirm \
     \

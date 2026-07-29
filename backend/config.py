@@ -71,10 +71,21 @@ def get_resource_path(relative_path):
 
 
 def get_user_data_path(filename):
-    user_docs = os.path.expanduser("~/Documents")
-    app_folder = os.path.join(user_docs, "WorshipEngineData")
+    """
+    Kembalikan path ke file data user di lokasi yang sesuai dengan konvensi macOS.
+
+    Lokasi: ~/Library/Application Support/ShowLyrics/
+    Mengikuti Apple Human Interface Guidelines untuk persistent app data.
+
+    Keunggulan vs ~/Documents/:
+      - Tidak di-sync oleh iCloud Drive (mencegah sync database video multi-GB)
+      - Standard macOS location — tidak 'mengotori' folder Documents user
+      - Tersembunyi dari casual browsing (Library default hidden di Finder)
+    """
+    # macOS: ~/Library/Application Support/ShowLyrics/
+    app_folder = os.path.expanduser('~/Library/Application Support/ShowLyrics')
     if not os.path.exists(app_folder):
-        os.makedirs(app_folder)
+        os.makedirs(app_folder, exist_ok=True)
     return os.path.join(app_folder, filename)
 
 # ---- In-memory JSON cache (mtime-based invalidation) ----

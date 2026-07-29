@@ -612,15 +612,10 @@ def _broadcast(data: dict):
         if loop and not loop.is_closed() and loop.is_running():
             asyncio.run_coroutine_threadsafe(_manager_ref.broadcast(data), loop)
         else:
-            # Fallback: coba ambil loop dari asyncio
-            try:
-                fallback = asyncio.get_event_loop()
-                if fallback.is_running():
-                    asyncio.run_coroutine_threadsafe(
-                        _manager_ref.broadcast(data), fallback
-                    )
-            except Exception:
-                pass
+            # Fallback: _event_loop belum di-inject atau sudah closed
+            # Tidak ada cara aman untuk broadcast dari thread ini tanpa loop reference
+            # Biarkan silent — akan di-catch oleh next watchdog cycle
+            pass
     except Exception as e:
         print(f"[NETGUARD] Broadcast error: {e}")
 
