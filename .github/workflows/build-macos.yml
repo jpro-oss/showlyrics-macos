@@ -238,32 +238,90 @@ jobs:
         run: npm ci
 
       # ─────────────────────────────────────────────────────────────
-      # 11. BUILD ELECTRON DMG (arch sesuai matrix)
-      #     dist:arm64 / dist:x64 → DMG + ZIP per arsitektur
+      # 11. BUILD ELECTRON APP BUNDLE
+      #     Strategi: build dengan target 'dir' dulu (hanya .app bundle)
+      #     MENGAPA: electron-builder 24.x + macOS 15 Sequoia punya bug
+      #     hdiutil dimana disk image tidak bisa di-detach (Resource busy)
+      #     saat build DMG. Target 'dir' tidak pakai hdiutil sama sekali.
       # ─────────────────────────────────────────────────────────────
-      - name: Build Electron App (${{ matrix.arch }})
+      - name: Build Electron App Bundle (${{ matrix.arch }})
         timeout-minutes: 20
         run: |
-          echo "Building Electron for ${{ matrix.arch }}..."
-          # --publish never: nonaktifkan auto-publish ke GitHub saat build
-          # Publishing dilakukan terpisah di job create-release (hanya jika create_release=true)
-          # Tanpa ini, GH_TOKEN akan trigger publish loop → hdiutil retry → build gagal
-          npx electron-builder --mac ${{ matrix.electron_arch }} --publish never
+          echo "Building Electron app bundle for ${{ matrix.arch }}..."
+          # Build hanya .app bundle (tidak langsung jadi DMG/ZIP)
+          # --publish never: nonaktifkan semua publish/upload ke GitHub
+          npx electron-builder --mac dir ${{ matrix.electron_arch }} --publish never
+
+          echo ""
+          echo "=== App bundle output ==="
+          APP_DIR=$(find dist/ -name "*.app" -maxdepth 3 | head -1)
+          if [ -n "$APP_DIR" ]; then
+            echo "OK: $APP_DIR ($(du -sh "$APP_DIR" | cut -f1))"
+          else
+            echo "ERROR: .app bundle tidak ditemukan!"
+            ls -lhR dist/
+            exit 1
+          fi
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # ─────────────────────────────────────────────────────────────
+      # 11b. CREATE DMG dengan create-dmg (tidak pakai hdiutil internal)
+      #      create-dmg adalah Homebrew tool yang lebih reliable di macOS 15
+      # ─────────────────────────────────────────────────────────────
+      - name: Create DMG (${{ matrix.arch }})
+        timeout-minutes: 10
+        run: |
+          # Install create-dmg (ringan, sudah ada di Homebrew macOS runner)
+          brew install create-dmg 2>/dev/null || true
+
+          APP_DIR=$(find dist/ -name "*.app" -maxdepth 3 | head -1)
+          DMG_NAME="ShowLyricsApp-2.5.0-${{ matrix.artifact_suffix }}.dmg"
+          DMG_PATH="dist/$DMG_NAME"
+
+          echo "Creating DMG: $DMG_PATH from $APP_DIR"
+
+          create-dmg \
+            --volname "ShowLyricsApp" \
+            --window-pos 200 120 \
+            --window-size 540 380 \
+            --icon-size 100 \
+            --icon "ShowLyricsApp.app" 130 200 \
+            --hide-extension "ShowLyricsApp.app" \
+            --app-drop-link 410 200 \
+            "$DMG_PATH" \
+            "$APP_DIR" \
+            || {
+              echo "WARNING: create-dmg gagal, membuat ZIP sebagai fallback..."
+              cd dist
+              ZIP_NAME="ShowLyricsApp-2.5.0-${{ matrix.artifact_suffix }}.zip"
+              ditto -c -k --sequesterRsrc --keepParent "$(basename "$APP_DIR")" "$ZIP_NAME"
+              cd ..
+              echo "OK: Fallback ZIP dibuat: dist/$ZIP_NAME"
+            }
+
+          echo ""
+          echo "=== dist/ artifacts ==="
+          ls -lh dist/*.dmg dist/*.zip 2>/dev/null || ls -lh dist/
 
       # ─────────────────────────────────────────────────────────────
       # 12. VERIFY OUTPUT
       # ─────────────────────────────────────────────────────────────
       - name: Verify Build Output (${{ matrix.arch }})
         run: |
-          echo "=== dist/ artifacts ==="
+          echo "=== dist/ final artifacts ==="
           ls -lh dist/
-          DMG_FILE=$(find dist/ -name "*.dmg" | head -1)
+
+          # Cek DMG atau ZIP (salah satu harus ada)
+          DMG_FILE=$(find dist/ -maxdepth 1 -name "*.dmg" | head -1)
+          ZIP_FILE=$(find dist/ -maxdepth 1 -name "*.zip" | head -1)
+
           if [ -n "$DMG_FILE" ]; then
-            echo "SUCCESS DMG: $DMG_FILE ($(du -sh $DMG_FILE | cut -f1))"
+            echo "SUCCESS: DMG = $DMG_FILE ($(du -sh "$DMG_FILE" | cut -f1))"
+          elif [ -n "$ZIP_FILE" ]; then
+            echo "SUCCESS: ZIP = $ZIP_FILE ($(du -sh "$ZIP_FILE" | cut -f1))"
           else
-            echo "ERROR: No DMG found!"
+            echo "ERROR: Tidak ada DMG maupun ZIP di dist/!"
             exit 1
           fi
 
@@ -276,6 +334,7 @@ jobs:
           name: ShowLyricsApp-macOS-${{ matrix.artifact_suffix }}-DMG
           path: dist/*.dmg
           retention-days: 30
+          if-no-files-found: ignore
 
       - name: Upload ZIP (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
