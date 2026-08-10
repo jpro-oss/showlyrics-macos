@@ -15,6 +15,9 @@ __pycache__/
 backend/playback-engine
 backend/playback-engine-amd64
 backend/playback-engine-arm64
+backend/camera-service
+backend/camera-service-amd64
+backend/camera-service-arm64
 backend/ffmpeg
 backend/playback-engine.exe
 playback-engine.exe

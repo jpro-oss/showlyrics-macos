@@ -58,18 +58,23 @@ a = Analysis(
         # ── macOS Binaries (tanpa .exe) ───────────────────────────────────
         ('ffmpeg',          '.'),          # FFmpeg macOS static binary
         ('playback-engine', '.'),          # Go engine macOS
-        # ── Application Assets ───────────────────────────────────────────
-        ('templates',       'templates'), # Jinja2 templates
-        ('static',          'static'),    # CSS, JS, images, wm.js
+        ('camera-service',  '.'),          # WebRTC camera service macOS
+        # ── Application Assets & PyArmor Runtime ─────────────────────────
+        ('templates',              'templates'), # Jinja2 templates
+        ('static',                 'static'),    # CSS, JS, images, wm.js
+        ('pyarmor_runtime_000000', 'pyarmor_runtime_000000') if os.path.exists('pyarmor_runtime_000000') else ('.', '.'),
     ] + av_datas + fitz_datas + fastapi_datas + uvicorn_datas +
       pydantic_datas + crypto_datas + requests_datas + psutil_datas +
       pptx_datas + pil_datas,
 
     hiddenimports=[
+        # ── PyArmor Obfuscation Runtime ──────────────────────────────────
+        'pyarmor_runtime_000000',
+
         # ── App Modules ───────────────────────────────────────────────────
         'background_tasks', 'config', 'connection_manager',
-        'license_check', 'license_core', 'middleware',
-        'presets', 'scripture', 'sender',
+        'license_check', 'license_core', 'access_check', 'access_core',
+        'middleware', 'presets', 'scripture', 'sender',
         'routes_media', 'routes_media_crud', 'routes_media_helper',
         'routes_media_stream', 'routes_media_thumb',
         'routes_pages', 'routes_service', 'routes_settings',
@@ -129,8 +134,6 @@ a = Analysis(
         'tkinter', '_tkinter',
         'win32api', 'win32con', 'win32com', 'win32com.client',
         'pywintypes', 'pythoncom', 'pywin32', 'winreg',
-        # ── PyArmor (skip — macOS compatibility release Q1=B) ─────────────
-        'pyarmor_runtime_000000',
         # ── GUI Frameworks tidak terpakai ─────────────────────────────────
         'PyQt5', 'PySide2', 'PySide6', 'PyQt6',
         # ── Stdlib tidak terpakai ─────────────────────────────────────────

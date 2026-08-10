@@ -23,6 +23,8 @@ process.env.SHOWLYRICS_SECRET = secretToken;
 const userDocs  = path.join(os.homedir(), 'Library', 'Application Support', 'ShowLyrics');
 const appFolder = userDocs;
 const tokenFile = path.join(appFolder, '.session_token');
+const settingsFile = path.join(appFolder, 'app_settings.json');
+let appWindowBgColor = '#000000';
 
 try {
   if (!fs.existsSync(appFolder)) fs.mkdirSync(appFolder, { recursive: true });
@@ -30,6 +32,17 @@ try {
   log('Secure session token stored at:', tokenFile);
 } catch (err) {
   logE('Failed to write session token:', err.message);
+}
+
+try {
+  if (fs.existsSync(settingsFile)) {
+    const data = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    if (data && typeof data.window_bg_color === 'string' && /^#([0-9A-Fa-f]{3}){1,2}$/.test(data.window_bg_color)) {
+      appWindowBgColor = data.window_bg_color;
+    }
+  }
+} catch (err) {
+  logE('Failed to read window_bg_color from app_settings.json:', err.message);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -265,13 +278,13 @@ app.whenReady().then(() => {
 
   // Auto-grant camera & microphone permission (default session)
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowed = ['camera', 'microphone', 'mediaStream', 'video', 'audio', 'media'];
-    callback(allowed.includes(permission));
+    callback(true);
   });
 
-  session.defaultSession.setDevicePermissionHandler((details) => {
-    return details.deviceType === 'camera' || details.deviceType === 'microphone';
-  });
+  session.defaultSession.setDevicePermissionHandler(() => true);
+
+  // setPermissionCheckHandler: return true untuk SEMUA permission
+  session.defaultSession.setPermissionCheckHandler(() => true);
 
   // ─────────────────────────────────────────────────────────────────────────
   // PROJECTOR SESSION — Renderer Process Isolation
@@ -286,13 +299,18 @@ app.whenReady().then(() => {
   //   ✓ Full thread priority untuk rendering video & CSS
   //   ✓ Cache tetap persist antar sesi (asset video ter-cache)
   //   ✓ Auth header tetap diinject via onBeforeSendHeaders projector session
-  const projectorFilter = { urls: ['http://localhost/*', 'http://127.0.0.1/*'] };
+  const projectorFilter = { urls: [
+    'http://localhost/*', 'http://127.0.0.1/*',
+    'ws://localhost/*',   'ws://127.0.0.1/*'
+  ]};
   const projectorSess = session.fromPartition('persist:sl-projector', { cache: true });
 
   projectorSess.webRequest.onBeforeSendHeaders(projectorFilter, (details, callback) => {
     if (
       details.url.startsWith('http://localhost:18888') ||
-      details.url.startsWith('http://127.0.0.1:18888')
+      details.url.startsWith('http://127.0.0.1:18888') ||
+      details.url.startsWith('ws://localhost:18888') ||
+      details.url.startsWith('ws://127.0.0.1:18888')
     ) {
       details.requestHeaders['X-ShowLyrics-Secret'] = secretToken;
     }
@@ -300,13 +318,12 @@ app.whenReady().then(() => {
   });
 
   projectorSess.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowed = ['camera', 'microphone', 'mediaStream', 'video', 'audio', 'media'];
-    callback(allowed.includes(permission));
+    callback(true);
   });
 
-  projectorSess.setDevicePermissionHandler((details) => {
-    return details.deviceType === 'camera' || details.deviceType === 'microphone';
-  });
+  projectorSess.setDevicePermissionHandler(() => true);
+
+  projectorSess.setPermissionCheckHandler(() => true);
 
   // Anti-sleep: tahan display & sistem agar tidak idle/sleep selama ibadah
   powerSaveBlocker.start('prevent-display-sleep');
@@ -343,6 +360,7 @@ function createMainWindow() {
     icon: path.join(__dirname, 'app.icns'),  // macOS: gunakan .icns
     show: false,
     autoHideMenuBar: true,
+    backgroundColor: appWindowBgColor,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -361,17 +379,22 @@ function createMainWindow() {
 
   // Auto-grant camera & microphone permission untuk window ini
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowed = ['camera', 'microphone', 'mediaStream', 'video', 'audio', 'media'];
-    callback(allowed.includes(permission));
+    callback(true);
   });
 
-  mainWindow.webContents.session.setDevicePermissionHandler((details) => {
-    return details.deviceType === 'camera' || details.deviceType === 'microphone';
-  });
+  mainWindow.webContents.session.setDevicePermissionHandler(() => true);
+
+  mainWindow.webContents.session.setPermissionCheckHandler(() => true);
 
   // Di macOS, setMenu(null) akan menghapus seluruh menu bar termasuk menu Quit.
   // Menu sudah diset via Menu.setApplicationMenu() di bagian bawah file ini.
   mainWindow.loadURL('http://localhost:18888');
+
+  // Kunci Electron zoom di 1.0 — CSS scale di frontend yang handle UI zoom,
+  // bukan Electron zoom (yang akan mempengaruhi layout internal secara unpredictable).
+  mainWindow.webContents.setZoomFactor(1.0);
+  mainWindow.webContents.setZoomLevel(0);
+  mainWindow.webContents.setVisualZoomLevelLimits(1, 1); // Cegah pinch-zoom/ctrl+scroll zoom
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -443,7 +466,7 @@ ipcMain.on('test-displays', () => {
       transparent: false,
       alwaysOnTop: true,
       autoHideMenuBar: true,
-      backgroundColor: '#000000',
+      backgroundColor: appWindowBgColor,
       webPreferences: {
         nodeIntegration: false,
         backgroundThrottling: false,
@@ -629,7 +652,7 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
       hasShadow: false,
       resizable: false,           // Projector tidak perlu di-resize
       movable: false,             // Projector tidak perlu dipindah
-      backgroundColor: '#000000', // Hitam sejak awal — tidak ada flash putih
+      backgroundColor: appWindowBgColor, // Sesuai setting user — tidak ada flash putih
       webPreferences: {
         partition: 'persist:sl-projector', // KRITIS: Dedicated renderer process — isolated dari controller
         nodeIntegration: false,
@@ -668,7 +691,7 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
     win.webContents.on('did-start-navigation', () => {
       win.webContents.insertCSS(`
         html, body {
-          background: #000 !important;
+          background: ${appWindowBgColor} !important;
           margin: 0 !important;
           padding: 0 !important;
         }
@@ -679,7 +702,7 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
       // CSS 1: Layout & visual dasar
       win.webContents.insertCSS(`
         html, body {
-          background: #000 !important;
+          background: ${appWindowBgColor} !important;
           cursor: none !important;
           overflow: hidden !important;
           user-select: none !important;
@@ -770,6 +793,24 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
       `).catch(() => {});
 
       applySavedResolutionForType(type);
+
+      // 🎥 BACKUP CAMERA PRE-WARM (Fallback Layer 2)
+      if (type === 'main' || type === 'lt') {
+        win.webContents.executeJavaScript(`
+          (function() {
+            'use strict';
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+            navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+              .then(function(s) {
+                s.getTracks().forEach(function(t) { t.stop(); });
+                console.log('[CamPrewarm-Main] Camera permission established (MAC).');
+              })
+              .catch(function(e) {
+                console.warn('[CamPrewarm-Main] Pre-warm failed (MAC):', e.name);
+              });
+          })();
+        `).catch(() => {});
+      }
     });
 
     // CATATAN: did-frame-finish-load subframe injection DIHAPUS.
@@ -856,6 +897,40 @@ ipcMain.on('set-output-resolution', (_event, { type, mode, width, height }) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IPC: SET CONTROLLER ZOOM (UI Scale — hanya controller window!)
+// Dipanggil dari renderer via electronAPI.setControllerZoom(factor)
+// Mengubah viewport layout secara nyata — konten mengisi seluruh window.
+// Projector window TIDAK disentuh (webContents-nya terpisah, dikunci di 1.0).
+// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.on('set-controller-zoom', (_event, factor) => {
+  factor = parseFloat(factor);
+  if (isNaN(factor) || factor < 0.5 || factor > 2.0) return; // Batas aman
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.setZoomFactor(factor);
+    log(`[UI ZOOM] Controller zoom set to ${factor}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: WINDOW BACKGROUND COLOR
+// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.on('set-window-background-color', (_event, colorHex) => {
+  if (typeof colorHex === 'string' && /^#([0-9A-Fa-f]{3}){1,2}$/.test(colorHex)) {
+    appWindowBgColor = colorHex;
+    log(`[WINDOW BG COLOR] Dynamic background color set to ${colorHex}`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setBackgroundColor(colorHex);
+    }
+    Object.values(projectorWindows).forEach((win) => {
+      if (win && !win.isDestroyed()) {
+        win.setBackgroundColor(colorHex);
+        win.webContents.insertCSS(`html, body { background: ${colorHex} !important; }`).catch(() => {});
+      }
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // IPC: CAMERA PERMISSION
 // ─────────────────────────────────────────────────────────────────────────────
 ipcMain.handle('request-camera-permission', async () => {
@@ -876,4 +951,63 @@ ipcMain.on('relaunch-app', () => {
   log('Relaunch requested — restarting app...');
   app.relaunch();
   app.exit(0);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: EXPORT SCHEDULE BUNDLE (WITH DIALOG FOR ELECTRON SAVING)
+// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.handle('export-schedule-electron', async (event, { schedName }) => {
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save Schedule Bundle',
+    defaultPath: `${schedName}_bundle.zip`,
+    filters: [
+      { name: 'ZIP Archives', extensions: ['zip'] }
+    ]
+  });
+
+  if (canceled || !filePath) {
+    return { status: 'canceled' };
+  }
+
+  return new Promise((resolve) => {
+    const file = fs.createWriteStream(filePath);
+    
+    const options = {
+      hostname: '127.0.0.1',
+      port: 18888,
+      path: `/api/export_bundle/${encodeURIComponent(schedName)}`,
+      method: 'GET',
+      headers: {
+        'X-ShowLyrics-Secret': secretToken
+      }
+    };
+
+    const request = http.get(options, (response) => {
+      if (response.statusCode !== 200) {
+        file.close();
+        try { fs.unlinkSync(filePath); } catch (e) {}
+        resolve({ status: 'error', message: `Server returned status code ${response.statusCode}` });
+        return;
+      }
+      
+      response.pipe(file);
+      
+      file.on('finish', () => {
+        file.close();
+        resolve({ status: 'success', filePath });
+      });
+      
+      file.on('error', (err) => {
+        file.close();
+        try { fs.unlinkSync(filePath); } catch (e) {}
+        resolve({ status: 'error', message: err.message });
+      });
+    });
+    
+    request.on('error', (err) => {
+      file.close();
+      try { fs.unlinkSync(filePath); } catch (e) {}
+      resolve({ status: 'error', message: err.message });
+    });
+  });
 });

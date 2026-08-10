@@ -1106,26 +1106,51 @@
             <div style="font-size: 0.65em; color: #888; margin-top: 8px;">Font, Animation, Motion, Color & Effects</div>
         </div>
 
-        <div class="control-group"
-            style="background: #111; border: 1px solid #ffc107; padding: 10px; border-radius: 6px; margin-bottom: 20px;">
-            <label style="color: #ffc107; font-weight: bold; margin-bottom: 10px; display: block;">🌍 BILINGUAL
-                FONT</label>
-            <div style="display: flex; gap: 15px; align-items: center;">
-                <div style="flex: 1;">
-                    <label style="color: #aaa; font-size: 0.7em; margin-bottom: 5px;">Sub-Text Size: <span
-                            id="val-sub-size" style="color:#fff;">0.6em</span></label>
+        <div class="control-group bilingual-font-panel">
+            <label class="bilingual-font-label">&#127757; BILINGUAL FONT</label>
+
+            <div class="bilingual-font-row">
+                <div class="bilingual-font-col">
+                    <label class="bilingual-font-sublabel">Sub-Text Size: <span id="val-sub-size">0.6em</span></label>
                     <input type="range" id="sub-size-input" min="0.3" max="1.0" step="0.05" value="0.6"
-                        oninput="document.getElementById('val-sub-size').innerText=this.value+'em'; updateSettings()">
+                        oninput="onSubSizeInput(this)">
                 </div>
-                <div style="flex: 0 0 60px;">
-                    <label style="color: #aaa; font-size: 0.7em; margin-bottom: 5px;">Color</label>
-                    <input type="color" id="sub-color-input" value="#ffc107"
-                        style="height: 30px; width: 100%; padding: 0; cursor: pointer;" onchange="updateSettings()">
+                <div class="bilingual-font-color-col">
+                    <label class="bilingual-font-sublabel">Color</label>
+                    <input type="color" id="sub-color-input" value="#ffc107" class="bilingual-color-picker" onchange="updateSettings()">
                 </div>
             </div>
-            <small style="color: #888; font-size: 0.65em; display: block; margin-top: 8px;">*Use brackets <b>()</b> to
-                separate languages. (Example: Father You Are Good)</small>
+
+            <div class="bilingual-font-row bilingual-style-row">
+                <label class="bilingual-font-sublabel">Sub-Text Style</label>
+                <div class="bilingual-style-controls">
+                    <button id="sub-btn-bold" class="te-btn bilingual-style-btn" onclick="toggleSubFormat('bold')">B</button>
+                    <button id="sub-btn-italic" class="te-btn bilingual-style-btn bilingual-btn-italic" onclick="toggleSubFormat('italic')">I</button>
+                    <button id="sub-btn-underline" class="te-btn bilingual-style-btn bilingual-btn-underline" onclick="toggleSubFormat('underline')">U</button>
+                </div>
+            </div>
+
+            <div class="bilingual-font-row bilingual-font-sec-row">
+                <div class="bilingual-font-col">
+                    <div class="bilingual-font-header">
+                        <label class="bilingual-font-sublabel">Sub-Text Font</label>
+                        <label class="bilingual-follow-label">
+                            <input type="checkbox" id="sub-font-follow" class="bilingual-follow-check" onchange="handleSubFontFollowChange()" checked>
+                            Follow Main Font
+                        </label>
+                    </div>
+                    <div class="bilingual-font-picker-wrap">
+                        <input type="text" id="sub-font-input" class="te-input bilingual-font-input"
+                            list="sub-font-datalist" placeholder="Type font name..."
+                            oninput="updateSettings()" disabled>
+                        <datalist id="sub-font-datalist"></datalist>
+                    </div>
+                </div>
+            </div>
+
+            <small class="bilingual-hint">*Use brackets <b>()</b> to separate languages. (Example: Father You Are Good)</small>
         </div>
+
 
 
     </div>
@@ -1372,31 +1397,47 @@
                     <hr style="border: none; border-top: 1px dashed #333; margin: 0;">
 
                     <div>
-                        <label
-                            style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">🔤
-                            TEXT ALIGN & H-PADDING (Left/Right Align)</label>
-                        <div style="display: flex; gap: 10px; align-items: center;">
-                            <div
-                                style="display: flex; background: #111; border: 1px solid #444; border-radius: 6px; overflow: hidden; flex: 1;">
-                                <button id="btn-lt-align-left" class="preset-btn"
-                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0;"
-                                    onclick="setLTAlign('left')">LEFT</button>
-                                <button id="btn-lt-align-center" class="preset-btn"
-                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0; background: #007bff; color: white;"
-                                    onclick="setLTAlign('center')">CENTER</button>
-                                <button id="btn-lt-align-right" class="preset-btn"
-                                    style="border: none; border-radius: 0; margin: 0; padding: 8px 0;"
-                                    onclick="setLTAlign('right')">RIGHT</button>
+                        <div style="display: flex; gap: 10px; align-items: flex-start;">
+                            <div style="flex: 1.5;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">TEXT ALIGN</label>
+                                <div id="lt-align-container"
+                                    style="display: flex; background: #111; border: 1px solid #444; border-radius: 4px; overflow: hidden; height: 35px;">
+                                    <button id="btn-lt-align-left" class="preset-btn"
+                                        style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 0; flex: 1; height: 100%; font-size: 0.75em;"
+                                        onclick="setLTAlign('left')">LEFT</button>
+                                    <button id="btn-lt-align-center" class="preset-btn"
+                                        style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 0; flex: 1; height: 100%; background: #007bff; color: white; font-size: 0.75em;"
+                                        onclick="setLTAlign('center')">CENTER</button>
+                                    <button id="btn-lt-align-right" class="preset-btn"
+                                        style="border: none; border-radius: 0; margin: 0; padding: 0; flex: 1; height: 100%; font-size: 0.75em;"
+                                        onclick="setLTAlign('right')">RIGHT</button>
+                                </div>
                             </div>
 
-                            <div
-                                style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 6px; overflow: hidden; height: 35px;">
-                                <span
-                                    style="font-size: 0.75em; color: #666; padding: 0 5px 0 10px; font-weight: bold;">PAD:</span>
-                                <input type="number" id="lt-pad-x"
-                                    style="width: 50px; height: 100%; padding: 0; text-align: center; background: transparent; border: none; color: white; font-weight: bold; outline: none;"
-                                    value="50" onchange="markLtCustom(); sendLTConfig()">
-                                <span style="font-size: 0.75em; color: #666; padding-right: 10px;">px</span>
+                            <div style="flex: 1;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">TEXT CASE</label>
+                                <select id="lt-text-transform" class="compact-input"
+                                    style="font-size: 0.85em; padding: 0 6px; border: 1px solid #444; width: 100%; height: 35px; background: #222; color: #fff; outline: none; cursor: pointer; border-radius: 4px;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                                    <option value="none">None</option>
+                                    <option value="capitalize">Aa</option>
+                                    <option value="uppercase">AA</option>
+                                    <option value="lowercase">aa</option>
+                                </select>
+                            </div>
+
+                            <div style="flex: 1;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">H-PADDING</label>
+                                <div id="lt-pad-x-container"
+                                    style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 5px; height: 35px;">
+                                    <input type="number" id="lt-pad-x" class="compact-input"
+                                        style="border: none; padding: 0; background: transparent; text-align: center; font-size: 0.9em; width: 100%; outline: none; color: white; font-weight: bold;"
+                                        value="50" onchange="markLtCustom(); sendLTConfig()">
+                                    <span style="font-size: 0.75em; color: #666; padding-right: 5px;">px</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1492,14 +1533,14 @@
                                     <span style="color: #666; font-size: 0.8em; margin-left: 3px;">%</span>
                                 </div>
                             </div>
-                            <div style="flex: 1;">
+                            <div id="lt-banner-color-container" style="flex: 1;">
                                 <label
                                     style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold; text-align: center;">COLOR</label>
                                 <input type="color" id="lt-banner-color" value="#000000" title="Banner Color"
                                     style="width: 100%; height: 33px; padding: 0; border: 1px solid #444; border-radius: 4px; cursor: pointer;"
                                     onchange="markLtCustom(); sendLTConfig()">
                             </div>
-                            <div style="flex: 1.5;">
+                            <div id="lt-banner-opacity-container" style="flex: 1.5;">
                                 <label
                                     style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">OPACITY</label>
                                 <div
@@ -1607,11 +1648,13 @@
                     <div style="flex:1">
                         <label>Max Text Size</label>
                         <div style="display:flex; gap:5px; align-items:center;">
-                            <input type="number" id="fb-curr-size" value="250" onchange="markFbCustom(); sendFBConfig()"
-                                style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            <div id="fb-curr-size-container" style="display:inline-block;">
+                                <input type="number" id="fb-curr-size" value="250" onchange="markFbCustom(); sendFBConfig()"
+                                    style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            </div>
                             <label
                                 style="font-size: 0.8em; color: #fff; display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; user-select: none;">
-                                <input type="checkbox" id="fb-curr-auto" onchange="markFbCustom(); sendFBConfig()"
+                                <input type="checkbox" id="fb-curr-auto" onchange="toggleFBAutoUI(); markFbCustom(); sendFBConfig()"
                                     checked> AUTO
                             </label>
                         </div>
@@ -1623,11 +1666,13 @@
                     <div style="flex:1">
                         <label>Max Next Size (px)</label>
                         <div style="display:flex; gap:5px; align-items:center;">
-                            <input type="number" id="fb-next-size" value="100" onchange="markFbCustom(); sendFBConfig()"
-                                style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            <div id="fb-next-size-container" style="display:inline-block;">
+                                <input type="number" id="fb-next-size" value="100" onchange="markFbCustom(); sendFBConfig()"
+                                    style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            </div>
                             <label
                                 style="font-size: 0.8em; color: #fff; display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; user-select: none;">
-                                <input type="checkbox" id="fb-next-auto" onchange="markFbCustom(); sendFBConfig()"
+                                <input type="checkbox" id="fb-next-auto" onchange="toggleFBAutoUI(); markFbCustom(); sendFBConfig()"
                                     checked> AUTO
                             </label>
                         </div>
@@ -1635,9 +1680,24 @@
                     <div style="flex:1"><label>Color</label><input type="color" id="fb-next-color" value="#888888"
                             style="height:30px; width:100%" onchange="markFbCustom(); sendFBConfig()"></div>
                 </div>
-                <label>Background Color</label>
-                <input type="color" id="fb-bg-color" value="#000000" style="width:100%; height:30px;"
-                    onchange="markFbCustom(); sendFBConfig()">
+                <div class="lt-control-row">
+                    <div style="flex:1">
+                        <label>Background Color</label>
+                        <input type="color" id="fb-bg-color" value="#000000" style="width:100%; height:30px;"
+                            onchange="markFbCustom(); sendFBConfig()">
+                    </div>
+                    <div style="flex:1">
+                        <label>Text Case</label>
+                        <select id="fb-text-transform"
+                            style="width:100%; height:30px; background:#222; color:#fff; border:1px solid #444; border-radius:4px; padding:0 5px; font-size:0.85em; outline:none; cursor:pointer;"
+                            onchange="markFbCustom(); sendFBConfig()">
+                            <option value="none">None</option>
+                            <option value="capitalize">Aa</option>
+                            <option value="uppercase">AA</option>
+                            <option value="lowercase">aa</option>
+                        </select>
+                    </div>
+                </div>
 
                 <hr style="border-color: #333; margin: 15px 0;">
 
@@ -1712,7 +1772,7 @@
                                     <label
                                         style="font-size: 0.65em; color: #888; display: block; margin-bottom: 2px; font-weight: bold;">TITLE
                                         (PX)</label>
-                                    <div style="display: flex; gap: 4px; align-items: center;">
+                                    <div id="rundown-mini-title-container" style="display: flex; gap: 4px; align-items: center;">
                                         <input type="number" id="rundown-mini-title-size" value="80" min="10" max="300"
                                             class="compact-input"
                                             style="width: 55px; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
@@ -1747,7 +1807,7 @@
                                     <label
                                         style="font-size: 0.65em; color: #888; display: block; margin-bottom: 2px; font-weight: bold;">TITLE
                                         (PX)</label>
-                                    <div style="display: flex; gap: 4px; align-items: center;">
+                                    <div id="rundown-full-title-container" style="display: flex; gap: 4px; align-items: center;">
                                         <input type="number" id="rundown-full-title-size" value="190" min="10" max="300"
                                             class="compact-input"
                                             style="width: 55px; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
@@ -2177,8 +2237,9 @@
                             </div>
                             <div class="te-control">
                                 <label class="te-label">TRANSITION ANIMATION</label>
-                                <select id="trans-input" class="te-select" onchange="updateTextPreview()">
+                                <select id="trans-input" class="te-select" onchange="updateTextPreview(); handleTransitionChange()">
                                     <optgroup label="Standard">
+                                        <option value="cut">&#9889; CUT (Instant)</option>
                                         <option value="fade">Fade (Standard)</option>
                                         <option value="blur" selected>Cinematic Blur (Smooth)</option>
                                         <option value="mask">Mask Rise (Clean)</option>
@@ -2538,6 +2599,67 @@
                 <button class="close-btn" onclick="safeCloseModal('settings-modal')">✖</button>
             </div>
 
+
+            <div class="control-group" style="margin-top: 15px;">
+                <label style="color: #aaa; font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🔊 AUDIO ROUTING</span>
+                    <small style="color:#555; font-size:0.65em; font-weight:normal;">Routes audio output &amp; monitor</small>
+                </label>
+
+                <!-- OUTPUT AUDIO -->
+                <div style="margin-bottom: 10px;">
+                    <label style="color:#888; font-size:0.7em; display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">🎤 Output Audio (Jemaat)</label>
+                    <select id="audio-output-select" class="compact-input"
+                        style="width:100%; font-size:0.9em; padding:8px; background:#1e1e24; color:#fff; border:1px solid rgba(255,255,255,0.12); border-radius:6px; cursor:pointer;"
+                        onchange="saveAudioSettings()">
+                        <option value="default">🔊 Default System Audio</option>
+                    </select>
+                    <small style="color:#555; font-size:0.65em; display:block; margin-top:3px;">Audio yang didengar jemaat saat live output aktif.</small>
+                </div>
+
+                <!-- MONITOR AUDIO TOGGLE -->
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; padding:8px 10px; background:rgba(255,255,255,0.03); border-radius:6px; border:1px solid rgba(255,255,255,0.06);">
+                    <input type="checkbox" id="audio-monitor-toggle" style="width:16px; height:16px; cursor:pointer; accent-color:#00e5ff;"
+                        onchange="onAudioMonitorToggle()">
+                    <div>
+                        <label for="audio-monitor-toggle" style="color:#ccc; font-size:0.8em; font-weight:bold; cursor:pointer; display:block;">🎧 Monitor Audio (Operator Preview)</label>
+                        <small style="color:#555; font-size:0.65em;">Preview audio untuk operator — termasuk preview library &amp; live output.</small>
+                    </div>
+                </div>
+
+                <!-- MONITOR DEVICE (shown only when toggle is ON) -->
+                <div id="audio-monitor-device-row" style="display:none; margin-bottom:4px;">
+                    <label style="color:#888; font-size:0.7em; display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Monitor Device</label>
+                    <select id="audio-monitor-select" class="compact-input"
+                        style="width:100%; font-size:0.9em; padding:8px; background:#1e1e24; color:#fff; border:1px solid rgba(0,229,255,0.2); border-radius:6px; cursor:pointer;"
+                        onchange="saveAudioSettings()">
+                        <option value="default">🔊 Default System Audio</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-group" style="margin-top: 15px;">
+                <label style="color: #aaa; font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🔍 UI ZOOM MODE</span>
+                    <button onclick="resetUIScale()" title="Reset to 100%" style="background: transparent; border: 1px solid #444; color: #888; padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 0.7em; line-height: 1.6;">RESET 100%</button>
+                </label>
+
+                <select id="ui-scale-select" class="compact-input"
+                    style="width: 100%; font-size: 0.9em; padding: 8px; background: #1e1e24; color: #fff; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; cursor: pointer;"
+                    onchange="onUIScaleChange(this.value)">
+                    <option value="0.6">60%</option>
+                    <option value="0.75">75%</option>
+                    <option value="0.9">90%</option>
+                    <option value="1" selected>100% — Default</option>
+                    <option value="1.1">110%</option>
+                    <option value="1.25">125%</option>
+                    <option value="1.5">150%</option>
+                </select>
+                <small style="color: #888; font-size: 0.65em; display: block; margin-top: 5px;">
+                    Scale the Controller UI. Saved automatically — applied on next launch. Does not affect Projector Output.
+                </small>
+            </div>
+
             <div class="control-group" style="margin-top: 15px;">
                 <label style="color: #aaa; font-weight: bold;">Video Crossfade Transition <span id="val-bg-trans"
                         style="color: #00e5ff; margin-left: 5px;">0.5s</span></label>
@@ -2567,6 +2689,26 @@
                     <option value="cover">FILL (Fill screen, auto-crop)</option>
                     <option value="fill">STRETCH (Force full, stretch ratio)</option>
                 </select>
+            </div>
+
+            <div class="control-group win-bg-color-group">
+                <label class="win-bg-color-label">
+                    <span>🎨 WINDOWS BACKGROUND COLOR</span>
+                </label>
+                <div class="win-bg-color-inputs">
+                    <input type="color" id="window-bg-color-picker" value="#000000" class="win-bg-color-picker" oninput="onWindowBgColorInput(this.value, false)" onchange="onWindowBgColorInput(this.value, true)">
+                    <input type="text" id="window-bg-color-hex" value="#000000" placeholder="#000000" maxlength="7" class="compact-input win-bg-color-hex" oninput="onWindowBgColorInput(this.value, false)" onchange="onWindowBgColorInput(this.value, true)">
+                </div>
+                <div class="win-bg-color-presets">
+                    <button type="button" onclick="onWindowBgColorInput('#000000', true)" class="win-bg-preset-btn preset-black" title="Hitam (#000000)">Hitam</button>
+                    <button type="button" onclick="onWindowBgColorInput('#003366', true)" class="win-bg-preset-btn preset-blue" title="Biru Laut (#003366)">Biru Laut</button>
+                    <button type="button" onclick="onWindowBgColorInput('#00FF00', true)" class="win-bg-preset-btn preset-green" title="Green Screen (#00FF00)">Green Screen</button>
+                    <button type="button" onclick="onWindowBgColorInput('#FF0000', true)" class="win-bg-preset-btn preset-red" title="Pure Merah (#FF0000)">Pure Merah</button>
+                    <button type="button" onclick="onWindowBgColorInput('#808080', true)" class="win-bg-preset-btn preset-gray" title="Abu-abu (#808080)">Abu-abu</button>
+                </div>
+                <small class="win-bg-color-help">
+                    Set custom background color for Electron window &amp; output display.
+                </small>
             </div>
 
             <div class="control-group" style="margin-top: 15px;">

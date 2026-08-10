@@ -41,6 +41,7 @@ const mediaDevicesProxy = {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getDisplays: () => ipcRenderer.invoke('get-displays'),
+  exportScheduleElectron: (schedName) => ipcRenderer.invoke('export-schedule-electron', { schedName }),
   // Generic Toggle Function
   toggleProjection: (data) => ipcRenderer.send('toggle-projection', data),
   // Listener kalau window ketutup sendiri
@@ -64,4 +65,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Expose webUtils to get real file paths from File objects in drag-and-drop
   getFilePath: (file) => webUtils ? webUtils.getPathForFile(file) : '',
+
+  // 🔍 UI ZOOM: Set zoom factor pada controller window via main process
+  // Mengubah layout viewport secara nyata (bukan CSS transform).
+  // Projector window tidak terpengaruh — webContents-nya terpisah dan dikunci di 1.0.
+  setControllerZoom: (factor) => ipcRenderer.send('set-controller-zoom', factor),
+
+  // 🎨 WINDOW BACKGROUND COLOR: Ubah warna background window Electron secara dynamic & realtime
+  setWindowBackgroundColor: (color) => ipcRenderer.send('set-window-background-color', color),
 });

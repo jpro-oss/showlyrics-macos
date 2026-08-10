@@ -268,7 +268,7 @@
         }
 
         .launch-card {
-            background: var(--bg-panel);
+            background: rgba(24, 24, 27, 0.95);
             border: 1px solid var(--border);
             border-radius: 20px;
             padding: 30px 40px;
@@ -281,8 +281,6 @@
             transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
             position: relative;
             overflow: hidden;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
         }
 
         .launch-card::before {
@@ -462,7 +460,7 @@
         }
 
         .doc-item {
-            background: var(--bg-panel);
+            background: rgba(24, 24, 27, 0.95);
             border: 1px solid var(--border);
             border-radius: 16px;
             padding: 24px;
@@ -472,7 +470,6 @@
             transition: all 0.3s ease;
             opacity: 0;
             transform: translateY(30px);
-            backdrop-filter: blur(10px);
         }
 
         .doc-item.visible {
@@ -623,8 +620,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(5px);
+            background: rgba(5, 5, 8, 0.92);
             z-index: 99999;
             display: none;
             align-items: center;
@@ -791,6 +787,106 @@
             font-family: monospace;
             font-size: 0.9em;
         }
+
+        /* =========================================
+           MACOS BETA ACCESS MODAL STYLING
+           ========================================= */
+        .beta-modal-card {
+            max-width: 650px;
+            height: auto;
+            max-height: 85vh;
+            border-color: rgba(59, 130, 246, 0.3);
+            box-shadow: 0 0 50px rgba(59, 130, 246, 0.15), 0 20px 60px rgba(0, 0, 0, 0.8);
+        }
+
+        .beta-header h2 {
+            font-size: 1.15rem;
+            color: #fff;
+            letter-spacing: -0.01em;
+        }
+
+        .beta-body {
+            padding: 24px 30px;
+        }
+
+        .beta-input-container {
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .beta-input-container label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .beta-input-box {
+            display: flex;
+            gap: 12px;
+        }
+
+        .beta-input-box input {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-hover);
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: #fff;
+            font-size: 1.2rem;
+            font-weight: 700;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            font-family: monospace;
+            outline: none;
+            transition: 0.2s;
+        }
+
+        .beta-input-box input:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+        }
+
+        .beta-input-box button {
+            background: var(--accent-blue);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 0 24px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .beta-input-box button:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+        }
+
+        .beta-input-box button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .beta-feedback {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-top: 8px;
+            min-height: 20px;
+        }
+
+        .beta-feedback.error {
+            color: #ef4444;
+        }
+
+        .beta-feedback.success {
+            color: #10b981;
+        }
     </style>
     <style>
         .update-toast {
@@ -829,12 +925,10 @@
             max-width: 90vw;
             padding: 40px;
             text-align: center;
-            background: rgba(9, 9, 11, 0.95);
+            background: rgba(12, 12, 16, 0.98);
             border: 1px solid rgba(220, 53, 69, 0.4);
             border-top: 5px solid #dc3545;
             box-shadow: 0 0 100px rgba(0, 0, 0, 0.9), 0 0 40px rgba(220, 53, 69, 0.1);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
             animation: zoomInCentered 0.6s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
@@ -888,7 +982,7 @@
                     <img src="/static/logo.png" class="brand-logo" alt="Logo">
                     <div class="brand-text">
                         <h1 class="brand-name">ShowLyrics</h1>
-                        <span class="brand-ver">Engine Build V.1.35</span>
+                        <span class="brand-ver">Engine Build V.1.35.3 (BETA VERSION)</span>
                     </div>
                 </div>
 
@@ -917,7 +1011,8 @@
             <div class="launch-grid">
                 <div style="position: relative; width: 100%;">
                     <div class="glow-effect"></div>
-                    <a href="/control" class="launch-card mode-reguler">
+                    <a href="/control" onclick="handleLaunchControl(event)" id="btn-launch-control"
+                        class="launch-card mode-reguler">
                         <div class="card-icon">🖥️</div>
                         <div class="card-text">
                             <h2 class="card-title lang-id">SHOWLYRICS CONTROLLER</h2>
@@ -1730,6 +1825,85 @@
             </div>
         </div>
     </div>
+
+    <!-- =========================================
+         MACOS BILINGUAL BETA ACCESS MODAL (INDEX.HTML)
+         ========================================= -->
+    <div id="mac-beta-modal" class="manual-modal-overlay">
+        <div class="manual-modal-content beta-modal-card">
+            <div class="manual-header beta-header">
+                <div class="manual-header-left">
+                    <h2 class="lang-id"> ShowLyrics macOS — Closed Beta Access</h2>
+                    <h2 class="lang-en"> ShowLyrics macOS — Closed Beta Access</h2>
+                </div>
+
+                <div class="header-badges">
+                    <div class="lang-tabs">
+                        <button class="lang-tab active" onclick="switchLang('id')" id="tab-id-modal">ID</button>
+                        <button class="lang-tab" onclick="switchLang('en')" id="tab-en-modal">EN</button>
+                    </div>
+                    <button class="manual-close-btn" onclick="closeBetaModal()">✖</button>
+                </div>
+            </div>
+
+            <div class="manual-body beta-body">
+                <!-- INDONESIAN CONTENT -->
+                <div class="lang-id">
+                    <div class="manual-highlight">
+                        <b>Selamat datang di ShowLyrics untuk macOS!</b> Versi ini masih dalam tahap Beta dan hanya
+                        tersedia untuk pengguna yang sudah terdaftar.
+                    </div>
+                    <p>
+                        Untuk mulai menggunakan <b>ShowLyrics APP</b>, masukkan <b>Kode Akses Beta (XXXXX)</b> yang
+                        sudah diberikan oleh tim ShowLyrics. Contoh: <code>MAC01</code>
+                    </p>
+                    <ul>
+                        <li>Satu kode hanya dapat digunakan pada 1 perangkat macOS.</li>
+                        <li>Setelah berhasil diaktifkan, kode akan tersimpan otomatis di perangkat dan tidak perlu
+                            dimasukkan lagi.</li>
+                        <li>Akses Beta hanya dapat digunakan selama kode masih aktif dan belum melewati masa berlaku.
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- ENGLISH CONTENT -->
+                <div class="lang-en">
+                    <div class="manual-highlight">
+                        <b>Welcome to ShowLyrics for macOS!</b> This version is currently in Beta and is only available
+                        for registered testers.
+                    </div>
+                    <p>
+                        To start using the <b>ShowLyrics APP</b>, please enter the <b>Beta Access Code (XXXXX)</b>
+                        provided by the ShowLyrics team. Example: <code>MAC01</code>
+                    </p>
+                    <ul>
+                        <li>Each access code can only be used on 1 macOS device.</li>
+                        <li>Once successfully activated, the code is saved automatically on your device and does not
+                            need to be entered again.</li>
+                        <li>Beta Access is available as long as the code remains active and within its validity period.
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- FORM INPUT KODE AKSES BETA (5 KARAKTER) -->
+                <div class="beta-input-container">
+                    <label for="beta-access-input" class="lang-id">Masukkan Kode Akses Beta (5 Karakter):</label>
+                    <label for="beta-access-input" class="lang-en">Enter Beta Access Code (5 Characters):</label>
+
+                    <div class="beta-input-box">
+                        <input type="text" id="beta-access-input" placeholder="XXXXX" maxlength="5" autocomplete="off"
+                            spellcheck="false"
+                            oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, '')">
+                        <button id="btn-submit-beta" onclick="submitBetaAccessCode()">
+                            <span class="lang-id">Aktivasi Akses</span>
+                            <span class="lang-en">Activate Access</span>
+                        </button>
+                    </div>
+                    <div id="beta-feedback-msg" class="beta-feedback"></div>
+                </div>
+            </div>
+        </div>
+    </div>
     <div id="update-container"></div>
 
     <script>
@@ -1737,15 +1911,26 @@
         // --- TRANSLATION SWITCHER (CSS TOGGLE)
         // ==========================================
         function switchLang(lang) {
-            // Kita bermain dengan root body class, ZERO inline css per-element!
             if (lang === 'en') {
                 document.body.classList.add('is-english');
-                document.getElementById('tab-id').classList.remove('active');
-                document.getElementById('tab-en').classList.add('active');
+                const tId = document.getElementById('tab-id');
+                const tEn = document.getElementById('tab-en');
+                const tIdM = document.getElementById('tab-id-modal');
+                const tEnM = document.getElementById('tab-en-modal');
+                if (tId) tId.classList.remove('active');
+                if (tEn) tEn.classList.add('active');
+                if (tIdM) tIdM.classList.remove('active');
+                if (tEnM) tEnM.classList.add('active');
             } else {
                 document.body.classList.remove('is-english');
-                document.getElementById('tab-en').classList.remove('active');
-                document.getElementById('tab-id').classList.add('active');
+                const tId = document.getElementById('tab-id');
+                const tEn = document.getElementById('tab-en');
+                const tIdM = document.getElementById('tab-id-modal');
+                const tEnM = document.getElementById('tab-en-modal');
+                if (tEn) tEn.classList.remove('active');
+                if (tId) tId.classList.add('active');
+                if (tEnM) tEnM.classList.remove('active');
+                if (tIdM) tIdM.classList.add('active');
             }
         }
 
@@ -1790,10 +1975,125 @@
         }, observerOptions);
 
         document.querySelectorAll('.doc-item').forEach(item => { observer.observe(item); });
+
+        // ==========================================
+        // --- MACOS BETA ACCESS GATE & MODAL LOGIC
+        // ==========================================
+        async function handleLaunchControl(event) {
+            event.preventDefault();
+            const btn = document.getElementById('btn-launch-control');
+            if (btn) btn.style.opacity = '0.7';
+
+            try {
+                const res = await fetch('/api/access/status');
+                const data = await res.json();
+                if (btn) btn.style.opacity = '1';
+
+                if (data.status === 'active') {
+                    window.location.href = '/control';
+                } else {
+                    openBetaModal();
+                }
+            } catch (err) {
+                if (btn) btn.style.opacity = '1';
+                openBetaModal();
+            }
+        }
+
+        function openBetaModal() {
+            const modal = document.getElementById('mac-beta-modal');
+            if (modal) {
+                modal.classList.add('active');
+                document.body.classList.add('no-scroll');
+            }
+            const input = document.getElementById('beta-access-input');
+            if (input) {
+                input.value = '';
+                setTimeout(() => input.focus(), 100);
+            }
+            const feedback = document.getElementById('beta-feedback-msg');
+            if (feedback) {
+                feedback.className = 'beta-feedback';
+                feedback.textContent = '';
+            }
+        }
+
+        function closeBetaModal() {
+            const modal = document.getElementById('mac-beta-modal');
+            if (modal) {
+                modal.classList.remove('active');
+                document.body.classList.remove('no-scroll');
+            }
+        }
+
+        const betaModalEl = document.getElementById('mac-beta-modal');
+        if (betaModalEl) {
+            betaModalEl.addEventListener('click', function (e) {
+                if (e.target === this) closeBetaModal();
+            });
+        }
+
+        async function submitBetaAccessCode() {
+            const input = document.getElementById('beta-access-input');
+            const btn = document.getElementById('btn-submit-beta');
+            const feedback = document.getElementById('beta-feedback-msg');
+
+            if (!input || !feedback) return;
+            const rawKey = input.value.trim().toUpperCase();
+
+            if (rawKey.length !== 5) {
+                feedback.className = 'beta-feedback error';
+                const isEn = document.body.classList.contains('is-english');
+                feedback.textContent = isEn
+                    ? 'Beta Access Code must be exactly 5 characters.'
+                    : 'Kode Akses Beta harus tepat 5 karakter (contoh: MAC01).';
+                return;
+            }
+
+            if (btn) btn.disabled = true;
+            feedback.className = 'beta-feedback';
+            const isEn = document.body.classList.contains('is-english');
+            feedback.textContent = isEn ? 'Verifying access code...' : 'Memverifikasi kode akses...';
+
+            try {
+                const res = await fetch('/api/access/activate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ access_key: rawKey })
+                });
+
+                const data = await res.json();
+                if (btn) btn.disabled = false;
+
+                if (data.status === 'success') {
+                    feedback.className = 'beta-feedback success';
+                    feedback.textContent = data.message || (isEn ? 'Access granted!' : 'Akses berhasil diberikan!');
+                    setTimeout(() => {
+                        closeBetaModal();
+                        window.location.href = '/control';
+                    }, 800);
+                } else {
+                    feedback.className = 'beta-feedback error';
+                    feedback.textContent = data.message || (isEn ? 'Invalid access code.' : 'Kode Akses tidak valid.');
+                }
+            } catch (err) {
+                if (btn) btn.disabled = false;
+                feedback.className = 'beta-feedback error';
+                feedback.textContent = isEn ? 'Network error. Please try again.' : 'Gagal menghubungi server. Periksa koneksi internet.';
+            }
+        }
+
+        // Auto-trigger modal if URL has ?require_beta_access=true
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('require_beta_access') === 'true') {
+                openBetaModal();
+            }
+        });
     </script>
     <script>
         const LOCAL_CONFIG = {
-            version: "1.35",
+            version: "1.35.3",
             check_beta: true,
             api_url: "https://showlyrics.github.io/version.json"
         };

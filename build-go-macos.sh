@@ -24,6 +24,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GO_DIR="$SCRIPT_DIR/playback-engine"
+CAM_GO_DIR="$SCRIPT_DIR/camera-service"
 BIN_DIR="$SCRIPT_DIR/backend"
 
 echo ""
@@ -74,12 +75,45 @@ else
     echo "  Untuk universal binary, jalankan script ini di macOS"
 fi
 
+cd "$CAM_GO_DIR"
+
+echo "[camera 1/3] Building camera-service untuk macOS Intel (amd64)..."
+go mod tidy
+GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build \
+    -ldflags="-s -w" \
+    -o "$BIN_DIR/camera-service-amd64" \
+    ./cmd/
+echo "camera-service-amd64 selesai ($(du -sh "$BIN_DIR/camera-service-amd64" | cut -f1))"
+
+echo "[camera 2/3] Building camera-service untuk macOS Apple Silicon (arm64)..."
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build \
+    -ldflags="-s -w" \
+    -o "$BIN_DIR/camera-service-arm64" \
+    ./cmd/
+echo "camera-service-arm64 selesai ($(du -sh "$BIN_DIR/camera-service-arm64" | cut -f1))"
+
+echo "[camera 3/3] Membuat camera-service Universal Binary..."
+if command -v lipo &> /dev/null; then
+    lipo -create \
+        "$BIN_DIR/camera-service-amd64" \
+        "$BIN_DIR/camera-service-arm64" \
+        -output "$BIN_DIR/camera-service"
+    chmod +x "$BIN_DIR/camera-service"
+    echo "camera-service universal selesai ($(du -sh "$BIN_DIR/camera-service" | cut -f1))"
+    lipo -info "$BIN_DIR/camera-service"
+else
+    cp "$BIN_DIR/camera-service-amd64" "$BIN_DIR/camera-service"
+    chmod +x "$BIN_DIR/camera-service"
+    echo "lipo tidak tersedia - menggunakan camera-service amd64 sebagai default"
+fi
+
 echo ""
 echo "═══════════════════════════════════════════════════════"
 echo "✓ Build selesai!"
 echo ""
 echo "File yang dihasilkan:"
 ls -lh "$BIN_DIR/playback-engine"*
+ls -lh "$BIN_DIR/camera-service"*
 echo ""
 echo "Langkah selanjutnya:"
 echo "  1. Pastikan 'ffmpeg' (macOS binary) ada di folder backend/"

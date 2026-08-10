@@ -37,7 +37,7 @@
             --glow-color: rgba(255, 255, 255, 0.8);
             --main-color: #ffffff;
             --fade-speed: 0.8s;
-            --loop-handoff-ms: 800ms;
+            --loop-handoff-ms: 350ms;
             --loop-handoff-ease: cubic-bezier(0.16, 1, 0.3, 1);
             --main-font: 'Montserrat', sans-serif;
             --main-font-size: 96px; /* 5vw fallback on 1920px canvas */
@@ -145,6 +145,13 @@
 
         .lyric-group.active {
             opacity: 1;
+            transition: none !important;
+        }
+
+        /* JOB 1: CUT transition — layer appears instantly, no CSS fade at all */
+        .lyric-group.fx-cut {
+            opacity: 1 !important;
+            animation: none !important;
             transition: none !important;
         }
 
@@ -285,6 +292,8 @@
             border-radius: 15px;
             display: inline-block;
             width: auto;
+            max-width: 100%;
+            box-sizing: border-box;
             box-shadow: 0 15px 50px rgba(0, 0, 0, 0.5), 0 0 30px rgba(255, 255, 255, 0.2);
         }
 
@@ -299,6 +308,8 @@
             border-radius: 15px;
             display: inline-block;
             width: auto;
+            max-width: 100%;
+            box-sizing: border-box;
             padding: 25px 60px;
             text-shadow: 0 0 25px rgba(255, 255, 255, 0.9), 0 0 50px rgba(255, 255, 255, 0.7);
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3), 0 0 40px rgba(255, 255, 255, 0.3);

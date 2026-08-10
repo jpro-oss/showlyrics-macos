@@ -47,7 +47,7 @@ fi
 echo "Target architecture: $TARGET_ARCH"
 
 # Cek prasyarat binary
-for binary in ffmpeg playback-engine; do
+for binary in ffmpeg playback-engine camera-service; do
     if [ ! -f "$binary" ]; then
         echo "ERROR: '$binary' tidak ditemukan di folder ini!"
         echo "  Pastikan binary macOS sudah ada di backend/ sebelum build."
@@ -86,6 +86,7 @@ python -m PyInstaller \
     \
     --add-data="ffmpeg:." \
     --add-data="playback-engine:." \
+    --add-data="camera-service:." \
     --add-data="templates:templates" \
     --add-data="static:static" \
     \
@@ -95,6 +96,8 @@ python -m PyInstaller \
     --hidden-import="connection_manager" \
     --hidden-import="license_check" \
     --hidden-import="license_core" \
+    --hidden-import="access_core" \
+    --hidden-import="access_check" \
     --hidden-import="middleware" \
     --hidden-import="presets" \
     --hidden-import="scripture" \

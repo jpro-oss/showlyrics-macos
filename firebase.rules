@@ -1,0 +1,238 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Admin Check ────────────────────────────────────────────────────────────
+    // Priority 1: Check Firebase Custom Claims (set via Firebase Admin SDK)
+    // Priority 2: Fallback to hardcoded admin email/UID (untuk local-admin panel)
+    // Admin harus logout dan login ulang agar custom claims token diperbarui.
+    function isAdmin() {
+      return request.auth != null && (
+        // Check custom claim 'admin: true'
+        request.auth.token.admin == true ||
+        // Fallback: hardcoded admin credentials
+        (request.auth.token.email == 'enstentik112@gmail.com' ||
+        request.auth.token.email == 'adminjoseph@showlyrics.app' ||
+        request.auth.uid == '711RB34EFNh8ZgDRJMvDVG93XYe2' ||
+        request.auth.uid == '7fzLhLePVOVGiygAVx7v0I1lduk1')
+      );
+    }
+
+    // ── Helpers untuk Hardening Keamanan ─────────────────────────────────────────
+    function isTrialLicense(data) {
+      return data.get('trial', false) == true
+        && data.get('planType', '') == 'Trial Pro'
+        && data.get('isActive', false) == true
+        && data.get('hwid', null) == null
+        && data.get('ownerUid', '') == request.auth.uid
+        && data.get('ownerEmail', '') == request.auth.token.email;
+    }
+
+    function trialLicenseFieldsOnly() {
+      return request.resource.data.keys().hasOnly([
+        'key', 'ownerEmail', 'ownerUid', 'planType', 'isActive',
+        'expiryDate', 'trial', 'hwid', 'createdAt'
+      ]);
+    }
+
+    function validPaidLicenseCreate() {
+      return request.resource.data.get('trial', false) != true
+        && request.resource.data.get('isActive', false) == true
+        && request.resource.data.get('ownerUid', null) is string
+        && request.resource.data.get('ownerEmail', null) is string;
+    }
+
+    function expectedAmount(plan, period, currency) {
+      let pricing = get(/databases/$(database)/documents/config/pricing).data;
+      let key = plan + '_' + period + '_' + (currency == 'IDR' ? 'idr' : 'usd');
+      return pricing[key];
+    }
+
+    // ── USERS collection ──────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      allow create: if request.auth != null && request.auth.uid == userId;
+
+      // User boleh update profil sendiri, KECUALI field active_license_id,
+      // active_license_expires, dan trial_used yang sudah terisi — hanya admin yang bisa ubah.
+      // Satu pengecualian: menghubungkan trial license untuk pertama kalinya.
+      allow update: if request.auth != null && (
+        isAdmin() ||
+        (request.auth.uid == userId && (
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['active_license_id', 'active_license_expires', 'trial_used'])
+          ||
+          // Hanya boleh set trial license sekali
+          (resource.data.get('trial_used', false) == false
+            && request.resource.data.get('trial_used', false) == true
+            && request.resource.data.get('active_license_id', null) is string
+            && get(/databases/$(database)/documents/licenses/$(request.resource.data.active_license_id)).data.get('trial', false) == true
+            && get(/databases/$(database)/documents/licenses/$(request.resource.data.active_license_id)).data.get('ownerUid', null) == request.auth.uid)
+        ))
+      );
+    }
+
+    // ── LICENSES collection ───────────────────────────────────────────────────
+    match /licenses/{licenseId} {
+
+      // ── READ ────────────────────────────────────────────────────────────────
+      // GET (1 dokumen): boleh tanpa auth — untuk validasi dari desktop app.
+      allow get: if true;
+
+      // LIST (semua dokumen): hanya pemilik yang login — tidak bisa enumerate.
+      allow list: if request.auth != null && (
+        resource.data.ownerEmail == request.auth.token.email ||
+        isAdmin()
+      );
+
+      // READ generik: hanya pemilik yang login atau admin.
+      allow read: if request.auth != null && (
+        resource.data.ownerEmail == request.auth.token.email ||
+        resource.data.ownerUid   == request.auth.uid ||
+        isAdmin()
+      );
+
+      // ── CREATE ──────────────────────────────────────────────────────────────
+      // Hanya user yang login untuk membuat trial (sekali saja), atau admin untuk paid license.
+      allow create: if request.auth != null && (
+        (
+          isTrialLicense(request.resource.data)
+          && trialLicenseFieldsOnly()
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('trial_used', false) == false
+        )
+        ||
+        (isAdmin() && validPaidLicenseCreate())
+      );
+
+      // ── UPDATE — SATU RULE GABUNGAN (FIX KRITIS #2) ─────────────────────────
+      allow update: if
+
+        // ── Skenario 1: HWID Binding dari ShowLyrics App ──────────────────────
+        (
+          (!('hwid' in resource.data) || resource.data.hwid == null || resource.data.hwid == "") &&
+          request.resource.data.hwid != null &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hwid', 'unbindSecret'])
+        )
+
+        ||
+
+        // ── Skenario 2: HWID Unbinding dari ShowLyrics App ───────────────────
+        (
+          resource.data.hwid != null &&
+          request.resource.data.hwid == null &&
+          request.resource.data.unbindSecret == resource.data.unbindSecret &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hwid', 'unbindSecret'])
+        )
+
+        ||
+
+        // ── Skenario 3: Rename License dari Web Dashboard ─────────────────────
+        (
+          request.auth != null &&
+          (
+            resource.data.ownerUid   == request.auth.uid ||
+            resource.data.ownerEmail == request.auth.token.email
+          ) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+        )
+
+        ||
+
+        // ── Skenario 4: Self-assign ownerUid ─────────────────────────────────
+        (
+          request.auth != null &&
+          resource.data.ownerEmail == request.auth.token.email &&
+          (!('ownerUid' in resource.data) || resource.data.ownerUid == null) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerUid']) &&
+          request.resource.data.ownerUid == request.auth.uid
+        )
+
+        ||
+
+        // ── Skenario 5: Admin bebas update apapun ─────────────────────────────
+        isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    // ── TRANSACTIONS collection ────────────────────────────────────────────────
+    match /transactions/{taskId} {
+      // User hanya bisa buat transaksi atas nama dirinya sendiri.
+      // Field amount divalidasi dengan config/pricing untuk mencegah manipulasi harga.
+      allow create: if request.auth != null &&
+        request.resource.data.status  == 'pending' &&
+        request.resource.data.uid     == request.auth.uid &&
+        request.resource.data.email   == request.auth.token.email &&
+        request.resource.data.amount  == expectedAmount(
+          request.resource.data.plan,
+          request.resource.data.period,
+          request.resource.data.currency
+        ) &&
+        request.resource.data.plan    in ['individual', 'mini', 'standard', 'large'] &&
+        request.resource.data.period  in ['monthly', 'annual'] &&
+        request.resource.data.name    is string &&
+        request.resource.data.name.size() <= 100 &&
+        request.resource.data.phone   is string &&
+        request.resource.data.phone.size() <= 20;
+
+      // User hanya bisa baca transaksi miliknya sendiri
+      allow read: if request.auth != null &&
+        (resource.data.uid == request.auth.uid || isAdmin());
+
+      // Hanya admin yang bisa ubah/hapus status transaksi
+      allow update, delete: if isAdmin();
+    }
+
+    // ── CONFIG collection ──────────────────────────────────────────────────────
+    match /config/{documentId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ── ACCESS (macOS Beta Access) collection ─────────────────────────────
+    match /access/{accessId} {
+      // GET (1 dokumen): Boleh tanpa auth untuk validasi dari desktop app.
+      allow get: if true;
+
+      // LIST: Hanya pemilik terautentikasi atau admin.
+      allow list: if request.auth != null && (
+        resource.data.ownerEmail == request.auth.token.email ||
+        isAdmin()
+      );
+
+      // READ: Hanya pemilik terautentikasi atau admin.
+      allow read: if request.auth != null && (
+        resource.data.ownerEmail == request.auth.token.email ||
+        resource.data.ownerUid   == request.auth.uid ||
+        isAdmin()
+      );
+
+      // UPDATE: HWID Binding & Unbinding
+      allow update: if
+        // Skenario 1: Binding HWID pertama kali dari app
+        (
+          (!('hwid' in resource.data) || resource.data.hwid == null || resource.data.hwid == "") &&
+          request.resource.data.hwid != null &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hwid', 'unbindSecret'])
+        )
+        ||
+        // Skenario 2: Unbinding HWID dari app
+        (
+          resource.data.hwid != null &&
+          request.resource.data.hwid == null &&
+          request.resource.data.unbindSecret == resource.data.unbindSecret &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hwid', 'unbindSecret'])
+        )
+        ||
+        // Skenario 3: Admin bebas update
+        isAdmin();
+
+      allow create, delete: if isAdmin();
+    }
+
+    // ── Default: Tolak semua yang tidak tercakup ───────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

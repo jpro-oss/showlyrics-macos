@@ -9,8 +9,9 @@
 #   - CGO_ENABLED=0 karena pure Go (tidak ada CGO dependencies)
 
 $ErrorActionPreference = "Stop"
-$GoDir  = Join-Path $PSScriptRoot "playback-engine"
-$BinDir = Join-Path $PSScriptRoot "backend"
+$GoDir     = Join-Path $PSScriptRoot "playback-engine"
+$CamGoDir  = Join-Path $PSScriptRoot "camera-service"
+$BinDir    = Join-Path $PSScriptRoot "backend"
 
 Write-Host ""
 Write-Host "ShowLyrics - Go Engine macOS Cross-Compile" -ForegroundColor Cyan
@@ -20,7 +21,7 @@ Write-Host ""
 Set-Location $GoDir
 
 # BUILD Intel amd64
-Write-Host "[1/2] Building macOS Intel (amd64)..." -ForegroundColor Yellow
+Write-Host "[1/4] Building playback-engine macOS Intel (amd64)..." -ForegroundColor Yellow
 $env:GOOS        = "darwin"
 $env:GOARCH      = "amd64"
 $env:CGO_ENABLED = "0"
@@ -30,7 +31,7 @@ go build -ldflags="-s -w" -o $outAmd64 ./cmd/
 Write-Host "OK - playback-engine-amd64 selesai" -ForegroundColor Green
 
 # BUILD Apple Silicon arm64
-Write-Host "[2/2] Building macOS Apple Silicon (arm64)..." -ForegroundColor Yellow
+Write-Host "[2/4] Building playback-engine macOS Apple Silicon (arm64)..." -ForegroundColor Yellow
 $env:GOOS        = "darwin"
 $env:GOARCH      = "arm64"
 $env:CGO_ENABLED = "0"
@@ -43,6 +44,31 @@ Write-Host "OK - playback-engine-arm64 selesai" -ForegroundColor Green
 $outDefault = Join-Path $BinDir "playback-engine"
 Copy-Item $outAmd64 $outDefault -Force
 Write-Host "OK - playback-engine (default amd64) disalin" -ForegroundColor Green
+
+Set-Location $CamGoDir
+
+Write-Host "[3/4] Building camera-service macOS Intel (amd64)..." -ForegroundColor Yellow
+$env:GOOS        = "darwin"
+$env:GOARCH      = "amd64"
+$env:CGO_ENABLED = "0"
+
+$camOutAmd64 = Join-Path $BinDir "camera-service-amd64"
+go mod tidy
+go build -ldflags="-s -w" -o $camOutAmd64 ./cmd/
+Write-Host "OK - camera-service-amd64 selesai" -ForegroundColor Green
+
+Write-Host "[4/4] Building camera-service macOS Apple Silicon (arm64)..." -ForegroundColor Yellow
+$env:GOOS        = "darwin"
+$env:GOARCH      = "arm64"
+$env:CGO_ENABLED = "0"
+
+$camOutArm64 = Join-Path $BinDir "camera-service-arm64"
+go build -ldflags="-s -w" -o $camOutArm64 ./cmd/
+Write-Host "OK - camera-service-arm64 selesai" -ForegroundColor Green
+
+$camOutDefault = Join-Path $BinDir "camera-service"
+Copy-Item $camOutAmd64 $camOutDefault -Force
+Write-Host "OK - camera-service (default amd64) disalin" -ForegroundColor Green
 
 # Reset env vars
 Remove-Item Env:GOOS        -ErrorAction SilentlyContinue
@@ -57,9 +83,11 @@ Write-Host "Cross-compile selesai!" -ForegroundColor Green
 Write-Host ""
 Write-Host "File yang dihasilkan di backend/:" -ForegroundColor White
 Get-ChildItem $BinDir -Filter "playback-engine*" | Select-Object Name, @{N='Size';E={"{0:N0} KB" -f ($_.Length/1KB)}} | Format-Table -AutoSize
+Get-ChildItem $BinDir -Filter "camera-service*" | Select-Object Name, @{N='Size';E={"{0:N0} KB" -f ($_.Length/1KB)}} | Format-Table -AutoSize
 Write-Host ""
 Write-Host "Untuk universal binary (Intel + Apple Silicon) - jalankan di macOS:" -ForegroundColor Yellow
 Write-Host "  lipo -create playback-engine-amd64 playback-engine-arm64 -output playback-engine"
+Write-Host "  lipo -create camera-service-amd64 camera-service-arm64 -output camera-service"
 Write-Host ""
 Write-Host "Langkah selanjutnya:" -ForegroundColor Cyan
 Write-Host "  1. Download ffmpeg macOS binary ke backend/"

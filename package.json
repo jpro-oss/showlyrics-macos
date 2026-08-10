@@ -28,7 +28,11 @@
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "darkModeSupport": true,
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "extendInfo": {
+        "NSCameraUsageDescription": "ShowLyrics uses the camera for Main Cam and Audience Cam output.",
+        "NSMicrophoneUsageDescription": "ShowLyrics may request media permissions while preparing camera output."
+      }
     },
     "dmg": {
       "title": "ShowLyricsApp ${version}",

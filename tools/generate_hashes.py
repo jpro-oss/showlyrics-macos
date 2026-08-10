@@ -26,7 +26,7 @@ import re
 from datetime import datetime, timezone
 
 # ── KONFIGURASI — UPDATE SETIAP RILIS ─────────────────────────────────────────
-APP_VERSION = "1.3.5-2"  # ← UPDATE SETIAP RILIS BARU
+APP_VERSION = "1.3.5-3-MACOS"  # ← UPDATE SETIAP RILIS BARU
 
 # ── PATH SETUP ────────────────────────────────────────────────────────────────
 BASE     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -131,7 +131,7 @@ print(f"  Templates FP : {fp_templates[:32]}...")
 print(f"  Combined FP  : {fp_combined[:32]}...")
 print(f"  Manifest Sig : {manifest_sig[:32]}...")
 print()
-print("→ LANGKAH SELANJUTNYA:")
+print("-> LANGKAH SELANJUTNYA:")
 print(f"  1. Upload {out_json} ke GitHub Pages")
 print(f"     URL target: https://showlyrics.github.io/file/versi.json")
 print(f"  2. Pastikan SERVER_HASH_URL di file_integrity.py sudah benar")

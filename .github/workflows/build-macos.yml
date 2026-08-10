@@ -81,17 +81,24 @@ jobs:
           cache-dependency-path: playback-engine/go.sum
 
       # ─────────────────────────────────────────────────────────────
-      # 3. BUILD GO PLAYBACK ENGINE (arch sesuai matrix)
+      # 3. BUILD GO ENGINES (arch sesuai matrix)
       # ─────────────────────────────────────────────────────────────
-      - name: Build Go Engine (${{ matrix.arch }})
+      - name: Build Go Engines (${{ matrix.arch }})
         run: |
           cd playback-engine
           GOOS=darwin GOARCH=${{ matrix.go_arch }} CGO_ENABLED=0 \
             go build -ldflags="-s -w" -o ../backend/playback-engine ./cmd/
           chmod +x ../backend/playback-engine
-          echo "=== Go Engine ==="
+          echo "=== Go Playback Engine ==="
           file ../backend/playback-engine
-          echo "Size: $(du -sh ../backend/playback-engine | cut -f1)"
+
+          cd ../camera-service
+          go mod tidy
+          GOOS=darwin GOARCH=${{ matrix.go_arch }} CGO_ENABLED=0 \
+            go build -ldflags="-s -w" -o ../backend/camera-service ./cmd/
+          chmod +x ../backend/camera-service
+          echo "=== Go Camera Service ==="
+          file ../backend/camera-service
 
       # ─────────────────────────────────────────────────────────────
       # 4. SETUP FFMPEG (arch sesuai matrix)
@@ -135,7 +142,7 @@ jobs:
         run: |
           echo "=== backend/ listing ==="
           ls -lh backend/
-          for f in backend/ffmpeg backend/playback-engine; do
+          for f in backend/ffmpeg backend/playback-engine backend/camera-service; do
             if [ -f "$f" ]; then
               echo "OK: $f | arch: $(file $f | grep -o 'arm64\|x86_64\|Mach-O')"
             else
@@ -222,7 +229,7 @@ jobs:
         run: |
           rm -rf bin && mkdir -p bin
           cp -r backend/dist/ShowLyrics/* bin/
-          find bin/ -type f \( -name "ShowLyrics" -o -name "playback-engine" -o -name "ffmpeg" \) \
+          find bin/ -type f \( -name "ShowLyrics" -o -name "playback-engine" -o -name "camera-service" -o -name "ffmpeg" \) \
             -exec chmod +x {} \;
 
           echo "=== bin/ ==="
