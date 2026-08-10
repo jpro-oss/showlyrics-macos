@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       create_release:
-        description: 'Create GitHub Release with both DMGs?'
+        description: 'Create GitHub Release with installers (DMG & ZIP)?'
         required: false
-        default: 'false'
+        default: 'true'
         type: choice
         options: ['true', 'false']
 
@@ -352,30 +352,32 @@ jobs:
           if-no-files-found: ignore
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # (OPSIONAL) CREATE RELEASE — hanya jika workflow_dispatch create_release=true
+  # AUTOMATIC CREATE RELEASE — Berjalan pada push ke main, tag, & workflow_dispatch
   # ═══════════════════════════════════════════════════════════════════════════
   create-release:
     name: Create GitHub Release
     needs: build-macos
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release != 'false') || startsWith(github.ref, 'refs/tags/') }}
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download all DMG artifacts
+      - name: Download all installer artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-assets/
-          pattern: ShowLyricsApp-macOS-*-DMG
+          pattern: ShowLyricsApp-macOS-*
           merge-multiple: true
 
       - name: List release assets
         run: |
           echo "=== Release assets ==="
-          find release-assets/ -name "*.dmg" | sort
-          DMG_COUNT=$(find release-assets/ -name "*.dmg" | wc -l)
-          echo "Total DMGs: $DMG_COUNT"
-          if [ "$DMG_COUNT" -eq 0 ]; then
-            echo "ERROR: No DMG files found for release!"
+          find release-assets/ -type f | sort
+          ASSET_COUNT=$(find release-assets/ -type f \( -name "*.dmg" -o -name "*.zip" \) | wc -l)
+          echo "Total Release Assets: $ASSET_COUNT"
+          if [ "$ASSET_COUNT" -eq 0 ]; then
+            echo "ERROR: No DMG or ZIP files found for release!"
             exit 1
           fi
 
@@ -389,5 +391,6 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             release-assets/**/*.dmg
+            release-assets/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
