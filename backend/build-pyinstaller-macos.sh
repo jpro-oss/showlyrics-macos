@@ -115,6 +115,19 @@ python -m PyInstaller \
     --hidden-import="storage_backend" \
     \
     \
+    --hidden-import="plistlib" \
+    --hidden-import="pkg_resources" \
+    --hidden-import="importlib.metadata" \
+    --hidden-import="email" \
+    --hidden-import="email.mime" \
+    --hidden-import="email.parser" \
+    --hidden-import="email.message" \
+    --hidden-import="email.utils" \
+    --hidden-import="xml" \
+    --hidden-import="xml.etree" \
+    --hidden-import="html" \
+    --hidden-import="ctypes" \
+    --hidden-import="sysconfig" \
     --hidden-import="asyncio" \
     --hidden-import="asyncio.events" \
     --hidden-import="asyncio.selector_events" \
@@ -152,6 +165,9 @@ python -m PyInstaller \
     --hidden-import="starlette.middleware" \
     --hidden-import="starlette.staticfiles" \
     --hidden-import="starlette.templating" \
+    --hidden-import="jinja2" \
+    --hidden-import="websockets" \
+    --hidden-import="httpx" \
     \
     \
     --hidden-import="cryptography" \
@@ -198,6 +214,11 @@ python -m PyInstaller \
     --collect-all="psutil" \
     --collect-all="fitz" \
     --collect-all="pptx" \
+    --collect-all="httpx" \
+    --collect-all="websockets" \
+    --collect-all="jinja2" \
+    --collect-all="starlette" \
+    --collect-all="pythonosc" \
     \
     \
     --exclude-module="PyQt5" \
@@ -215,8 +236,6 @@ python -m PyInstaller \
     --exclude-module="unittest" \
     --exclude-module="pdb" \
     --exclude-module="doctest" \
-    --exclude-module="email" \
-    --exclude-module="xmlrpc" \
     \
     main.py
 

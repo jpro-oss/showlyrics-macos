@@ -34,16 +34,21 @@ else:
 print(f"[SPEC] Building for target_arch: {TARGET_ARCH}")
 
 # ─── KOLEKSI DEPENDENCY ──────────────────────────────────────────────────────
-av_datas,       av_binaries,       av_hiddenimports       = collect_all('av')
-fitz_datas,     fitz_binaries,     fitz_hiddenimports     = collect_all('fitz')
-uvicorn_datas,  uvicorn_binaries,  uvicorn_hiddenimports  = collect_all('uvicorn')
-fastapi_datas,  fastapi_binaries,  fastapi_hiddenimports  = collect_all('fastapi')
-pydantic_datas, pydantic_binaries, pydantic_hiddenimports = collect_all('pydantic')
-crypto_datas,   crypto_binaries,   crypto_hiddenimports   = collect_all('cryptography')
-requests_datas, requests_binaries, requests_hiddenimports = collect_all('requests')
-psutil_datas,   psutil_binaries,   psutil_hiddenimports   = collect_all('psutil')
-pptx_datas,     pptx_binaries,     pptx_hiddenimports     = collect_all('pptx')
-pil_datas,      pil_binaries,      pil_hiddenimports      = collect_all('PIL')
+av_datas,        av_binaries,        av_hiddenimports        = collect_all('av')
+fitz_datas,      fitz_binaries,      fitz_hiddenimports      = collect_all('fitz')
+uvicorn_datas,   uvicorn_binaries,   uvicorn_hiddenimports   = collect_all('uvicorn')
+fastapi_datas,   fastapi_binaries,   fastapi_hiddenimports   = collect_all('fastapi')
+pydantic_datas,  pydantic_binaries,  pydantic_hiddenimports  = collect_all('pydantic')
+crypto_datas,    crypto_binaries,    crypto_hiddenimports    = collect_all('cryptography')
+requests_datas,  requests_binaries,  requests_hiddenimports  = collect_all('requests')
+psutil_datas,    psutil_binaries,    psutil_hiddenimports    = collect_all('psutil')
+pptx_datas,      pptx_binaries,      pptx_hiddenimports      = collect_all('pptx')
+pil_datas,       pil_binaries,       pil_hiddenimports       = collect_all('PIL')
+httpx_datas,     httpx_binaries,     httpx_hiddenimports     = collect_all('httpx')
+ws_datas,        ws_binaries,        ws_hiddenimports        = collect_all('websockets')
+jinja_datas,     jinja_binaries,     jinja_hiddenimports     = collect_all('jinja2')
+starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('starlette')
+osc_datas,       osc_binaries,       osc_hiddenimports       = collect_all('pythonosc')
 
 # ─── ANALYSIS ────────────────────────────────────────────────────────────────
 a = Analysis(
@@ -52,7 +57,8 @@ a = Analysis(
     binaries=(
         av_binaries + fitz_binaries + psutil_binaries +
         pydantic_binaries + crypto_binaries + requests_binaries +
-        pil_binaries
+        pil_binaries + httpx_binaries + ws_binaries + jinja_binaries +
+        starlette_binaries + osc_binaries
     ),
     datas=[
         # ── macOS Binaries (tanpa .exe) ───────────────────────────────────
@@ -65,7 +71,8 @@ a = Analysis(
         ('pyarmor_runtime_000000', 'pyarmor_runtime_000000') if os.path.exists('pyarmor_runtime_000000') else ('.', '.'),
     ] + av_datas + fitz_datas + fastapi_datas + uvicorn_datas +
       pydantic_datas + crypto_datas + requests_datas + psutil_datas +
-      pptx_datas + pil_datas,
+      pptx_datas + pil_datas + httpx_datas + ws_datas + jinja_datas +
+      starlette_datas + osc_datas,
 
     hiddenimports=[
         # ── PyArmor Obfuscation Runtime ──────────────────────────────────
@@ -81,7 +88,12 @@ a = Analysis(
         'network_guard', 'file_integrity',
         'storage_backend',   # macOS persistent storage (menggantikan winreg)
 
-        # ── Python stdlib ─────────────────────────────────────────────────
+        # ── Python stdlib & Runtime Hooks (SANGAT PENTING UTK macOS) ─────
+        'plistlib', 'pkg_resources', 'importlib.metadata', 'pkg_resources.py',
+        'email', 'email.mime', 'email.mime.text', 'email.mime.multipart',
+        'email.mime.application', 'email.parser', 'email.message', 'email.utils',
+        'xml', 'xml.etree', 'xml.etree.ElementTree', 'html', 'html.parser',
+        'ctypes', 'sysconfig', 'distutils',
         'asyncio', 'asyncio.events', 'asyncio.selector_events',
         'platform', 'urllib.parse', 'zipfile', 'io', 'json',
         'uuid', 're', 'time', 'collections', 'subprocess',
@@ -95,6 +107,7 @@ a = Analysis(
         'fastapi', 'fastapi.middleware', 'fastapi.middleware.cors',
         'starlette', 'starlette.routing', 'starlette.middleware',
         'starlette.staticfiles', 'starlette.templating',
+        'jinja2', 'websockets', 'httpx',
 
         # ── Security / Cryptography ───────────────────────────────────────
         'cryptography', 'cryptography.fernet',
@@ -122,8 +135,10 @@ a = Analysis(
     ] + av_hiddenimports + fitz_hiddenimports + uvicorn_hiddenimports +
       fastapi_hiddenimports + pydantic_hiddenimports + crypto_hiddenimports +
       requests_hiddenimports + psutil_hiddenimports + pptx_hiddenimports +
-      pil_hiddenimports +
-      collect_submodules('uvicorn') + collect_submodules('pydantic'),
+      pil_hiddenimports + httpx_hiddenimports + ws_hiddenimports +
+      jinja_hiddenimports + starlette_hiddenimports + osc_hiddenimports +
+      collect_submodules('uvicorn') + collect_submodules('pydantic') +
+      collect_submodules('httpx') + collect_submodules('websockets'),
 
     hookspath=[],
     hooksconfig={},
@@ -136,9 +151,8 @@ a = Analysis(
         'pywintypes', 'pythoncom', 'pywin32', 'winreg',
         # ── GUI Frameworks tidak terpakai ─────────────────────────────────
         'PyQt5', 'PySide2', 'PySide6', 'PyQt6',
-        # ── Stdlib tidak terpakai ─────────────────────────────────────────
+        # ── Stdlib test & debug modules (JANGAN exclude plistlib/email!) ──
         'test', 'unittest', 'pdb', 'doctest',
-        'email', 'xmlrpc', 'html.server', 'plistlib',
     ],
 
     win_no_prefer_redirects=False,
