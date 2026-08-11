@@ -73,7 +73,7 @@ fi
 # Cek pyarmor runtime jika ada
 PYARMOR_FLAG=""
 if [ -d "pyarmor_runtime_000000" ]; then
-    PYARMOR_FLAG="--add-data=pyarmor_runtime_000000:pyarmor_runtime_000000 --hidden-import=pyarmor_runtime_000000"
+    PYARMOR_FLAG="--collect-all=pyarmor_runtime_000000 --hidden-import=pyarmor_runtime_000000.darwin_x86_64 --hidden-import=pyarmor_runtime_000000.darwin_x86_64.pyarmor_runtime --hidden-import=pyarmor_runtime_000000.darwin_arm64 --hidden-import=pyarmor_runtime_000000.darwin_arm64.pyarmor_runtime"
     echo "OK: pyarmor_runtime_000000 ditemukan, menyertakan ke build."
 fi
 

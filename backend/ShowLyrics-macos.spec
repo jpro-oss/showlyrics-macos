@@ -51,6 +51,11 @@ starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('star
 osc_datas,       osc_binaries,       osc_hiddenimports       = collect_all('pythonosc')
 urllib3_datas,   urllib3_binaries,   urllib3_hiddenimports   = collect_all('urllib3')
 
+if os.path.exists('pyarmor_runtime_000000'):
+    pyarmor_datas, pyarmor_binaries, pyarmor_hiddenimports = collect_all('pyarmor_runtime_000000')
+else:
+    pyarmor_datas, pyarmor_binaries, pyarmor_hiddenimports = [], [], []
+
 # ─── ANALYSIS ────────────────────────────────────────────────────────────────
 a = Analysis(
     ['main.py'],
@@ -59,25 +64,30 @@ a = Analysis(
         av_binaries + fitz_binaries + psutil_binaries +
         pydantic_binaries + crypto_binaries + requests_binaries +
         pil_binaries + httpx_binaries + ws_binaries + jinja_binaries +
-        starlette_binaries + osc_binaries + urllib3_binaries
+        starlette_binaries + osc_binaries + urllib3_binaries +
+        pyarmor_binaries
     ),
     datas=[
         # ── macOS Binaries (tanpa .exe) ───────────────────────────────────
         ('ffmpeg',          '.'),          # FFmpeg macOS static binary
         ('playback-engine', '.'),          # Go engine macOS
         ('camera-service',  '.'),          # WebRTC camera service macOS
-        # ── Application Assets & PyArmor Runtime ─────────────────────────
+        # ── Application Assets ───────────────────────────────────────────
         ('templates',              'templates'), # Jinja2 templates
         ('static',                 'static'),    # CSS, JS, images, wm.js
-        ('pyarmor_runtime_000000', 'pyarmor_runtime_000000') if os.path.exists('pyarmor_runtime_000000') else ('.', '.'),
     ] + av_datas + fitz_datas + fastapi_datas + uvicorn_datas +
       pydantic_datas + crypto_datas + requests_datas + psutil_datas +
       pptx_datas + pil_datas + httpx_datas + ws_datas + jinja_datas +
-      starlette_datas + osc_datas + urllib3_datas,
+      starlette_datas + osc_datas + urllib3_datas + pyarmor_datas,
 
     hiddenimports=[
         # ── PyArmor Obfuscation Runtime ──────────────────────────────────
         'pyarmor_runtime_000000',
+        'pyarmor_runtime_000000.darwin_x86_64',
+        'pyarmor_runtime_000000.darwin_x86_64.pyarmor_runtime',
+        'pyarmor_runtime_000000.darwin_arm64',
+        'pyarmor_runtime_000000.darwin_arm64.pyarmor_runtime',
+    ] + pyarmor_hiddenimports + [
 
         # ── App Modules ───────────────────────────────────────────────────
         'background_tasks', 'config', 'connection_manager',
