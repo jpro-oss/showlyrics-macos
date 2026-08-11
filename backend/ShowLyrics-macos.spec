@@ -49,6 +49,7 @@ ws_datas,        ws_binaries,        ws_hiddenimports        = collect_all('webs
 jinja_datas,     jinja_binaries,     jinja_hiddenimports     = collect_all('jinja2')
 starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('starlette')
 osc_datas,       osc_binaries,       osc_hiddenimports       = collect_all('pythonosc')
+urllib3_datas,   urllib3_binaries,   urllib3_hiddenimports   = collect_all('urllib3')
 
 # ─── ANALYSIS ────────────────────────────────────────────────────────────────
 a = Analysis(
@@ -58,7 +59,7 @@ a = Analysis(
         av_binaries + fitz_binaries + psutil_binaries +
         pydantic_binaries + crypto_binaries + requests_binaries +
         pil_binaries + httpx_binaries + ws_binaries + jinja_binaries +
-        starlette_binaries + osc_binaries
+        starlette_binaries + osc_binaries + urllib3_binaries
     ),
     datas=[
         # ── macOS Binaries (tanpa .exe) ───────────────────────────────────
@@ -72,7 +73,7 @@ a = Analysis(
     ] + av_datas + fitz_datas + fastapi_datas + uvicorn_datas +
       pydantic_datas + crypto_datas + requests_datas + psutil_datas +
       pptx_datas + pil_datas + httpx_datas + ws_datas + jinja_datas +
-      starlette_datas + osc_datas,
+      starlette_datas + osc_datas + urllib3_datas,
 
     hiddenimports=[
         # ── PyArmor Obfuscation Runtime ──────────────────────────────────
@@ -89,15 +90,17 @@ a = Analysis(
         'storage_backend',   # macOS persistent storage (menggantikan winreg)
 
         # ── Python stdlib & Runtime Hooks (SANGAT PENTING UTK macOS) ─────
-        'plistlib', 'pkg_resources', 'importlib.metadata', 'pkg_resources.py',
+        'plistlib', 'pkg_resources', 'importlib.metadata', 'importlib.resources', 'pkg_resources.py',
         'email', 'email.mime', 'email.mime.text', 'email.mime.multipart',
         'email.mime.application', 'email.parser', 'email.message', 'email.utils',
         'xml', 'xml.etree', 'xml.etree.ElementTree', 'html', 'html.parser',
         'ctypes', 'sysconfig', 'distutils',
         'asyncio', 'asyncio.events', 'asyncio.selector_events',
-        'platform', 'urllib.parse', 'zipfile', 'io', 'json',
-        'uuid', 're', 'time', 'collections', 'subprocess',
-        'tempfile', 'threading', 'multiprocessing',
+        'platform', 'urllib', 'urllib.parse', 'urllib.request', 'urllib.error', 'urllib3',
+        'zipfile', 'io', 'json', 'uuid', 're', 'time', 'collections', 'subprocess',
+        'tempfile', 'threading', 'multiprocessing', 'hashlib', 'base64', 'dataclasses',
+        'enum', 'datetime', 'secrets', 'socket', 'atexit', 'shutil', 'glob',
+        'concurrent', 'concurrent.futures',
 
         # ── FastAPI Ecosystem ─────────────────────────────────────────────
         'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
@@ -137,8 +140,11 @@ a = Analysis(
       requests_hiddenimports + psutil_hiddenimports + pptx_hiddenimports +
       pil_hiddenimports + httpx_hiddenimports + ws_hiddenimports +
       jinja_hiddenimports + starlette_hiddenimports + osc_hiddenimports +
+      urllib3_hiddenimports +
       collect_submodules('uvicorn') + collect_submodules('pydantic') +
-      collect_submodules('httpx') + collect_submodules('websockets'),
+      collect_submodules('httpx') + collect_submodules('websockets') +
+      collect_submodules('fastapi') + collect_submodules('starlette') +
+      collect_submodules('requests') + collect_submodules('urllib3'),
 
     hookspath=[],
     hooksconfig={},

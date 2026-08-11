@@ -70,6 +70,13 @@ else
     echo "WARNING: Tidak ada icon ditemukan, build tanpa custom icon."
 fi
 
+# Cek pyarmor runtime jika ada
+PYARMOR_FLAG=""
+if [ -d "pyarmor_runtime_000000" ]; then
+    PYARMOR_FLAG="--add-data=pyarmor_runtime_000000:pyarmor_runtime_000000 --hidden-import=pyarmor_runtime_000000"
+    echo "OK: pyarmor_runtime_000000 ditemukan, menyertakan ke build."
+fi
+
 echo ""
 echo "Memulai PyInstaller build untuk $TARGET_ARCH..."
 echo ""
@@ -78,6 +85,7 @@ python -m PyInstaller \
     --name="ShowLyrics" \
     --onedir \
     $ICON_FLAG \
+    $PYARMOR_FLAG \
     --contents-directory="internal" \
     --target-arch="$TARGET_ARCH" \
     --noupx \
@@ -118,21 +126,32 @@ python -m PyInstaller \
     --hidden-import="plistlib" \
     --hidden-import="pkg_resources" \
     --hidden-import="importlib.metadata" \
+    --hidden-import="importlib.resources" \
     --hidden-import="email" \
     --hidden-import="email.mime" \
+    --hidden-import="email.mime.text" \
+    --hidden-import="email.mime.multipart" \
+    --hidden-import="email.mime.application" \
     --hidden-import="email.parser" \
     --hidden-import="email.message" \
     --hidden-import="email.utils" \
     --hidden-import="xml" \
     --hidden-import="xml.etree" \
+    --hidden-import="xml.etree.ElementTree" \
     --hidden-import="html" \
+    --hidden-import="html.parser" \
     --hidden-import="ctypes" \
     --hidden-import="sysconfig" \
+    --hidden-import="distutils" \
     --hidden-import="asyncio" \
     --hidden-import="asyncio.events" \
     --hidden-import="asyncio.selector_events" \
     --hidden-import="platform" \
+    --hidden-import="urllib" \
     --hidden-import="urllib.parse" \
+    --hidden-import="urllib.request" \
+    --hidden-import="urllib.error" \
+    --hidden-import="urllib3" \
     --hidden-import="zipfile" \
     --hidden-import="io" \
     --hidden-import="json" \
@@ -144,6 +163,18 @@ python -m PyInstaller \
     --hidden-import="tempfile" \
     --hidden-import="threading" \
     --hidden-import="multiprocessing" \
+    --hidden-import="hashlib" \
+    --hidden-import="base64" \
+    --hidden-import="dataclasses" \
+    --hidden-import="enum" \
+    --hidden-import="datetime" \
+    --hidden-import="secrets" \
+    --hidden-import="socket" \
+    --hidden-import="atexit" \
+    --hidden-import="shutil" \
+    --hidden-import="glob" \
+    --hidden-import="concurrent" \
+    --hidden-import="concurrent.futures" \
     \
     \
     --hidden-import="uvicorn" \
@@ -181,6 +212,8 @@ python -m PyInstaller \
     --hidden-import="PIL.Image" \
     --hidden-import="PIL.ImageDraw" \
     --hidden-import="PIL.ImageFont" \
+    --hidden-import="PIL.ImageOps" \
+    --hidden-import="PIL.ImageFilter" \
     --hidden-import="av" \
     --hidden-import="av.container" \
     --hidden-import="av.stream" \
@@ -219,10 +252,14 @@ python -m PyInstaller \
     --collect-all="jinja2" \
     --collect-all="starlette" \
     --collect-all="pythonosc" \
+    --collect-all="PIL" \
+    --collect-all="urllib3" \
     \
     \
     --exclude-module="PyQt5" \
     --exclude-module="PySide2" \
+    --exclude-module="PySide6" \
+    --exclude-module="PyQt6" \
     --exclude-module="tkinter" \
     --exclude-module="_tkinter" \
     --exclude-module="win32api" \
