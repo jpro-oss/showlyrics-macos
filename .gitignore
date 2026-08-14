@@ -23,8 +23,11 @@ backend/playback-engine.exe
 playback-engine.exe
 *.dll
 
-# PyArmor runtime
-backend/pyarmor_runtime_000000/
+# PyArmor runtime — HARUS di-commit! Dibutuhkan saat PyInstaller build.
+# .so file (darwin_x86_64 & darwin_arm64) wajib ada di repo agar
+# GitHub Actions dapat menyertakannya ke dalam binary.
+# Tanpa ini, build GAGAL: ModuleNotFoundError: pyarmor_runtime_000000.darwin_*
+# backend/pyarmor_runtime_000000/   ← JANGAN uncomment baris ini!
 
 # PyInstaller
 backend/build/

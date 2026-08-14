@@ -197,9 +197,10 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           pip install -r backend/requirements-macos.txt
+          # PyInstaller 6.x — diperlukan untuk macOS dual-arch support
           pip install "pyinstaller>=6.0.0,<7.0.0"
-          echo "=== Key packages ==="
-          pip list | grep -E "PyInstaller|Pillow|PyAV|PyMuPDF|uvicorn|fastapi|pydantic"
+          echo "=== Installed key packages ==="
+          pip list | grep -E "PyInstaller|Pillow|PyAV|PyMuPDF|uvicorn|fastapi|pydantic|cryptography|requests|psutil|python-osc|websockets|httpx|python-pptx"
 
       # ─────────────────────────────────────────────────────────────
       # 8. BUILD PYTHON BACKEND (PyInstaller — arch sesuai runner)
@@ -211,16 +212,40 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          echo "=== Pre-build check ==="
-          file ffmpeg playback-engine
+          echo "=== Pre-build verification ==="
+          echo "Python: $(python3 --version)"
+          echo "PyInstaller: $(python3 -m PyInstaller --version)"
+          echo "Architecture target: $ARCH"
+          file ffmpeg playback-engine camera-service
           echo ""
+
+          # Verifikasi pyarmor runtime tersedia
+          echo "=== PyArmor runtime check ==="
+          if [ -d "pyarmor_runtime_000000" ]; then
+            echo "OK: pyarmor_runtime_000000/ found"
+            ls -lh pyarmor_runtime_000000/darwin_${{ matrix.arch }}/pyarmor_runtime.so 2>/dev/null \
+              && echo "OK: darwin_${{ matrix.arch }}/pyarmor_runtime.so found" \
+              || echo "WARNING: darwin_${{ matrix.arch }}/pyarmor_runtime.so NOT FOUND!"
+          else
+            echo "ERROR: pyarmor_runtime_000000/ missing!"
+            exit 1
+          fi
+          echo ""
+
           echo "=== Starting PyInstaller (${{ matrix.arch }}) ==="
-          ARCH=${{ matrix.arch }} pyinstaller ShowLyrics-macos.spec --clean --noconfirm
+          ARCH=${{ matrix.arch }} python3 -m PyInstaller ShowLyrics-macos.spec --clean --noconfirm
 
           echo ""
           echo "=== Output ==="
           ls -lh dist/ShowLyrics/
           echo "Total: $(du -sh dist/ShowLyrics/ | cut -f1)"
+
+          echo ""
+          echo "=== Verify PyArmor .so in dist/ ==="
+          find dist/ShowLyrics/ -name "pyarmor_runtime.so" | while read f; do
+            echo "OK: $f ($(du -sh "$f" | cut -f1))"
+            file "$f"
+          done || echo "WARNING: pyarmor_runtime.so tidak ditemukan di dist!"
 
       # ─────────────────────────────────────────────────────────────
       # 9. SETUP BIN/
@@ -235,8 +260,14 @@ jobs:
           echo "=== bin/ ==="
           ls -lh bin/
           echo "=== bin/internal (sample) ==="
-          ls bin/internal/ 2>/dev/null | head -15
+          ls bin/internal/ 2>/dev/null | head -20
           echo "Total: $(du -sh bin/ | cut -f1)"
+
+          echo "=== Verify PyArmor .so in bin/ ==="
+          find bin/ -name "pyarmor_runtime.so" | while read f; do
+            echo "OK: $f"
+            file "$f"
+          done || echo "WARNING: pyarmor_runtime.so tidak ada di bin/ — binary mungkin gagal di runtime!"
 
       # ─────────────────────────────────────────────────────────────
       # 10. INSTALL NODE DEPENDENCIES

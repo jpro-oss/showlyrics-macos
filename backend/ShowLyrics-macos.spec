@@ -1,4 +1,4 @@
-# ShowLyrics-macos.spec
+﻿# ShowLyrics-macos.spec
 # ════════════════════════════════════════════════════════════════════════════
 # PyInstaller SPEC FILE — macOS Dual Architecture
 #
@@ -10,7 +10,7 @@
 #   ARCH=arm64  pyinstaller ShowLyrics-macos.spec --clean --noconfirm
 #   ARCH=x86_64 pyinstaller ShowLyrics-macos.spec --clean --noconfirm
 #
-# Di GitHub Actions diset otomatis via matrix env.
+# Di GitHub Actions diset otomatis via matrix env ARCH.
 # ════════════════════════════════════════════════════════════════════════════
 
 # -*- mode: python ; coding: utf-8 -*-
@@ -21,8 +21,6 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_dat
 assert sys.platform == 'darwin', "Spec ini hanya untuk macOS!"
 
 # ─── DETECT TARGET ARCH ─────────────────────────────────────────────────────
-# Ambil dari env var ARCH yang di-set oleh CI matrix
-# Jika tidak ada, gunakan arsitektur runner yang sedang berjalan
 _env_arch = os.environ.get("ARCH", "").strip()
 if _env_arch in ("arm64", "x86_64"):
     TARGET_ARCH = _env_arch
@@ -32,6 +30,17 @@ else:
     TARGET_ARCH = "arm64" if _machine == "arm64" else "x86_64"
 
 print(f"[SPEC] Building for target_arch: {TARGET_ARCH}")
+
+# ─── ICON ────────────────────────────────────────────────────────────────────
+_icon = None
+if os.path.exists('../src/app.icns'):
+    _icon = '../src/app.icns'
+    print("[SPEC] Icon: ../src/app.icns")
+elif os.path.exists('app.ico'):
+    _icon = 'app.ico'
+    print("[SPEC] Icon: app.ico (fallback)")
+else:
+    print("[SPEC] WARNING: Tidak ada icon ditemukan.")
 
 # ─── KOLEKSI DEPENDENCY ──────────────────────────────────────────────────────
 av_datas,        av_binaries,        av_hiddenimports        = collect_all('av')
@@ -51,12 +60,48 @@ starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('star
 osc_datas,       osc_binaries,       osc_hiddenimports       = collect_all('pythonosc')
 urllib3_datas,   urllib3_binaries,   urllib3_hiddenimports   = collect_all('urllib3')
 
-if os.path.exists('pyarmor_runtime_000000'):
-    pyarmor_datas, pyarmor_binaries, pyarmor_hiddenimports = collect_all('pyarmor_runtime_000000')
-else:
-    pyarmor_datas, pyarmor_binaries, pyarmor_hiddenimports = [], [], []
+# ─── PYARMOR RUNTIME ─────────────────────────────────────────────────────────
+pyarmor_binaries = []
+pyarmor_datas = []
+pyarmor_hiddenimports = [
+    'pyarmor_runtime_000000',
+    'pyarmor_runtime_000000.darwin_x86_64',
+    'pyarmor_runtime_000000.darwin_x86_64.pyarmor_runtime',
+    'pyarmor_runtime_000000.darwin_arm64',
+    'pyarmor_runtime_000000.darwin_arm64.pyarmor_runtime',
+]
 
-# ─── ANALYSIS ────────────────────────────────────────────────────────────────
+if TARGET_ARCH == 'x86_64':
+    _so_src = os.path.join('pyarmor_runtime_000000', 'darwin_x86_64', 'pyarmor_runtime.so')
+    _so_dst = os.path.join('pyarmor_runtime_000000', 'darwin_x86_64')
+    if os.path.exists(_so_src):
+        pyarmor_binaries.append((_so_src, _so_dst))
+        print(f"[SPEC] PyArmor x86_64 .so: {_so_src} -> {_so_dst}")
+    else:
+        print(f"[SPEC] WARNING: {_so_src} tidak ditemukan!")
+elif TARGET_ARCH == 'arm64':
+    _so_src = os.path.join('pyarmor_runtime_000000', 'darwin_arm64', 'pyarmor_runtime.so')
+    _so_dst = os.path.join('pyarmor_runtime_000000', 'darwin_arm64')
+    if os.path.exists(_so_src):
+        pyarmor_binaries.append((_so_src, _so_dst))
+        print(f"[SPEC] PyArmor arm64 .so: {_so_src} -> {_so_dst}")
+    else:
+        print(f"[SPEC] WARNING: {_so_src} tidak ditemukan!")
+
+if os.path.exists('pyarmor_runtime_000000'):
+    pyarmor_datas += [
+        (os.path.join('pyarmor_runtime_000000', '__init__.py'),
+         'pyarmor_runtime_000000'),
+        (os.path.join('pyarmor_runtime_000000', 'darwin_x86_64', '__init__.py'),
+         os.path.join('pyarmor_runtime_000000', 'darwin_x86_64')),
+        (os.path.join('pyarmor_runtime_000000', 'darwin_arm64', '__init__.py'),
+         os.path.join('pyarmor_runtime_000000', 'darwin_arm64')),
+    ]
+    print("[SPEC] PyArmor __init__.py files registered.")
+else:
+    print("[SPEC] WARNING: pyarmor_runtime_000000/ tidak ditemukan!")
+
+# ─── ANALYSIS ─────────────────────────────────────────────────────────────────
 a = Analysis(
     ['main.py'],
     pathex=['.'],
@@ -68,39 +113,25 @@ a = Analysis(
         pyarmor_binaries
     ),
     datas=[
-        # ── macOS Binaries (tanpa .exe) ───────────────────────────────────
-        ('ffmpeg',          '.'),          # FFmpeg macOS static binary
-        ('playback-engine', '.'),          # Go engine macOS
-        ('camera-service',  '.'),          # WebRTC camera service macOS
-        # ── Application Assets ───────────────────────────────────────────
-        ('templates',              'templates'), # Jinja2 templates
-        ('static',                 'static'),    # CSS, JS, images, wm.js
+        ('ffmpeg',          '.'),
+        ('playback-engine', '.'),
+        ('camera-service',  '.'),
+        ('templates',       'templates'),
+        ('static',          'static'),
     ] + av_datas + fitz_datas + fastapi_datas + uvicorn_datas +
       pydantic_datas + crypto_datas + requests_datas + psutil_datas +
       pptx_datas + pil_datas + httpx_datas + ws_datas + jinja_datas +
       starlette_datas + osc_datas + urllib3_datas + pyarmor_datas,
-
-    hiddenimports=[
-        # ── PyArmor Obfuscation Runtime ──────────────────────────────────
-        'pyarmor_runtime_000000',
-        'pyarmor_runtime_000000.darwin_x86_64',
-        'pyarmor_runtime_000000.darwin_x86_64.pyarmor_runtime',
-        'pyarmor_runtime_000000.darwin_arm64',
-        'pyarmor_runtime_000000.darwin_arm64.pyarmor_runtime',
-    ] + pyarmor_hiddenimports + [
-
-        # ── App Modules ───────────────────────────────────────────────────
+    hiddenimports=(
+        pyarmor_hiddenimports + [
         'background_tasks', 'config', 'connection_manager',
         'license_check', 'license_core', 'access_check', 'access_core',
         'middleware', 'presets', 'scripture', 'sender',
         'routes_media', 'routes_media_crud', 'routes_media_helper',
         'routes_media_stream', 'routes_media_thumb',
         'routes_pages', 'routes_service', 'routes_settings',
-        'network_guard', 'file_integrity',
-        'storage_backend',   # macOS persistent storage (menggantikan winreg)
-
-        # ── Python stdlib & Runtime Hooks (SANGAT PENTING UTK macOS) ─────
-        'plistlib', 'pkg_resources', 'importlib.metadata', 'importlib.resources', 'pkg_resources.py',
+        'network_guard', 'file_integrity', 'storage_backend',
+        'plistlib', 'pkg_resources', 'importlib.metadata', 'importlib.resources',
         'email', 'email.mime', 'email.mime.text', 'email.mime.multipart',
         'email.mime.application', 'email.parser', 'email.message', 'email.utils',
         'xml', 'xml.etree', 'xml.etree.ElementTree', 'html', 'html.parser',
@@ -111,8 +142,6 @@ a = Analysis(
         'tempfile', 'threading', 'multiprocessing', 'hashlib', 'base64', 'dataclasses',
         'enum', 'datetime', 'secrets', 'socket', 'atexit', 'shutil', 'glob',
         'concurrent', 'concurrent.futures',
-
-        # ── FastAPI Ecosystem ─────────────────────────────────────────────
         'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
         'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto',
         'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto',
@@ -121,66 +150,55 @@ a = Analysis(
         'starlette', 'starlette.routing', 'starlette.middleware',
         'starlette.staticfiles', 'starlette.templating',
         'jinja2', 'websockets', 'httpx',
-
-        # ── Security / Cryptography ───────────────────────────────────────
         'cryptography', 'cryptography.fernet',
         'cryptography.hazmat.primitives.kdf.pbkdf2',
         'cryptography.hazmat.primitives.ciphers',
         'cryptography.hazmat.backends',
-
-        # ── Media ─────────────────────────────────────────────────────────
         'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont',
         'PIL.ImageOps', 'PIL.ImageFilter',
         'av', 'av.container', 'av.stream',
         'fitz',
-
-        # ── PPTX ─────────────────────────────────────────────────────────
         'pptx', 'pptx.util', 'pptx.presentation', 'pptx.parts.image',
-
-        # ── Network ───────────────────────────────────────────────────────
         'requests', 'requests.adapters', 'requests.auth',
         'psutil',
-
-        # ── OSC ───────────────────────────────────────────────────────────
         'pythonosc', 'pythonosc.dispatcher',
         'pythonosc.osc_server', 'pythonosc.udp_client',
-
-    ] + av_hiddenimports + fitz_hiddenimports + uvicorn_hiddenimports +
+        ]
+    ) + av_hiddenimports + fitz_hiddenimports + uvicorn_hiddenimports +
       fastapi_hiddenimports + pydantic_hiddenimports + crypto_hiddenimports +
       requests_hiddenimports + psutil_hiddenimports + pptx_hiddenimports +
       pil_hiddenimports + httpx_hiddenimports + ws_hiddenimports +
       jinja_hiddenimports + starlette_hiddenimports + osc_hiddenimports +
       urllib3_hiddenimports +
-      collect_submodules('uvicorn') + collect_submodules('pydantic') +
-      collect_submodules('httpx') + collect_submodules('websockets') +
-      collect_submodules('fastapi') + collect_submodules('starlette') +
-      collect_submodules('requests') + collect_submodules('urllib3'),
-
+      collect_submodules('uvicorn') +
+      collect_submodules('pydantic') +
+      collect_submodules('httpx') +
+      collect_submodules('websockets') +
+      collect_submodules('fastapi') +
+      collect_submodules('starlette') +
+      collect_submodules('requests') +
+      collect_submodules('urllib3') +
+      collect_submodules('cryptography') +
+      collect_submodules('PIL') +
+      collect_submodules('fitz'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-
     excludes=[
-        # ── Windows-only ──────────────────────────────────────────────────
         'tkinter', '_tkinter',
         'win32api', 'win32con', 'win32com', 'win32com.client',
         'pywintypes', 'pythoncom', 'pywin32', 'winreg',
-        # ── GUI Frameworks tidak terpakai ─────────────────────────────────
         'PyQt5', 'PySide2', 'PySide6', 'PyQt6',
-        # ── Stdlib test & debug modules (JANGAN exclude plistlib/email!) ──
-        'test', 'unittest', 'pdb', 'doctest',
+        'test', 'unittest', 'doctest',
     ],
-
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
     noarchive=False,
 )
 
-# ─── PYZ ─────────────────────────────────────────────────────────────────────
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
-# ─── EXE ─────────────────────────────────────────────────────────────────────
 exe = EXE(
     pyz,
     a.scripts,
@@ -189,21 +207,17 @@ exe = EXE(
     name='ShowLyrics',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,                  # Jangan strip — bisa merusak code signing di macOS
-    upx=False,                    # UPX tidak kompatibel dengan macOS
-    console=False,                # Headless server — tidak perlu terminal
+    strip=False,
+    upx=False,
+    console=True,
     disable_windowed_traceback=False,
-    argv_emulation=False,         # False untuk non-GUI app
-    # ── TARGET ARCH ──────────────────────────────────────────────────────────
-    # None = ikuti arsitektur runner (arm64 di macos-14, x86_64 di macos-13)
-    # Pip wheel single-arch → HARUS None (bukan 'universal2')
-    # universal2 hanya mungkin jika SEMUA .so sudah fat binary
-    target_arch=None,
-    codesign_identity=None,       # Unsigned distribution
+    argv_emulation=False,
+    icon=_icon,
+    target_arch=TARGET_ARCH,
+    codesign_identity=None,
     entitlements_file=None,
 )
 
-# ─── COLLECT ─────────────────────────────────────────────────────────────────
 coll = COLLECT(
     exe,
     a.binaries,
@@ -213,5 +227,5 @@ coll = COLLECT(
     upx=False,
     upx_exclude=[],
     name='ShowLyrics',
-    contents_directory='internal',  # sys._MEIPASS → internal/
+    contents_directory='internal',
 )
