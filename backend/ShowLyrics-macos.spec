@@ -61,15 +61,14 @@ osc_datas,       osc_binaries,       osc_hiddenimports       = collect_all('pyth
 urllib3_datas,   urllib3_binaries,   urllib3_hiddenimports   = collect_all('urllib3')
 
 # ─── PYARMOR RUNTIME ─────────────────────────────────────────────────────────
+# KRITIS: Daftarkan HANYA arsitektur TARGET_ARCH!
+# Jika kedua arsitektur didaftarkan sebagai hiddenimport, PyInstaller akan
+# mencoba mengumpulkan KEDUA .so file, lalu gagal di COLLECT phase dengan:
+#   IncompatibleBinaryArchError: darwin_x86_64/pyarmor_runtime.so incompatible with arm64
+# Solusi: filter binary, datas, DAN hiddenimports — semuanya berdasarkan TARGET_ARCH.
 pyarmor_binaries = []
 pyarmor_datas = []
-pyarmor_hiddenimports = [
-    'pyarmor_runtime_000000',
-    'pyarmor_runtime_000000.darwin_x86_64',
-    'pyarmor_runtime_000000.darwin_x86_64.pyarmor_runtime',
-    'pyarmor_runtime_000000.darwin_arm64',
-    'pyarmor_runtime_000000.darwin_arm64.pyarmor_runtime',
-]
+pyarmor_hiddenimports = ['pyarmor_runtime_000000']
 
 if TARGET_ARCH == 'x86_64':
     _so_src = os.path.join('pyarmor_runtime_000000', 'darwin_x86_64', 'pyarmor_runtime.so')
@@ -79,6 +78,18 @@ if TARGET_ARCH == 'x86_64':
         print(f"[SPEC] PyArmor x86_64 .so: {_so_src} -> {_so_dst}")
     else:
         print(f"[SPEC] WARNING: {_so_src} tidak ditemukan!")
+    pyarmor_hiddenimports += [
+        'pyarmor_runtime_000000.darwin_x86_64',
+        'pyarmor_runtime_000000.darwin_x86_64.pyarmor_runtime',
+    ]
+    if os.path.exists('pyarmor_runtime_000000'):
+        pyarmor_datas += [
+            (os.path.join('pyarmor_runtime_000000', '__init__.py'),
+             'pyarmor_runtime_000000'),
+            (os.path.join('pyarmor_runtime_000000', 'darwin_x86_64', '__init__.py'),
+             os.path.join('pyarmor_runtime_000000', 'darwin_x86_64')),
+        ]
+
 elif TARGET_ARCH == 'arm64':
     _so_src = os.path.join('pyarmor_runtime_000000', 'darwin_arm64', 'pyarmor_runtime.so')
     _so_dst = os.path.join('pyarmor_runtime_000000', 'darwin_arm64')
@@ -87,19 +98,23 @@ elif TARGET_ARCH == 'arm64':
         print(f"[SPEC] PyArmor arm64 .so: {_so_src} -> {_so_dst}")
     else:
         print(f"[SPEC] WARNING: {_so_src} tidak ditemukan!")
-
-if os.path.exists('pyarmor_runtime_000000'):
-    pyarmor_datas += [
-        (os.path.join('pyarmor_runtime_000000', '__init__.py'),
-         'pyarmor_runtime_000000'),
-        (os.path.join('pyarmor_runtime_000000', 'darwin_x86_64', '__init__.py'),
-         os.path.join('pyarmor_runtime_000000', 'darwin_x86_64')),
-        (os.path.join('pyarmor_runtime_000000', 'darwin_arm64', '__init__.py'),
-         os.path.join('pyarmor_runtime_000000', 'darwin_arm64')),
+    pyarmor_hiddenimports += [
+        'pyarmor_runtime_000000.darwin_arm64',
+        'pyarmor_runtime_000000.darwin_arm64.pyarmor_runtime',
     ]
-    print("[SPEC] PyArmor __init__.py files registered.")
+    if os.path.exists('pyarmor_runtime_000000'):
+        pyarmor_datas += [
+            (os.path.join('pyarmor_runtime_000000', '__init__.py'),
+             'pyarmor_runtime_000000'),
+            (os.path.join('pyarmor_runtime_000000', 'darwin_arm64', '__init__.py'),
+             os.path.join('pyarmor_runtime_000000', 'darwin_arm64')),
+        ]
+
+if pyarmor_binaries:
+    print(f"[SPEC] PyArmor binaries: {pyarmor_binaries}")
+    print(f"[SPEC] PyArmor hiddenimports: {pyarmor_hiddenimports}")
 else:
-    print("[SPEC] WARNING: pyarmor_runtime_000000/ tidak ditemukan!")
+    print("[SPEC] WARNING: pyarmor_runtime_000000 .so tidak ditemukan!")
 
 # ─── ANALYSIS ─────────────────────────────────────────────────────────────────
 a = Analysis(
