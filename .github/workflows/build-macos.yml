@@ -202,12 +202,22 @@ jobs:
           echo "=== Installed key packages ==="
           pip list | grep -E "PyInstaller|Pillow|PyAV|PyMuPDF|uvicorn|fastapi|pydantic|cryptography|requests|psutil|python-osc|websockets|httpx|python-pptx|Jinja2|MarkupSafe|anyio|sniffio|h11|httpcore|python-multipart|packaging"
           echo ""
-          echo "=== Verifikasi kritis: jinja2 harus tersedia ==="
-          python3 -c "import jinja2; print('OK: jinja2', jinja2.__version__)"
-          python3 -c "import markupsafe; print('OK: markupsafe', markupsafe.__version__)"
-          python3 -c "import anyio; print('OK: anyio', anyio.__version__)"
-          python3 -c "import starlette; print('OK: starlette', starlette.__version__)"
-          python3 -c "import fastapi; print('OK: fastapi', fastapi.__version__)"
+          echo "=== Verifikasi kritis: semua package harus tersedia ==="
+          python3 -c "
+import importlib.metadata as meta
+packages = ['jinja2','markupsafe','anyio','sniffio','h11','httpcore','fastapi','starlette','uvicorn','httpx','websockets','cryptography','requests','Pillow','PyAV','PyMuPDF','python-multipart','packaging']
+all_ok = True
+for p in packages:
+    try:
+        v = meta.version(p)
+        print(f'OK: {p} {v}')
+    except Exception as e:
+        print(f'MISSING: {p} -> {e}')
+        all_ok = False
+if not all_ok:
+    import sys; sys.exit(1)
+print('All critical packages verified OK.')
+"
 
       # ─────────────────────────────────────────────────────────────
       # 8. BUILD PYTHON BACKEND (PyInstaller — arch sesuai runner)
