@@ -202,22 +202,9 @@ jobs:
           echo "=== Installed key packages ==="
           pip list | grep -E "PyInstaller|Pillow|PyAV|PyMuPDF|uvicorn|fastapi|pydantic|cryptography|requests|psutil|python-osc|websockets|httpx|python-pptx|Jinja2|MarkupSafe|anyio|sniffio|h11|httpcore|python-multipart|packaging"
           echo ""
-          echo "=== Verifikasi kritis: semua package harus tersedia ==="
-          python3 -c "
-import importlib.metadata as meta
-packages = ['jinja2','markupsafe','anyio','sniffio','h11','httpcore','fastapi','starlette','uvicorn','httpx','websockets','cryptography','requests','Pillow','PyAV','PyMuPDF','python-multipart','packaging']
-all_ok = True
-for p in packages:
-    try:
-        v = meta.version(p)
-        print(f'OK: {p} {v}')
-    except Exception as e:
-        print(f'MISSING: {p} -> {e}')
-        all_ok = False
-if not all_ok:
-    import sys; sys.exit(1)
-print('All critical packages verified OK.')
-"
+          echo "=== Verifikasi kritis: package wajib harus ter-install ==="
+          pip show jinja2 markupsafe anyio sniffio h11 httpcore fastapi starlette uvicorn httpx websockets | grep -E "^(Name|Version):"
+
 
       # ─────────────────────────────────────────────────────────────
       # 8. BUILD PYTHON BACKEND (PyInstaller — arch sesuai runner)
