@@ -1,4 +1,4 @@
-﻿# ShowLyrics-macos.spec
+# ShowLyrics-macos.spec
 # ════════════════════════════════════════════════════════════════════════════
 # PyInstaller SPEC FILE — macOS Dual Architecture
 #
@@ -56,10 +56,32 @@ pil_datas,       pil_binaries,       pil_hiddenimports       = collect_all('PIL'
 httpx_datas,     httpx_binaries,     httpx_hiddenimports     = collect_all('httpx')
 ws_datas,        ws_binaries,        ws_hiddenimports        = collect_all('websockets')
 jinja_datas,     jinja_binaries,     jinja_hiddenimports     = collect_all('jinja2')
+markup_datas,    markup_binaries,    markup_hiddenimports    = collect_all('markupsafe')
 starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('starlette')
 osc_datas,       osc_binaries,       osc_hiddenimports       = collect_all('pythonosc')
 urllib3_datas,   urllib3_binaries,   urllib3_hiddenimports   = collect_all('urllib3')
+anyio_datas,     anyio_binaries,     anyio_hiddenimports     = collect_all('anyio')
+sniffio_datas,   sniffio_binaries,   sniffio_hiddenimports   = collect_all('sniffio')
+h11_datas,       h11_binaries,       h11_hiddenimports       = collect_all('h11')
+httpcore_datas,  httpcore_binaries,  httpcore_hiddenimports  = collect_all('httpcore')
 
+# uvloop & httptools — di-install via uvicorn[standard], diimport dinamis sehingga
+# PyInstaller tidak mendeteksinya secara otomatis tanpa collect_all eksplisit
+try:
+    uvloop_datas,     uvloop_binaries,     uvloop_hiddenimports     = collect_all('uvloop')
+except Exception:
+    uvloop_datas, uvloop_binaries, uvloop_hiddenimports = [], [], []
+    print("[SPEC] WARNING: uvloop tidak ditemukan (opsional untuk macOS)")
+try:
+    httptools_datas,  httptools_binaries,  httptools_hiddenimports  = collect_all('httptools')
+except Exception:
+    httptools_datas, httptools_binaries, httptools_hiddenimports = [], [], []
+    print("[SPEC] WARNING: httptools tidak ditemukan (opsional)")
+try:
+    certifi_datas,    certifi_binaries,    certifi_hiddenimports    = collect_all('certifi')
+except Exception:
+    certifi_datas, certifi_binaries, certifi_hiddenimports = [], [], []
+    print("[SPEC] WARNING: certifi tidak ditemukan")
 # ─── PYARMOR RUNTIME ─────────────────────────────────────────────────────────
 # KRITIS: Daftarkan HANYA arsitektur TARGET_ARCH!
 # Jika kedua arsitektur didaftarkan sebagai hiddenimport, PyInstaller akan
@@ -124,7 +146,9 @@ a = Analysis(
         av_binaries + fitz_binaries + psutil_binaries +
         pydantic_binaries + crypto_binaries + requests_binaries +
         pil_binaries + httpx_binaries + ws_binaries + jinja_binaries +
-        starlette_binaries + osc_binaries + urllib3_binaries +
+        markup_binaries + starlette_binaries + osc_binaries + urllib3_binaries +
+        anyio_binaries + sniffio_binaries + h11_binaries + httpcore_binaries +
+        uvloop_binaries + httptools_binaries + certifi_binaries +
         pyarmor_binaries
     ),
     datas=[
@@ -136,7 +160,10 @@ a = Analysis(
     ] + av_datas + fitz_datas + fastapi_datas + uvicorn_datas +
       pydantic_datas + crypto_datas + requests_datas + psutil_datas +
       pptx_datas + pil_datas + httpx_datas + ws_datas + jinja_datas +
-      starlette_datas + osc_datas + urllib3_datas + pyarmor_datas,
+      markup_datas + starlette_datas + osc_datas + urllib3_datas +
+      anyio_datas + sniffio_datas + h11_datas + httpcore_datas +
+      uvloop_datas + httptools_datas + certifi_datas +
+      pyarmor_datas,
     hiddenimports=(
         pyarmor_hiddenimports + [
         'background_tasks', 'config', 'connection_manager',
@@ -161,11 +188,33 @@ a = Analysis(
         'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto',
         'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto',
         'uvicorn.lifespan', 'uvicorn.lifespan.on',
+        'uvicorn.middleware', 'uvicorn.middleware.proxy_headers',
+        'uvicorn.config', 'uvicorn.main', 'uvicorn.server',
         'fastapi', 'fastapi.middleware', 'fastapi.middleware.cors',
+        'fastapi.templating', 'fastapi.staticfiles',
+        'fastapi.responses', 'fastapi.requests', 'fastapi.encoders',
+        'fastapi.exceptions', 'fastapi.routing', 'fastapi.params',
+        'fastapi.security', 'fastapi.background',
         'starlette', 'starlette.routing', 'starlette.middleware',
+        'starlette.middleware.cors', 'starlette.middleware.base',
         'starlette.staticfiles', 'starlette.templating',
-        'jinja2', 'websockets', 'httpx',
-        'cryptography', 'cryptography.fernet',
+        'starlette.responses', 'starlette.requests', 'starlette.background',
+        'starlette.concurrency', 'starlette.config', 'starlette.exceptions',
+        'starlette.formparsers', 'starlette.datastructures', 'starlette.types',
+        'jinja2', 'jinja2.ext', 'jinja2.loaders', 'jinja2.environment',
+        'jinja2.runtime', 'jinja2.filters', 'jinja2.utils', 'jinja2.nativetypes',
+        'markupsafe', 'websockets', 'httpx',
+        'anyio', 'anyio.abc', 'anyio._backends._asyncio',
+        'anyio._backends._trio', 'anyio.streams', 'anyio.streams.memory',
+        'sniffio', 'h11', 'h11._connection', 'h11._events', 'h11._state',
+        'httpcore', 'httpcore._async', 'httpcore._sync',
+        'uvloop', 'httptools', 'certifi',
+        'python_multipart', 'multipart',
+        'packaging', 'packaging.version', 'packaging.requirements',
+        'packaging.specifiers', 'packaging.markers', 'packaging.utils',
+        'typing_extensions', 'typing',
+        'idna', 'charset_normalizer', 'chardet',
+        'ssl', 'certifi', 'cryptography', 'cryptography.fernet',
         'cryptography.hazmat.primitives.kdf.pbkdf2',
         'cryptography.hazmat.primitives.ciphers',
         'cryptography.hazmat.backends',
@@ -183,8 +232,11 @@ a = Analysis(
       fastapi_hiddenimports + pydantic_hiddenimports + crypto_hiddenimports +
       requests_hiddenimports + psutil_hiddenimports + pptx_hiddenimports +
       pil_hiddenimports + httpx_hiddenimports + ws_hiddenimports +
-      jinja_hiddenimports + starlette_hiddenimports + osc_hiddenimports +
-      urllib3_hiddenimports +
+      jinja_hiddenimports + markup_hiddenimports + starlette_hiddenimports +
+      osc_hiddenimports + urllib3_hiddenimports +
+      anyio_hiddenimports + sniffio_hiddenimports +
+      h11_hiddenimports + httpcore_hiddenimports +
+      uvloop_hiddenimports + httptools_hiddenimports + certifi_hiddenimports +
       collect_submodules('uvicorn') +
       collect_submodules('pydantic') +
       collect_submodules('httpx') +
@@ -195,7 +247,13 @@ a = Analysis(
       collect_submodules('urllib3') +
       collect_submodules('cryptography') +
       collect_submodules('PIL') +
-      collect_submodules('fitz'),
+      collect_submodules('fitz') +
+      collect_submodules('jinja2') +
+      collect_submodules('markupsafe') +
+      collect_submodules('anyio') +
+      collect_submodules('httpcore') +
+      collect_submodules('pptx') +
+      collect_submodules('pythonosc'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
