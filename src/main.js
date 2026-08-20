@@ -155,19 +155,39 @@ let pyProc = null;
 // FUNGSI: JALANKAN PYTHON BACKEND
 // ─────────────────────────────────────────────────────────────────────────────
 const createPyProc = () => {
-  // macOS: binary tanpa ekstensi .exe
-  let script = path.join(process.resourcesPath, 'bin', 'ShowLyrics');
-  if (!app.isPackaged) {
-    script = path.join(__dirname, '../bin/ShowLyrics');
-  }
-  log('Starting Python Backend from:', script);
+  let spawnArgs;
 
-  pyProc = spawn(script, [], {
+  if (app.isPackaged) {
+    // Production: jalankan binary compiled (macOS: tanpa ekstensi)
+    const script = path.join(process.resourcesPath, 'bin', 'ShowLyrics');
+    log('Starting Python Backend (production) from:', script);
+    spawnArgs = { cmd: script, args: [] };
+  } else {
+    // Development: jalankan python main.py langsung — tidak perlu binary
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const mainScript = path.join(__dirname, '../backend', 'main.py');
+    log('Starting Python Backend (dev) from:', pythonCmd, mainScript);
+    spawnArgs = { cmd: pythonCmd, args: [mainScript] };
+  }
+
+  pyProc = spawn(spawnArgs.cmd, spawnArgs.args, {
+    cwd: path.join(__dirname, '../backend'),
     env: { ...process.env, SHOWLYRICS_SECRET: secretToken }
   });
 
   pyProc.stdout.on('data', (data) => log(`Python: ${data}`));
   pyProc.stderr.on('data', (data) => logE(`Python Error: ${data}`));
+
+  pyProc.on('error', (err) => {
+    logE('Failed to start Python backend:', err.message);
+    // Jangan crash Electron — server mungkin sudah jalan secara manual
+  });
+
+  pyProc.on('close', (code) => {
+    if (code !== null && code !== 0) {
+      logE(`Python backend exited with code ${code}`);
+    }
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,11 +250,14 @@ function createSplashWindow() {
 function checkBackendAndLoad() {
   log('Mencari sinyal dari 127.0.0.1:18888...');
 
+  // Gunakan /api/health — endpoint ringan yang tidak render Jinja2
+  // Ini memastikan splash hilang saat server siap, tanpa bergantung
+  // pada rendering template HTML yang bisa gagal karena berbagai sebab.
   const pingInterval = setInterval(() => {
     const options = {
       hostname: '127.0.0.1',
       port: 18888,
-      path: '/',
+      path: '/api/health',   // ← BUKAN '/' — hindari Jinja2 render saat ping
       method: 'GET',
       headers: { 'X-ShowLyrics-Secret': secretToken }
     };
@@ -242,8 +265,10 @@ function checkBackendAndLoad() {
     const req = http.request(options, (res) => {
       if (res.statusCode >= 200 && res.statusCode < 400) {
         clearInterval(pingInterval);
-        log('Server Ditemukan! Membuka Controller...');
+        log('Server Ditemukan! (health check OK) Membuka Controller...');
         createMainWindow();
+      } else {
+        log(`Ping /api/health returned ${res.statusCode}, retrying...`);
       }
       // Drain response agar socket tidak hang
       res.resume();
@@ -253,7 +278,7 @@ function checkBackendAndLoad() {
       // Server belum nyala — tunggu ping berikutnya
     });
 
-    req.setTimeout(400, () => req.destroy());
+    req.setTimeout(800, () => req.destroy());
     req.end();
   }, 500);
 }
