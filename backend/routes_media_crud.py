@@ -1,13 +1,14 @@
 import os
 import uuid
 import shutil
-from fastapi import APIRouter, Request, BackgroundTasks
+from fastapi import APIRouter, Request, BackgroundTasks, UploadFile, File, Form
 
 import background_tasks as bg_tasks
 from config import (
     load_json, save_json,
     BACKGROUNDS_FILE, AUDIOS_FILE, PHOTOS_FILE, PRESENTATIONS_FILE,
     THUMBS_DIR, PRESENTATION_DIR,
+    PHOTO_DIR, BACKGROUNDS_DIR, AUDIO_DIR,
 )
 from routes_media_helper import get_media_db_path, get_allowed_extensions
 
@@ -19,32 +20,50 @@ router = APIRouter()
 
 @router.get("/api/media/{category}")
 async def get_media_category(category: str):
-    if category == "audio":
-        db = load_json(AUDIOS_FILE)
-    elif category == "photo":
-        db = load_json(PHOTOS_FILE)
-    elif category == "presentation":
-        db = load_json(PRESENTATIONS_FILE)
+    cat = str(category).lower()
+    if cat == "audio":
+        raw = load_json(AUDIOS_FILE)
+    elif cat == "photo":
+        raw = load_json(PHOTOS_FILE)
+    elif cat == "presentation":
+        raw = load_json(PRESENTATIONS_FILE)
     else:
         # Default: video backgrounds
-        db = load_json(BACKGROUNDS_FILE)
-        if "videos" in db:
-            db["items"] = db.pop("videos")
-        if "folders" not in db:
-            db["folders"] = ["ALL"]
-            
+        raw = load_json(BACKGROUNDS_FILE)
+
+    db = dict(raw or {})
+    if "videos" in db and "items" not in db:
+        db["items"] = db.pop("videos")
+    elif "audios" in db and "items" not in db:
+        db["items"] = db.pop("audios")
+    elif "photos" in db and "items" not in db:
+        db["items"] = db.pop("photos")
+    elif "presentations" in db and "items" not in db:
+        db["items"] = db.pop("presentations")
+
+    if "folders" not in db or not isinstance(db.get("folders"), list):
+        db["folders"] = ["ALL"]
+    elif "ALL" not in db["folders"]:
+        db["folders"].insert(0, "ALL")
+
+    if "items" not in db or not isinstance(db.get("items"), dict):
+        db["items"] = {}
+
     # Inject mtime
     items = db.get("items", {})
-    for item in items.values():
-        fpath = item.get("file_path", item.get("video_path"))
-        if fpath and os.path.exists(fpath):
-            try:
-                item["mtime"] = os.path.getmtime(fpath)
-            except Exception:
+    if isinstance(items, dict):
+        for item in items.values():
+            if not isinstance(item, dict):
+                continue
+            fpath = item.get("file_path", item.get("video_path"))
+            if fpath and os.path.exists(fpath):
+                try:
+                    item["mtime"] = os.path.getmtime(fpath)
+                except Exception:
+                    item["mtime"] = 0
+            else:
                 item["mtime"] = 0
-        else:
-            item["mtime"] = 0
-            
+
     return db
 
 
@@ -325,6 +344,81 @@ async def add_media_files(category: str, request: Request, background_tasks: Bac
     return {"status": "success", "message": f"{count} File berhasil di-link ke '{folder_name}'!", "created_ids": created_ids}
 
 
+@router.post("/api/media/{category}/upload")
+async def upload_media_file(
+    category: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    folder_name: str = Form("ALL")
+):
+    """Handle multipart file upload directly to local media storage and update DB."""
+    if category == "photo":
+        os.makedirs(PHOTO_DIR, exist_ok=True)
+        storage_dir = PHOTO_DIR
+    elif category == "audio":
+        os.makedirs(AUDIO_DIR, exist_ok=True)
+        storage_dir = AUDIO_DIR
+    elif category == "presentation":
+        os.makedirs(PRESENTATION_DIR, exist_ok=True)
+        storage_dir = PRESENTATION_DIR
+    else:
+        os.makedirs(BACKGROUNDS_DIR, exist_ok=True)
+        storage_dir = BACKGROUNDS_DIR
+
+    raw_filename = os.path.basename(file.filename or "upload.jpg")
+    dest_path = os.path.join(storage_dir, raw_filename)
+
+    base, ext = os.path.splitext(raw_filename)
+    counter = 1
+    while os.path.exists(dest_path):
+        dest_path = os.path.join(storage_dir, f"{base}_{counter}{ext}")
+        counter += 1
+
+    try:
+        with open(dest_path, "wb") as f_out:
+            shutil.copyfileobj(file.file, f_out)
+    except Exception as e:
+        return {"status": "error", "message": f"Gagal menyimpan file: {str(e)}"}
+
+    normalized_path = dest_path.replace("\\", "/")
+
+    db_path = get_media_db_path(category)
+    db = load_json(db_path)
+    if "folders" not in db:
+        db["folders"] = ["ALL"]
+    if "items" not in db:
+        db["items"] = {}
+    if folder_name not in db["folders"] and folder_name != "ALL":
+        db["folders"].append(folder_name)
+
+    item_id = str(uuid.uuid4())[:8]
+    item_entry = {
+        "id": item_id,
+        "name": os.path.basename(dest_path),
+        "folder": folder_name if folder_name != "ALL" else "Uncategorized",
+        "file_path": normalized_path,
+    }
+    db["items"][item_id] = item_entry
+
+    if category == "photo":
+        thumb_full_path = os.path.join(THUMBS_DIR, f"photo_{item_id}.jpg")
+        background_tasks.add_task(
+            bg_tasks.generate_photo_thumbnail_task, normalized_path, thumb_full_path, item_id
+        )
+    elif category == "video":
+        thumb_full_path = os.path.join(THUMBS_DIR, f"{item_id}.jpg")
+        item_entry["video_path"] = normalized_path
+        background_tasks.add_task(
+            bg_tasks.generate_thumbnail_task, normalized_path, thumb_full_path, item_id, "video"
+        )
+    background_tasks.add_task(
+        bg_tasks.process_media_metadata_task, category, item_id, normalized_path
+    )
+
+    save_json(db_path, db)
+    return {"status": "success", "message": "File berhasil diupload!", "item": item_entry}
+
+
 @router.post("/api/media/{category}/add_folder")
 async def add_media_folder(category: str, folder_path: str, background_tasks: BackgroundTasks):
     if not os.path.exists(folder_path):
@@ -485,6 +579,79 @@ async def move_media_file(category: str, item_id: str, request: Request):
         return {"status": "success"}
 
     return {"status": "error"}
+
+
+@router.post("/api/media/{category}/batch_move")
+async def batch_move_media(category: str, request: Request):
+    payload = await request.json()
+    item_ids = payload.get("item_ids", [])
+    new_folder = payload.get("new_folder", "Uncategorized").strip()
+    db_path = get_media_db_path(category)
+    db = load_json(db_path)
+
+    if not item_ids:
+        return {"status": "error", "message": "No items provided"}
+
+    if "folders" not in db:
+        db["folders"] = ["ALL"]
+    if new_folder not in db["folders"] and new_folder != "ALL":
+        db["folders"].append(new_folder)
+
+    if "items" not in db:
+        db["items"] = db.pop("videos", {})
+
+    count = 0
+    for item_id in item_ids:
+        if item_id in db.get("items", {}):
+            db["items"][item_id]["folder"] = new_folder
+            count += 1
+
+    save_json(db_path, db)
+    return {"status": "success", "count": count}
+
+
+@router.post("/api/media/{category}/batch_delete")
+async def batch_delete_media(category: str, request: Request):
+    payload = await request.json()
+    item_ids = payload.get("item_ids", [])
+    db_path = get_media_db_path(category)
+    db = load_json(db_path)
+
+    if not item_ids:
+        return {"status": "error", "message": "No items provided"}
+
+    if "items" not in db:
+        db["items"] = db.pop("videos", {})
+
+    count = 0
+    for item_id in item_ids:
+        deleted = False
+        if category == "video" and "videos" in db and item_id in db["videos"]:
+            del db["videos"][item_id]
+            deleted = True
+        if item_id in db.get("items", {}):
+            del db["items"][item_id]
+            deleted = True
+
+        if deleted:
+            count += 1
+            if category == "video":
+                thumb_path = os.path.join(THUMBS_DIR, f"{item_id}.jpg")
+                if os.path.exists(thumb_path):
+                    try:
+                        os.remove(thumb_path)
+                    except Exception:
+                        pass
+            elif category == "presentation":
+                slide_folder = os.path.join(PRESENTATION_DIR, item_id)
+                if os.path.exists(slide_folder):
+                    try:
+                        shutil.rmtree(slide_folder, ignore_errors=True)
+                    except Exception:
+                        pass
+
+    save_json(db_path, db)
+    return {"status": "success", "count": count}
 
 
 @router.post("/api/media/inspect_paths")

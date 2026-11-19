@@ -5,6 +5,9 @@ let currentDeviceId = null;
 let currentFit = 'fill';
 let isVisible = false;
 let lastMaskImage = null;
+let camWS = null;
+let camPC = null;
+let retryTimer = null;
 
 const channel = 'audience'; // This is 'audience' for audience_cam.html
 
@@ -105,7 +108,7 @@ async function updateState(state) {
     videoEl.className = `fit-${fit}`;
 
     // Update Stream if device changed or stream missing
-    if (device_id !== currentDeviceId || (show && !currentStream)) {
+    if (device_id !== currentDeviceId || (show && !currentStream && !camPC)) {
         currentDeviceId = device_id;
         if (isVisible && device_id) {
             await startStream(device_id);
@@ -113,40 +116,212 @@ async function updateState(state) {
     }
 }
 
+function normalizeCameraLabel(name) {
+    return String(name || "")
+        .toLowerCase()
+        .replace(/\([^)]*\)/g, "")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+}
+
+function parseFFmpegCameraName(deviceId) {
+    if (!deviceId || !deviceId.startsWith('ffmpeg:')) return null;
+    const rawName = deviceId.split(':').slice(2).join(':');
+    return rawName.replace(/\s*\([0-9a-fA-F]{4}:[0-9a-fA-F]{4}\)\s*$/, '').trim();
+}
+
+function scheduleRetry(deviceId) {
+    if (retryTimer) clearTimeout(retryTimer);
+    if (!isVisible || currentDeviceId !== deviceId) return;
+    retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (isVisible && currentDeviceId === deviceId) {
+            startStream(deviceId);
+        }
+    }, 3000);
+}
+
+function startWebRTCStream(deviceId, cameraName) {
+    return new Promise((resolve, reject) => {
+        const camHost = window.location.hostname || '127.0.0.1';
+        const wsUrl = `ws://${camHost}:18901/ws/webrtc?channel=${encodeURIComponent(channel)}&camera=${encodeURIComponent(cameraName || '0')}`;
+        const ws = new WebSocket(wsUrl);
+        camWS = ws;
+
+        let settled = false;
+        const connTimeout = setTimeout(() => {
+            if (!settled && ws === camWS && ws.readyState !== WebSocket.OPEN) {
+                settled = true;
+                reject(new Error('Camera service WebSocket timeout'));
+            }
+        }, 5000);
+
+        ws.onopen = () => {
+            clearTimeout(connTimeout);
+            if (ws !== camWS) return;
+
+            const pc = new RTCPeerConnection({
+                iceServers: [],
+                iceCandidatePoolSize: 0,
+                bundlePolicy: 'max-bundle',
+                rtcpMuxPolicy: 'require'
+            });
+            camPC = pc;
+
+            pc.ontrack = (event) => {
+                if (pc !== camPC) return;
+                if (event.streams && event.streams[0]) {
+                    currentStream = event.streams[0];
+                    videoEl.srcObject = currentStream;
+                    videoEl.onloadedmetadata = () => {
+                        videoEl.play().catch(e => console.error("Play error:", e));
+                    };
+                    if (!settled) {
+                        settled = true;
+                        resolve(true);
+                    }
+                }
+            };
+
+            pc.onconnectionstatechange = () => {
+                if (pc !== camPC) return;
+                if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                    console.warn('[CAM] WebRTC state:', pc.connectionState);
+                    stopStream();
+                    scheduleRetry(deviceId);
+                }
+            };
+        };
+
+        ws.onmessage = async (event) => {
+            try {
+                if (ws !== camWS || !camPC) return;
+                const offer = JSON.parse(event.data);
+                if (offer.type === 'error') {
+                    throw new Error(offer.message || 'Camera service error');
+                }
+                await camPC.setRemoteDescription(offer);
+                const answer = await camPC.createAnswer();
+                await camPC.setLocalDescription(answer);
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(camPC.localDescription));
+                }
+            } catch (err) {
+                if (!settled) {
+                    settled = true;
+                    reject(err);
+                }
+            }
+        };
+
+        ws.onerror = () => {
+            clearTimeout(connTimeout);
+            if (!settled) {
+                settled = true;
+                reject(new Error('Camera service WebSocket error'));
+            }
+        };
+
+        ws.onclose = () => {
+            clearTimeout(connTimeout);
+            if (!settled) {
+                settled = true;
+                reject(new Error('Camera service WebSocket closed'));
+            }
+        };
+    });
+}
+
+async function resolveBrowserDeviceId(ffmpegName) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return null;
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videos = devices.filter(d => d.kind === 'videoinput');
+        const target = normalizeCameraLabel(ffmpegName);
+        if (!target) return videos[0] ? videos[0].deviceId : null;
+        const match = videos.find(d => {
+            const lbl = normalizeCameraLabel(d.label);
+            return lbl === target || (lbl && (lbl.includes(target) || target.includes(lbl)));
+        });
+        return match ? match.deviceId : (videos[0] ? videos[0].deviceId : null);
+    } catch (_) {
+        return null;
+    }
+}
+
 async function startStream(deviceId) {
     if (!deviceId) return;
-    if (currentStream && currentDeviceId === deviceId) return;
+    if ((currentStream || camPC) && currentDeviceId === deviceId) return;
 
     stopStream();
 
+    const ffmpegName = parseFFmpegCameraName(deviceId);
+    if (ffmpegName !== null) {
+        try {
+            await startWebRTCStream(deviceId, ffmpegName);
+            return;
+        } catch (webrtcErr) {
+            console.warn('[CAM] camera-service WebRTC failed, falling back to getUserMedia:', webrtcErr.message);
+            cleanupWebRTC();
+        }
+    }
+
     try {
-        const constraints = {
-            video: {
-                deviceId: { exact: deviceId },
-                width: { ideal: 1920 },
-                height: { ideal: 1080 }
-            }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('navigator.mediaDevices.getUserMedia unavailable');
+        }
+        let targetBrowserId = deviceId;
+        if (ffmpegName !== null) {
+            targetBrowserId = await resolveBrowserDeviceId(ffmpegName);
+        }
+        const videoConstraints = {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
         };
-        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (targetBrowserId) {
+            videoConstraints.deviceId = { exact: targetBrowserId };
+        }
+        currentStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
         videoEl.srcObject = currentStream;
         videoEl.onloadedmetadata = () => {
             videoEl.play().catch(e => console.error("Play error:", e));
         };
     } catch (err) {
         console.error("Error accessing camera:", err);
-        // Retry after delay if it failed while show is true
-        if (isVisible) {
-            setTimeout(() => startStream(deviceId), 3000);
+        scheduleRetry(deviceId);
+    }
+}
+
+function cleanupWebRTC() {
+    if (camWS) {
+        camWS.onopen = null;
+        camWS.onclose = null;
+        camWS.onerror = null;
+        camWS.onmessage = null;
+        if (camWS.readyState === WebSocket.OPEN || camWS.readyState === WebSocket.CONNECTING) {
+            camWS.close();
         }
+        camWS = null;
+    }
+    if (camPC) {
+        camPC.ontrack = null;
+        camPC.onconnectionstatechange = null;
+        camPC.close();
+        camPC = null;
     }
 }
 
 function stopStream() {
+    if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+    }
+    cleanupWebRTC();
     if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
         currentStream = null;
-        videoEl.srcObject = null;
     }
+    videoEl.srcObject = null;
 }
 
 // Fetch initial state

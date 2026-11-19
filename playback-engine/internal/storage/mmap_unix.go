@@ -15,7 +15,7 @@ import (
 // Equivalent interface to the Windows implementation in mmap_windows.go.
 // Go automatically selects this file on non-Windows platforms due to the build tag.
 type MappedFile struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	file   *os.File
 	data   []byte
 	offset int64
@@ -76,7 +76,10 @@ func (m *MappedFile) Read(p []byte) (n int, err error) {
 }
 
 func (m *MappedFile) ReadAt(p []byte, off int64) (n int, err error) {
-	if off < 0 || off >= m.size {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.data == nil || off < 0 || off >= m.size {
 		return 0, io.EOF
 	}
 

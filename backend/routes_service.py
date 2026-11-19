@@ -9,6 +9,7 @@ import os
 import io
 import json
 import zipfile
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from fastapi import APIRouter, UploadFile, File
@@ -21,6 +22,18 @@ from config import (
 )
 
 router = APIRouter()
+
+
+# ------------------------------------------------------------------
+# HEALTH CHECK — digunakan oleh Electron checkBackendAndLoad
+# Endpoint ringan: tidak render Jinja2, tidak akses DB, tidak ada auth.
+# Selalu return 200 {"status": "ok"} saat server siap.
+# ------------------------------------------------------------------
+
+@router.get("/api/health")
+async def health_check():
+    """Lightweight health check endpoint untuk Electron ping."""
+    return {"status": "ok"}
 
 
 # ------------------------------------------------------------------
@@ -96,7 +109,11 @@ async def get_schedules():
 @router.post("/api/schedules")
 async def save_schedule_named(sched: SavedSchedule):
     data = load_json(SCHEDULES_FILE)
-    data[sched.name] = sched.items
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data[sched.name] = {
+        "items": sched.items,
+        "updated_at": now_str
+    }
     save_json(SCHEDULES_FILE, data)
     return {"status": "success"}
 
@@ -173,10 +190,12 @@ async def export_bundle(schedule_name: str):
             return {"error": "Schedule tidak ditemukan"}
 
         sched_data = all_schedules[schedule_name]
+        sched_items = sched_data.get("items", sched_data) if isinstance(sched_data, dict) else sched_data
+        updated_at = sched_data.get("updated_at") if isinstance(sched_data, dict) else None
         all_songs = load_json(SONGS_FILE)
 
         songs_to_export = []
-        for item in sched_data:
+        for item in sched_items:
             song_title = item.get("title") if isinstance(item, dict) else item
             found_song = next((s for s in all_songs if s["title"] == song_title), None)
             if found_song:
@@ -186,7 +205,8 @@ async def export_bundle(schedule_name: str):
         with zipfile.ZipFile(memory_file, "w", zipfile.ZIP_DEFLATED) as zf:
             export_data = {
                 "schedule_name": schedule_name,
-                "schedule_items": sched_data,
+                "schedule_items": sched_items,
+                "updated_at": updated_at,
                 "songs_data": songs_to_export,
             }
             zf.writestr("bundle.json", json.dumps(export_data, indent=2))
@@ -227,7 +247,10 @@ async def import_bundle(file: UploadFile = File(...)):
 
             # Simpan schedule
             all_schedules = load_json(SCHEDULES_FILE)
-            all_schedules[sched_name] = sched_items
+            all_schedules[sched_name] = {
+                "items": sched_items,
+                "updated_at": bundle_data.get("updated_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
             save_json(SCHEDULES_FILE, all_schedules)
 
             # Simpan songs (merge, no duplicate)

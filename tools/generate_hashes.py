@@ -19,14 +19,23 @@ CATATAN BUILD:
   Jika terbalik, binary tidak akan punya _BUILTIN_HASHES terbaru!
 """
 
+import argparse
 import hashlib
 import json
 import os
 import re
 from datetime import datetime, timezone
 
+parser = argparse.ArgumentParser(description="Generate ShowLyrics integrity hashes.")
+parser.add_argument(
+    "--no-patch",
+    action="store_true",
+    help="Dry-run: generate JSON manifests without patching backend/file_integrity.py",
+)
+args = parser.parse_args()
+
 # ── KONFIGURASI — UPDATE SETIAP RILIS ─────────────────────────────────────────
-APP_VERSION = "1.3.5-2"  # ← UPDATE SETIAP RILIS BARU
+APP_VERSION = "1.3.5-4"  # ← UPDATE SETIAP RILIS BARU
 
 # ── PATH SETUP ────────────────────────────────────────────────────────────────
 BASE     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -77,10 +86,11 @@ manifest_sig = hashlib.sha256(sig_parts.encode()).hexdigest()
 print(f"[INFO] Fingerprint berhasil dihitung.")
 
 # ── OUTPUT 1: JSON untuk GitHub Pages CDN ─────────────────────────────────────
-# File ini diupload ke: https://showlyrics.github.io/file/versi.json
+# File ini diupload ke: https://showlyrics.github.io/file/v135-4.json (dan versi.json)
 out_dir  = os.path.join(BASE, "dist", "hashes")
 os.makedirs(out_dir, exist_ok=True)
-out_json = os.path.join(out_dir, "versi.json")
+out_json_v    = os.path.join(out_dir, "v135-4.json")
+out_json_legacy = os.path.join(out_dir, "versi.json")
 
 manifest = {
     "version":               APP_VERSION,
@@ -91,9 +101,10 @@ manifest = {
     "manifest_sig":          manifest_sig
 }
 
-with open(out_json, 'w') as f:
-    json.dump(manifest, f, indent=2)
-print(f"[1/2] JSON output : {out_json}")
+for out_path in (out_json_v, out_json_legacy):
+    with open(out_path, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(manifest, f, indent=2)
+print(f"[1/2] JSON output : {out_json_v} (+ versi.json)")
 
 # ── OUTPUT 2: Inject ke backend/file_integrity.py ─────────────────────────────
 # Cari dan replace blok _BUILTIN_HASHES = { ... }
@@ -105,23 +116,26 @@ new_builtin = f'''_BUILTIN_HASHES = {{
     "manifest_sig":          "{manifest_sig}"
 }}'''
 
-if not os.path.exists(FI_PATH):
-    print(f"[ERROR] file_integrity.py tidak ditemukan: {FI_PATH}")
-    raise SystemExit(1)
-
-with open(FI_PATH, 'r', encoding='utf-8') as f:
-    source = f.read()
-
-# Regex: cari blok _BUILTIN_HASHES = { ... } (multiline, greedy hingga closing })
-pattern = r'_BUILTIN_HASHES\s*=\s*\{[^}]*\}'
-if re.search(pattern, source, re.DOTALL):
-    patched = re.sub(pattern, new_builtin, source, flags=re.DOTALL)
-    with open(FI_PATH, 'w', encoding='utf-8') as f:
-        f.write(patched)
-    print(f"[2/2] _BUILTIN_HASHES injected into: {FI_PATH}")
+if args.no_patch:
+    print(f"[2/2] Skipped patching {FI_PATH} (--no-patch)")
 else:
-    print(f"[2/2] WARNING: _BUILTIN_HASHES pattern tidak ditemukan di {FI_PATH}!")
-    print("      Pastikan file_integrity.py memiliki blok _BUILTIN_HASHES = {{...}}")
+    if not os.path.exists(FI_PATH):
+        print(f"[ERROR] file_integrity.py tidak ditemukan: {FI_PATH}")
+        raise SystemExit(1)
+
+    with open(FI_PATH, 'r', encoding='utf-8') as f:
+        source = f.read()
+
+    # Regex: cari blok _BUILTIN_HASHES = { ... } (multiline, greedy hingga closing })
+    pattern = r'_BUILTIN_HASHES\s*=\s*\{[^}]*\}'
+    if re.search(pattern, source, re.DOTALL):
+        patched = re.sub(pattern, new_builtin, source, flags=re.DOTALL)
+        with open(FI_PATH, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(patched)
+        print(f"[2/2] _BUILTIN_HASHES injected into: {FI_PATH}")
+    else:
+        print(f"[2/2] WARNING: _BUILTIN_HASHES pattern tidak ditemukan di {FI_PATH}!")
+        print("      Pastikan file_integrity.py memiliki blok _BUILTIN_HASHES = {{...}}")
 
 # ── SUMMARY ───────────────────────────────────────────────────────────────────
 print()
@@ -131,9 +145,9 @@ print(f"  Templates FP : {fp_templates[:32]}...")
 print(f"  Combined FP  : {fp_combined[:32]}...")
 print(f"  Manifest Sig : {manifest_sig[:32]}...")
 print()
-print("→ LANGKAH SELANJUTNYA:")
-print(f"  1. Upload {out_json} ke GitHub Pages")
-print(f"     URL target: https://showlyrics.github.io/file/versi.json")
+print("-> LANGKAH SELANJUTNYA:")
+print(f"  1. Upload {out_json_v} ke GitHub Pages")
+print(f"     URL target: https://showlyrics.github.io/file/v135-4.json")
 print(f"  2. Pastikan SERVER_HASH_URL di file_integrity.py sudah benar")
 print(f"  3. Jalankan PyArmor / Nuitka untuk compile file_integrity.py")
 print(f"     (file_integrity.py sudah di-patch dengan _BUILTIN_HASHES terbaru)")

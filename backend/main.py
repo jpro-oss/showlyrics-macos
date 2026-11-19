@@ -10,7 +10,7 @@ import subprocess
 import atexit
 from contextlib import asynccontextmanager
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse
@@ -18,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
 from config import (
-    load_json, save_json, get_resource_path, DEV,
+    load_json, save_json, get_resource_path, get_binary_path, DEV,
     APP_SETTINGS_FILE, DISPLAY_PRESETS_FILE, LT_PRESETS_FILE,
     FB_PRESETS_FILE, CAMERA_SETTINGS_FILE,
 )
@@ -35,6 +35,7 @@ import routes_pages
 import routes_media
 import routes_service
 import routes_settings
+import routes_plugin
 
 # --- IMPORT FILE INTEGRITY ---
 import file_integrity
@@ -64,8 +65,11 @@ async def lifespan(app: FastAPI):
         else:
             loop.default_exception_handler(context)
     loop.set_exception_handler(_suppressed_exc_handler)
+    bg_tasks.get_ffmpeg_path()
     print("[SYSTEM] Starting Go Playback Engine...")
     start_go_engine()
+    print("[SYSTEM] Starting Go Camera Service...")
+    start_camera_service()
     print("[SYSTEM] Starting background license validation...")
     asyncio.create_task(license_check.async_license_check())
     loop.run_in_executor(None, manager.sync_state_from_go)
@@ -75,7 +79,20 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_network_check())
     yield
     # ──────────────────────── SHUTDOWN ────────────────────────
-    # stop_go_engine() dipanggil via atexit.register()
+    stop_camera_service()
+    stop_go_engine()
+    try:
+        file_integrity.stop_monitor()
+    except Exception:
+        pass
+    try:
+        network_guard.stop_watchdog()
+    except Exception:
+        pass
+    try:
+        sender.stop_discovery()
+    except Exception:
+        pass
 
 
 # ==========================================
@@ -105,6 +122,7 @@ app.include_router(routes_pages.router)
 app.include_router(routes_media.router)
 app.include_router(routes_service.router)
 app.include_router(routes_settings.router)
+app.include_router(routes_plugin.router)
 
 # Mount Static Files — SETELAH routes_pages didaftarkan (urutan kritis!)
 # Route /static/wm.js dari routes_pages akan menang vs StaticFiles ini.
@@ -145,55 +163,80 @@ network_guard.inject_license(license_check)
 
 
 # ==========================================
-# ⚙️ GO PLAYBACK ENGINE PROCESS MANAGEMENT
+# ⚙️ GO SERVICES PROCESS MANAGEMENT
 # ==========================================
 go_proc = None
+camera_proc = None
+
+
+def _stop_child_proc(proc, label: str):
+    if not proc:
+        return None
+    if proc.poll() is not None:
+        return None
+    print(f"[SYSTEM] Terminating {label}...")
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    except Exception as e:
+        print(f"[SYSTEM] Error terminating {label}: {e}")
+    return None
+
 
 def start_go_engine():
     global go_proc
     try:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        # macOS: binary tanpa ekstensi .exe
-        go_exe = os.path.join(base_dir, "playback-engine")
-        if not os.path.exists(go_exe):
-            try:
-                go_exe = os.path.join(sys._MEIPASS, "playback-engine")
-            except Exception:
-                pass
-
-        if os.path.exists(go_exe):
+        if go_proc and go_proc.poll() is None:
+            return
+        go_exe = get_binary_path("playback-engine")
+        if go_exe and os.path.exists(go_exe):
             print(f"[SYSTEM] Spawning Go Playback Engine from {go_exe}...")
-            # Pastikan binary punya execute permission (penting setelah extract PyInstaller)
-            try:
-                os.chmod(go_exe, 0o755)
-            except Exception:
-                pass
             go_proc = subprocess.Popen(
                 [go_exe],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
             )
-            # Beri waktu Go engine 200ms untuk bind ke port 18899
             time.sleep(0.2)
         else:
-            print(f"[SYSTEM] ERROR: playback-engine not found at {go_exe}!")
+            print("[SYSTEM] ERROR: playback-engine binary not found!")
     except Exception as e:
         print(f"[SYSTEM] Error starting Go engine: {e}")
 
+
 def stop_go_engine():
     global go_proc
-    if go_proc:
-        print("[SYSTEM] Terminating Go Playback Engine...")
-        try:
-            go_proc.terminate()  # SIGTERM — graceful shutdown
-            try:
-                go_proc.wait(timeout=3)  # Tunggu max 3 detik
-            except subprocess.TimeoutExpired:
-                go_proc.kill()  # SIGKILL jika tidak mau mati
-        except Exception as e:
-            print(f"[SYSTEM] Error terminating Go engine: {e}")
-        go_proc = None
+    go_proc = _stop_child_proc(go_proc, "Go Playback Engine")
 
+
+def start_camera_service():
+    global camera_proc
+    try:
+        if camera_proc and camera_proc.poll() is None:
+            return
+        cam_exe = get_binary_path("camera-service")
+        if cam_exe and os.path.exists(cam_exe):
+            print(f"[SYSTEM] Spawning Go Camera Service from {cam_exe}...")
+            camera_proc = subprocess.Popen(
+                [cam_exe],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(0.15)
+        else:
+            print("[SYSTEM] WARNING: camera-service binary not found!")
+    except Exception as e:
+        print(f"[SYSTEM] Error starting Camera Service: {e}")
+
+
+def stop_camera_service():
+    global camera_proc
+    camera_proc = _stop_child_proc(camera_proc, "Go Camera Service")
+
+
+atexit.register(stop_camera_service)
 atexit.register(stop_go_engine)
 
 
@@ -314,21 +357,59 @@ async def websocket_endpoint(websocket: WebSocket):
                 if url:
                     if is_remote:
                         sender_ip = payload.get("sender_id")
-                        if not sender_ip:
+                        if not sender_ip or sender_ip == "external":
                             parsed = urlparse(url)
                             sender_ip = parsed.hostname or "127.0.0.1"
                         
-                        video_id = payload.get("video_id")
+                        video_id = payload.get("video_id") or payload.get("id") or ""
                         if not video_id:
-                            match = re.search(r"/api/videos/file/([^/?#]+)", url)
-                            video_id = match.group(1) if match else url.split('/')[-1]
+                            match = re.search(r"/(?:stream_video|videos/file)/([^/?#]+)", url)
+                            video_id = match.group(1) if match else url.split('/')[-1].split('?')[0].split('#')[0]
+                        video_id = re.sub(r'[^a-zA-Z0-9_\-]', '', str(video_id))
+                        if not video_id:
+                            print(f"[WS] Remote video missing valid video_id from url: {url}")
+                            continue
                             
                         media_id = f"sender_{video_id}"
                         duration = float(payload.get("duration") or 0.0)
-                        video_path = f"http://{sender_ip}:18890/api/stream_video/{video_id}"
+                        
+                        token = ""
+                        try:
+                            parsed_url = urlparse(url)
+                            query_params = parse_qs(parsed_url.query)
+                            if "auth" in query_params:
+                                token = query_params["auth"][0]
+                        except Exception:
+                            pass
+                            
+                        if not token:
+                            try:
+                                import sender
+                                token = sender.find_sender_token(sender_ip)
+                            except Exception:
+                                pass
+                        
+                        token_param = f"?auth={token}" if token else ""
+                        
+                        fallback_url = payload.get("fallback_url") or ""
+                        if not fallback_url and video_id:
+                            fallback_url = f"http://{sender_ip}:18889/api/videos/file/{video_id}{token_param}"
+
+                        # Prioritize Sender's Go Playback Engine (port 18890) if url contains it, else fallback to 18889
+                        if ":18890" in url or "/api/stream_video/" in url:
+                            video_path = f"http://{sender_ip}:18890/api/stream_video/{video_id}"
+                        else:
+                            video_path = fallback_url or f"http://{sender_ip}:18889/api/videos/file/{video_id}{token_param}"
                         
                         payload["url"] = f"/api/stream_video/{media_id}"
+                        payload["media_id"] = media_id
                         payload["hash"] = video_id
+                        payload["fallback_url"] = fallback_url
+                        try:
+                            import routes_media_stream
+                            routes_media_stream.REMOTE_SENDER_CACHE[media_id] = video_path
+                        except Exception:
+                            pass
                     else:
                         match = re.search(r"/api/stream_video/([^/?#]+)", url)
                         if match:
@@ -349,15 +430,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 if not url:
                     await manager.send_go_command_async("stop")
                     manager.bg_state = {"url": ""}
-                    await manager.broadcast({"type": "update_background", "payload": {"url": "", "clear_type": payload.get("clear_type", "")}})
+                    manager._last_bg_state_sig = ""
+                    clear_payload = {"url": "", "clear_type": payload.get("clear_type", "")}
+                    if payload.get("source"):
+                        clear_payload["source"] = payload.get("source")
+                    await manager.broadcast({"type": "update_background", "payload": clear_payload})
                 else:
-                    await manager.send_go_command_async("load", {
+                    load_cmd = {
                         "media_id": media_id,
                         "path": video_path,
                         "duration": duration,
                         "hash": payload.get("hash", ""),
-                        "behavior": payload.get("behavior", "loop")
-                    })
+                        "behavior": payload.get("behavior", "loop"),
+                    }
+                    if is_remote and payload.get("fallback_url"):
+                        load_cmd["fallback_url"] = payload.get("fallback_url")
+                    await manager.send_go_command_async("load", load_cmd)
                     
                     current_pos = manager.get_video_position()
                     payload["start_time"] = current_pos
@@ -366,6 +454,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     payload["playback_rate"] = manager.video_timeline["playback_rate"]
                     
                     manager.bg_state = payload
+                    if payload.get("source") != "remote_sender":
+                        manager.ftb_active = False
                     if manager.should_emit_background_update(payload):
                         await manager.broadcast({"type": "update_background", "payload": payload})
 
@@ -374,12 +464,34 @@ async def websocket_endpoint(websocket: WebSocket):
                 cmd = payload.get("command")
                 target = payload.get("target")
 
+                if cmd == "ftb":
+                    is_ftb = bool(payload.get("value", payload.get("active", payload.get("enabled", False))))
+                    source = payload.get("source", "")
+                    current_source = (manager.bg_state or {}).get("source", "local")
+                    if source == "remote_sender" and current_source != "remote_sender":
+                        pass
+                    else:
+                        manager.ftb_active = is_ftb
+                        if current_source == "remote_sender" or source != "remote_sender":
+                            await manager.send_go_command_async("pause" if is_ftb else "play", {})
+
+                if cmd == "stop":
+                    if target == "audio":
+                        manager.audio_state = {"url": ""}
+                        manager._last_media_state_sig["audio"] = ""
+                    elif target == "video":
+                        manager.bg_state = {"url": ""}
+                        manager._last_bg_state_sig = ""
+
                 if target == "video":
                     go_cmd_map = {
                         "play": "play",
                         "pause": "pause",
+                        "stop": "stop",
                         "replay": "replay",
                         "sync_time": "seek",
+                        "seek": "seek",
+                        "update_duration": "update_duration",
                         "volume": "volume",
                         "mute": "mute",
                         "unmute": "unmute",
@@ -395,8 +507,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     go_cmd = go_cmd_map.get(actual_cmd)
                     if go_cmd:
                         go_payload = {}
-                        if actual_cmd == "sync_time":
+                        if actual_cmd in ("sync_time", "seek"):
                             go_payload["value"] = payload.get("value")
+                        elif actual_cmd == "update_duration":
+                            go_payload["duration"] = payload.get("duration", payload.get("value", 0))
+                            go_payload["value"] = go_payload["duration"]
+                            go_payload["media_id"] = payload.get("media_id", "")
                         elif actual_cmd == "volume":
                             go_payload["value"] = payload.get("value")
                         elif actual_cmd == "playback_rate":
@@ -406,7 +522,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await manager.send_go_command_async(go_cmd, go_payload)
                     
                     # Inject current server position and playback settings into payload for clients
-                    if cmd not in ("volume", "mute", "unmute", "mute_toggle", "loop", "update_behavior"):
+                    if cmd not in ("volume", "mute", "unmute", "mute_toggle", "loop", "update_behavior", "ftb"):
                         payload["value"] = manager.get_video_position()
                     payload["playing"] = manager.video_timeline["playing"]
                     payload["playback_rate"] = manager.video_timeline["playback_rate"]
@@ -418,6 +534,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 cmd = data.get("command")
                 val = data.get("value")
                 
+                if cmd == "ftb":
+                    is_ftb = bool(val)
+                    source = data.get("source", "")
+                    current_source = (manager.bg_state or {}).get("source", "local")
+                    if source == "remote_sender" and current_source != "remote_sender":
+                        pass
+                    else:
+                        manager.ftb_active = is_ftb
+                        if current_source == "remote_sender" or source != "remote_sender":
+                            await manager.send_go_command_async("pause" if is_ftb else "play", {})
+
                 go_cmd_map = {
                     "play": "play",
                     "pause": "pause",
@@ -452,13 +579,26 @@ async def websocket_endpoint(websocket: WebSocket):
                 payload = {
                     "target":  "video",
                     "command": cmd,
-                    "value":   val if cmd in ("volume", "mute", "unmute", "mute_toggle", "loop", "update_behavior") else manager.get_video_position(),
+                    "value":   val if cmd in ("volume", "mute", "unmute", "mute_toggle", "loop", "update_behavior", "ftb") else manager.get_video_position(),
                     "playing": manager.video_timeline["playing"],
                     "playback_rate": manager.video_timeline["playback_rate"]
                 }
                 
                 if manager.should_emit_bg_control(payload):
                     await manager.broadcast({"type": "bg_control", "payload": payload})
+
+            elif action == "ftb":
+                payload = data.get("payload", {})
+                is_ftb = bool(payload.get("value", payload.get("active", payload.get("enabled", False))))
+                source = payload.get("source", "")
+                current_source = (manager.bg_state or {}).get("source", "local")
+                if source == "remote_sender" and current_source != "remote_sender":
+                    pass
+                else:
+                    manager.ftb_active = is_ftb
+                    if current_source == "remote_sender" or source != "remote_sender":
+                        await manager.send_go_command_async("pause" if is_ftb else "play", {})
+                await manager.broadcast({"type": "ftb", "payload": payload})
 
             elif action == "ping":
                 client_ts = data.get("client_ts", 0)
@@ -501,13 +641,21 @@ async def websocket_endpoint(websocket: WebSocket):
                 system_logs.append(log_msg)
 
             elif action == "update_audio":
-                manager.audio_state = data.get("payload", {})
-                if manager.should_emit_media_update("audio", manager.audio_state):
+                incoming_audio = data.get("payload", {}) or {}
+                manager.audio_state = incoming_audio
+                if not incoming_audio.get("url"):
+                    manager._last_media_state_sig["audio"] = ""
+                    await manager.broadcast({"type": "update_audio", "payload": manager.audio_state})
+                elif manager.should_emit_media_update("audio", manager.audio_state):
                     await manager.broadcast({"type": "update_audio", "payload": manager.audio_state})
 
             elif action == "update_photo":
-                manager.photo_state = data.get("payload", {})
-                if manager.should_emit_media_update("photo", manager.photo_state):
+                incoming_photo = data.get("payload", {}) or {}
+                manager.photo_state = incoming_photo
+                if not incoming_photo.get("url"):
+                    manager._last_media_state_sig["photo"] = ""
+                    await manager.broadcast({"type": "update_photo", "payload": manager.photo_state})
+                elif manager.should_emit_media_update("photo", manager.photo_state):
                     await manager.broadcast({"type": "update_photo", "payload": manager.photo_state})
 
             elif action == "update_presentation":
@@ -555,6 +703,82 @@ async def websocket_endpoint(websocket: WebSocket):
                 payload = data.get("payload")
                 manager.stage_rundown_state = payload
                 await manager.broadcast({"type": "stage_rundown", "data": payload})
+
+            elif action == "toggle_plugin":
+                preset = data.get("preset")
+                if preset:
+                    pid = preset.get("id")
+                    if pid in manager.active_plugins:
+                        del manager.active_plugins[pid]
+                    else:
+                        now = time.time()
+                        timers_state = {}
+                        for el in preset.get("elements", []):
+                            el_type = el.get("type")
+                            el_id = el.get("id")
+                            if el_type == "timer":
+                                dur = float(el.get("duration", 300))
+                                timers_state[el_id] = {
+                                    "type": "timer",
+                                    "running": True,
+                                    "started_at": now,
+                                    "paused_at": None,
+                                    "duration": dur,
+                                    "target_end": now + dur,
+                                    "elapsed_before_pause": 0.0
+                                }
+                            elif el_type == "stopwatch":
+                                timers_state[el_id] = {
+                                    "type": "stopwatch",
+                                    "running": True,
+                                    "started_at": now,
+                                    "paused_at": None,
+                                    "elapsed_before_pause": 0.0
+                                }
+                        manager.active_plugins[pid] = {
+                            "preset": preset,
+                            "timers": timers_state,
+                            "activated_at": now
+                        }
+                    await manager.broadcast_plugin_state()
+
+            elif action == "timer_control":
+                preset_id = data.get("preset_id")
+                cmd = data.get("command")
+                val = data.get("value", 0)
+                plugin_entry = manager.active_plugins.get(preset_id)
+                if plugin_entry:
+                    now = time.time()
+                    for el_id, t_state in plugin_entry.get("timers", {}).items():
+                        if cmd in ("play", "start") and not t_state.get("running"):
+                            paused_at = t_state.get("paused_at", now)
+                            t_state["running"] = True
+                            if t_state["type"] == "timer":
+                                remaining = max(0.0, t_state.get("target_end", now) - paused_at)
+                                t_state["target_end"] = now + remaining
+                            elif t_state["type"] == "stopwatch":
+                                pause_dur = now - paused_at
+                                t_state["started_at"] += pause_dur
+                            t_state["paused_at"] = None
+                        elif cmd == "pause" and t_state.get("running"):
+                            t_state["running"] = False
+                            t_state["paused_at"] = now
+                        elif cmd == "reset":
+                            dur = float(t_state.get("duration", 300))
+                            t_state["running"] = True
+                            t_state["started_at"] = now
+                            t_state["paused_at"] = None
+                            t_state["target_end"] = now + dur
+                            t_state["elapsed_before_pause"] = 0.0
+                        elif cmd == "adjust":
+                            if t_state["type"] == "timer":
+                                t_state["target_end"] += float(val)
+                                t_state["duration"] = max(0.0, float(t_state.get("duration", 0)) + float(val))
+                    await manager.broadcast_plugin_state()
+
+            elif action == "clear_all_plugins":
+                manager.active_plugins.clear()
+                await manager.broadcast_plugin_state()
 
     except Exception as e:
         print(f"Koneksi terputus/error: {e}")

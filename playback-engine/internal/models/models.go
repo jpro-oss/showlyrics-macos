@@ -13,6 +13,7 @@ type TimelineState struct {
 	SessionID      string  `json:"session_id"`
 	Hash           string  `json:"hash"`
 	Behavior       string  `json:"behavior"` // "loop", "once_clear", etc.
+	IsRemote       bool    `json:"is_remote,omitempty"`
 }
 
 // WSMessage is the generic wrapper for messages sent to clients
@@ -26,6 +27,7 @@ type WSMessage struct {
 	Playing        bool        `json:"playing,omitempty"`
 	PlaybackRate   float64     `json:"playback_rate,omitempty"`
 	Nonce          string      `json:"_nonce,omitempty"`
+	IsRemote       bool        `json:"is_remote,omitempty"`
 	// [OPT] NetworkAdvance: estimasi half-RTT (detik) untuk kompensasi latency WebSocket.
 	// Client JS menambahkan nilai ini ke target position saat sync, sehingga video
 	// sedikit "proaktif" daripada terlambat. Ini mengurangi visual lag di output display.
@@ -43,12 +45,14 @@ type WSClientMessage struct {
 // BackgroundPayload defines the payload for update_background WebSocket broadcast
 type BackgroundPayload struct {
 	URL          string  `json:"url"`
+	FallbackURL  string  `json:"fallback_url,omitempty"`
 	Behavior     string  `json:"behavior"`
 	StartTime    float64 `json:"start_time"`
 	Playing      bool    `json:"playing"`
 	MediaID      string  `json:"media_id"`
 	PlaybackRate float64 `json:"playback_rate"`
 	Hash         string  `json:"hash"`
+	IsRemote     bool    `json:"is_remote,omitempty"`
 }
 
 // BGControlPayload defines the payload for bg_control WS events
@@ -71,6 +75,7 @@ type CommandRequest struct {
 	Action       string      `json:"action"`
 	MediaID      string      `json:"media_id,omitempty"`
 	Path         string      `json:"path,omitempty"`
+	FallbackURL  string      `json:"fallback_url,omitempty"`
 	Duration     float64     `json:"duration,omitempty"`
 	Hash         string      `json:"hash,omitempty"`
 	Behavior     string      `json:"behavior,omitempty"`

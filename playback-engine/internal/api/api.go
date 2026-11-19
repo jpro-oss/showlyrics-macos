@@ -3,12 +3,15 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"playback-engine/internal/models"
@@ -18,10 +21,6 @@ import (
 )
 
 // videoContentTypes: peta ekstensi → MIME type untuk GPU hardware decode.
-// Browser (Chrome/Electron) hanya mengaktifkan hardware video decoder jika Content-Type
-// terdeteksi dengan benar. Tanpa ini, browser melakukan MIME sniffing (baca 512 byte pertama
-// file) → potensi salah deteksi → software decode via CPU, bukan GPU.
-// Eksplisit Content-Type = GPU decode aktif = CPU usage turun signifikan.
 var videoContentTypes = map[string]string{
 	".mp4":  "video/mp4",
 	".webm": "video/webm",
@@ -33,17 +32,59 @@ var videoContentTypes = map[string]string{
 	".ogv":  "video/ogg",
 }
 
+var hopByHopHeaders = map[string]bool{
+	"connection":          true,
+	"keep-alive":          true,
+	"proxy-authenticate":  true,
+	"proxy-authorization": true,
+	"te":                  true,
+	"trailers":            true,
+	"transfer-encoding":   true,
+	"upgrade":             true,
+}
+
 type Server struct {
-	timeline *timeline.Engine
-	resolver *storage.Resolver
-	hub      *websocket.Hub
+	timeline        *timeline.Engine
+	resolver        *storage.Resolver
+	hub             *websocket.Hub
+	streamTransport *http.Transport
+	streamClient    *http.Client
+	bufferPool      *sync.Pool
 }
 
 func NewServer(timeline *timeline.Engine, resolver *storage.Resolver, hub *websocket.Hub) *Server {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:        50,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
+		DisableCompression:  true, // crucial: video stream byte-range tidak boleh di-gzip
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   0, // 0 = tidak ada timeout global agar streaming durasi panjang / loop tidak terputus
+	}
+
+	bufPool := &sync.Pool{
+		New: func() interface{} {
+			b := make([]byte, 64*1024) // 64KB buffer chunk
+			return &b
+		},
+	}
+
 	return &Server{
-		timeline: timeline,
-		resolver: resolver,
-		hub:      hub,
+		timeline:        timeline,
+		resolver:        resolver,
+		hub:             hub,
+		streamTransport: transport,
+		streamClient:    client,
+		bufferPool:      bufPool,
 	}
 }
 
@@ -116,23 +157,47 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 
 	switch cmd.Action {
 	case "load_media", "load":
-		s.resolver.Register(cmd.MediaID, cmd.Path)
+		isRemote := strings.HasPrefix(cmd.Path, "http://") || strings.HasPrefix(cmd.Path, "https://") || strings.HasPrefix(cmd.MediaID, "sender_")
+		if isRemote {
+			s.resolver.RegisterRemote(cmd.MediaID, cmd.Path, cmd.FallbackURL, cmd.Duration)
+		} else {
+			s.resolver.Register(cmd.MediaID, cmd.Path)
+		}
+
 		state = s.timeline.LoadMedia(cmd.MediaID, cmd.Path, cmd.Duration, cmd.Hash, cmd.Behavior)
 
 		videoURL := fmt.Sprintf("%s://%s/api/stream_video/%s", scheme, host, state.MediaID)
 		payload := models.BackgroundPayload{
 			URL:          videoURL,
+			FallbackURL:  cmd.FallbackURL,
 			Behavior:     state.Behavior,
 			StartTime:    0.0,
 			Playing:      state.Playing,
 			MediaID:      state.MediaID,
 			PlaybackRate: state.PlaybackRate,
 			Hash:         state.Hash,
+			IsRemote:     isRemote,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "update_background",
-			Payload: payload,
+			Type:     "update_background",
+			Payload:  payload,
+			IsRemote: isRemote,
 		})
+
+	case "update_duration":
+		var dur float64
+		if valFloat, ok := cmd.Value.(float64); ok {
+			dur = valFloat
+		} else if cmd.Duration > 0 {
+			dur = cmd.Duration
+		} else if valStr, ok := cmd.Value.(string); ok {
+			dur, _ = strconv.ParseFloat(valStr, 64)
+		}
+		if dur > 0 {
+			s.timeline.UpdateDuration(dur)
+			s.resolver.UpdateDuration(cmd.MediaID, dur)
+		}
+		state = s.timeline.GetState()
 
 	case "play":
 		state = s.timeline.Play()
@@ -143,8 +208,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "pause":
@@ -156,8 +222,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "replay":
@@ -169,8 +236,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "seek", "sync_time":
@@ -189,8 +257,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "playback_rate":
@@ -207,8 +276,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "volume":
@@ -225,8 +295,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "mute":
@@ -238,8 +309,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "unmute":
@@ -251,8 +323,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "stop":
@@ -265,10 +338,12 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			MediaID:      "",
 			PlaybackRate: 1.0,
 			Hash:         "",
+			IsRemote:     false,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "update_background",
-			Payload: payload,
+			Type:     "update_background",
+			Payload:  payload,
+			IsRemote: false,
 		})
 
 	case "loop":
@@ -292,8 +367,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "update_behavior":
@@ -310,8 +386,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			PlaybackRate: state.PlaybackRate,
 		}
 		s.hub.Broadcast(models.WSMessage{
-			Type:    "bg_control",
-			Payload: payload,
+			Type:     "bg_control",
+			Payload:  payload,
+			IsRemote: state.IsRemote,
 		})
 
 	case "update_bg_config":
@@ -321,7 +398,6 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		})
 
 	default:
-		// success response for next/previous placeholder commands
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ignored"})
@@ -334,9 +410,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
-	// Extract media ID from path
-	// path format: /video/{media_id} or /api/stream_video/{media_id}
-	parts := strings.Split(r.URL.Path, "/")
+	// Extract media ID from path, trimming slashes
+	trimmed := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(trimmed, "/")
 	if len(parts) == 0 {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
@@ -347,6 +423,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1. Check if registered as remote endpoint (Media Sender)
+	if ep, ok := s.resolver.GetEndpoint(mediaID); ok && ep != nil && ep.IsRemote {
+		s.proxyStreamWithFailover(w, r, mediaID, ep)
+		return
+	}
+
+	// 2. Query resolver path
 	path, err := s.resolver.GetVideoPath(mediaID)
 	if err != nil {
 		log.Printf("[STREAM] Error finding video path for %s: %v", mediaID, err)
@@ -356,11 +439,16 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Remote proxy streaming
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		log.Printf("[STREAM] Proxying stream for %s to %s", mediaID, path)
-		s.proxyRemoteURL(w, r, path)
+		ep := &storage.StreamEndpoint{
+			PrimaryURL:  path,
+			ActiveRoute: "primary",
+			IsRemote:    true,
+		}
+		s.proxyStreamWithFailover(w, r, mediaID, ep)
 		return
 	}
 
+	// Local file streaming (100% UNTOUCHED LOCAL ARCHITECTURE)
 	info, err := os.Stat(path)
 	if err != nil {
 		log.Printf("[STREAM] Error stat file %s: %v", path, err)
@@ -368,51 +456,37 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// [OPT] Set Content-Type EKSPLISIT berdasarkan ekstensi file SEBELUM http.ServeContent.
-	// Ini krusial untuk GPU hardware decode:
-	// - Tanpa ini: browser lakukan MIME sniffing (baca 512 byte pertama) — syscall tambahan
-	// - Dengan MIME sniffing yang salah: browser fallback ke software decode (CPU tinggi)
-	// - Dengan Content-Type eksplisit: browser langsung aktifkan hardware decoder (GPU)
-	// Hasil: CPU usage turun 30–60% saat playback video 4K/high-bitrate
 	ext := strings.ToLower(filepath.Ext(path))
 	if ct, ok := videoContentTypes[ext]; ok {
 		w.Header().Set("Content-Type", ct)
 	}
 
-	// [OPT] Vary: Range — cache proxy yang benar membutuhkan ini untuk membedakan
-	// response dengan range berbeda. Tanpa ini, proxy bisa serve full-file response
-	// untuk range request.
 	w.Header().Set("Vary", "Range")
-
-	// Cache-Control headers for media assets
 	w.Header().Set("Cache-Control", "public, max-age=31536000")
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	// [OPT] OS Readahead hint untuk file besar (>50MB):
-	// Baca 512KB pertama di goroutine background untuk mengisi OS page cache
-	// sebelum browser mengirim range request pertama (yang bisa datang dalam <100ms).
-	// Di HDD 5400rpm: page fault pertama = 5–20ms per 4KB page.
-	// Dengan readahead: 512KB sudah di-cache → range request pertama langsung dilayani.
-	// Catatan: goroutine ini berjalan NON-BLOCKING — tidak menunda response ke browser.
 	if info.Size() > 50*1024*1024 {
 		go prewarmFileCache(path)
 	}
 
-	log.Printf("[STREAM] Serving: %s (%d MB)", filepath.Base(path), info.Size()/(1024*1024))
+	log.Printf("[STREAM] Serving local: %s (%d MB)", filepath.Base(path), info.Size()/(1024*1024))
 	s.streamStandardFile(w, r, path, info.ModTime())
 }
 
-// prewarmFileCache membaca 512KB pertama file untuk mengisi OS page cache.
-// Dipanggil secara async (goroutine) — tidak blocking request handler.
+var prewarmedFiles sync.Map
+
 func prewarmFileCache(path string) {
+	if _, loaded := prewarmedFiles.LoadOrStore(path, struct{}{}); loaded {
+		return
+	}
 	f, err := os.Open(path)
 	if err != nil {
+		prewarmedFiles.Delete(path)
 		return
 	}
 	defer f.Close()
-	buf := make([]byte, 512*1024) // 512KB — ukuran tipikal buffer decode awal browser
-	f.Read(buf)                   // baca dan buang — tujuannya hanya mengisi OS page cache
-	buf = nil                     // allow GC
+	buf := make([]byte, 512*1024)
+	_, _ = f.Read(buf)
 }
 
 func (s *Server) streamStandardFile(w http.ResponseWriter, r *http.Request, path string, modTime time.Time) {
@@ -426,16 +500,127 @@ func (s *Server) streamStandardFile(w http.ResponseWriter, r *http.Request, path
 	http.ServeContent(w, r, filepath.Base(path), modTime, file)
 }
 
-func (s *Server) proxyRemoteURL(w http.ResponseWriter, r *http.Request, remoteURL string) {
-	req, err := http.NewRequest(r.Method, remoteURL, nil)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+// proxyStreamWithFailover manages streaming from Media Sender with dual-route failover
+func (s *Server) proxyStreamWithFailover(w http.ResponseWriter, r *http.Request, mediaID string, ep *storage.StreamEndpoint) {
+	// Determine target URL based on active route
+	primaryTarget := ep.PrimaryURL
+	fallbackTarget := ep.FallbackURL
+
+	targetURL := primaryTarget
+	if ep.ActiveRoute == "fallback" && fallbackTarget != "" {
+		targetURL = fallbackTarget
+	}
+
+	resp, chosenURL, err := s.executeUpstreamRequest(r, targetURL)
+	if err != nil || (resp != nil && resp.StatusCode >= 500) || (resp != nil && resp.StatusCode == 404 && fallbackTarget != "" && targetURL != fallbackTarget) {
+		// Attempt failover if another URL is available
+		if resp != nil {
+			resp.Body.Close()
+		}
+
+		alternativeURL := ""
+		if targetURL == primaryTarget && fallbackTarget != "" {
+			alternativeURL = fallbackTarget
+		} else if targetURL == fallbackTarget && primaryTarget != "" {
+			alternativeURL = primaryTarget
+		}
+
+		if alternativeURL != "" {
+			log.Printf("[PROXY FAILOVER] Target %s failed (%v). Switching to %s", targetURL, err, alternativeURL)
+			respAlt, chosenAlt, errAlt := s.executeUpstreamRequest(r, alternativeURL)
+			if errAlt == nil && respAlt != nil && respAlt.StatusCode < 400 {
+				resp = respAlt
+				chosenURL = chosenAlt
+				// Pin active route for future requests
+				if alternativeURL == fallbackTarget {
+					s.resolver.PinActiveRoute(mediaID, "fallback")
+				} else {
+					s.resolver.PinActiveRoute(mediaID, "primary")
+				}
+			} else {
+				if respAlt != nil {
+					respAlt.Body.Close()
+				}
+				log.Printf("[PROXY ERROR] Both primary and fallback failed for %s: %v", mediaID, errAlt)
+				http.Error(w, "Bad Gateway - Remote Media Sender Stream Unavailable", http.StatusBadGateway)
+				return
+			}
+		} else {
+			log.Printf("[PROXY ERROR] Stream connection failed for %s: %v", targetURL, err)
+			http.Error(w, "Bad Gateway - Remote Stream Unavailable", http.StatusBadGateway)
+			return
+		}
+	}
+	defer resp.Body.Close()
+
+	// Forward response headers
+	for k, vv := range resp.Header {
+		lowerKey := strings.ToLower(k)
+		if hopByHopHeaders[lowerKey] {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+
+	// Ensure Content-Type is valid for GPU decoding
+	ct := w.Header().Get("Content-Type")
+	if ct == "" || strings.HasPrefix(ct, "application/octet-stream") {
+		w.Header().Set("Content-Type", "video/mp4")
+	}
+
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
+
+	w.WriteHeader(resp.StatusCode)
+
+	if r.Method == http.MethodHead {
 		return
 	}
 
-	// Copy headers from incoming request (Range, Accept, etc.)
+	// Stream body using sync.Pool buffer and immediate flushing
+	bufPtr := s.bufferPool.Get().(*[]byte)
+	buf := *bufPtr
+	defer s.bufferPool.Put(bufPtr)
+
+	flusher, hasFlusher := w.(http.Flusher)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			_, writeErr := w.Write(buf[:n])
+			if writeErr != nil {
+				// Client disconnected (e.g. seek / channel change)
+				break
+			}
+			if hasFlusher {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				log.Printf("[STREAM 206] Stream ended: %v (target=%s)", readErr, chosenURL)
+			}
+			break
+		}
+	}
+}
+
+func (s *Server) executeUpstreamRequest(r *http.Request, targetURL string) (*http.Response, string, error) {
+	if targetURL == "" {
+		return nil, "", fmt.Errorf("empty target URL")
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, nil)
+	if err != nil {
+		return nil, targetURL, err
+	}
+
+	// Copy allowed client headers (Range, If-Range, Accept, etc.)
 	for k, vv := range r.Header {
-		if k == "Host" || k == "Connection" {
+		lowerK := strings.ToLower(k)
+		if lowerK == "host" || hopByHopHeaders[lowerK] {
 			continue
 		}
 		for _, v := range vv {
@@ -443,43 +628,6 @@ func (s *Server) proxyRemoteURL(w http.ResponseWriter, r *http.Request, remoteUR
 		}
 	}
 
-	client := &http.Client{
-		Timeout: 60 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("[PROXY] Error connecting to remote stream %s: %v", remoteURL, err)
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Copy response headers
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-
-	w.WriteHeader(resp.StatusCode)
-
-	// Stream response body with 64KB buffer
-	var buf = make([]byte, 64*1024)
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			_, writeErr := w.Write(buf[:n])
-			if writeErr != nil {
-				// Connection closed by client
-				break
-			}
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
+	resp, err := s.streamClient.Do(req)
+	return resp, targetURL, err
 }

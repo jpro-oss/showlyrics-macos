@@ -17,16 +17,97 @@ on:
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
-  # MATRIX BUILD: arm64 (macos-14) + x86_64 (macos-13) secara paralel
+  # STAGE 1: PREPARE & OBFUSCATE ONCE (JS -> generate_hashes -> PyArmor)
+  # Menjamin static_fingerprint dan templates_fingerprint 100% identik
+  # di kedua arsitektur (arm64 & x86_64). Source repo asli tidak pernah diubah.
+  # ═══════════════════════════════════════════════════════════════════════════
+  prepare-obfuscate:
+    name: Prepare & Obfuscate (JS + Hashes + PyArmor)
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Step A - Obfuscate Frontend JS (tools/obf.json)
+        run: |
+          npm install --no-save javascript-obfuscator
+          for f in backend/static/*.js; do
+            base="$(basename "$f")"
+            if [ "$base" = "sw.js" ] || [ "$base" = "qrcode.min.js" ]; then
+              echo "Skipping $base"
+              continue
+            fi
+            echo "Obfuscating $f ..."
+            obf_tmp="${f%.js}_obf.js"
+            npx --no-install javascript-obfuscator "$f" --output "$obf_tmp" --config tools/obf.json
+            mv "$obf_tmp" "$f"
+          done
+
+      - name: Step B - Generate Integrity Hashes & Patch file_integrity.py
+        run: |
+          python3 tools/generate_hashes.py
+          ls -lh dist/hashes/
+
+      - name: Step C - Obfuscate Python with PyArmor (darwin.x86_64 + darwin.arm64)
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install "pyarmor>=9.0.0,<10.0.0"
+          rm -rf backend/dist backend/build backend/pyarmor_runtime_000000 /tmp/pyarmor_out
+          python3 -m pyarmor.cli gen -O /tmp/pyarmor_out --platform darwin.x86_64,darwin.arm64 backend/*.py
+          touch /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_arm64/__init__.py
+          touch /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_x86_64/__init__.py
+          if [ -d /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_arm64 ] && [ ! -d /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_aarch64 ]; then
+            cp -R /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_arm64 /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_aarch64
+            touch /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_aarch64/__init__.py
+          fi
+          cp /tmp/pyarmor_out/*.py backend/
+          cp -R /tmp/pyarmor_out/pyarmor_runtime_000000 backend/
+          ls -laR backend/pyarmor_runtime_000000/
+
+      - name: Upload Obfuscated Backend Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obfuscated-backend
+          path: |
+            backend/*.py
+            backend/pyarmor_runtime_000000/
+            backend/static/
+            backend/templates/
+          retention-days: 7
+
+      - name: Upload Integrity Hash Manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShowLyricsApp-macOS-hashes
+          path: dist/hashes/*.json
+          retention-days: 30
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MATRIX BUILD: arm64 (macos-15) + x86_64 (macos-15-intel) secara paralel
   # ═══════════════════════════════════════════════════════════════════════════
   build-macos:
     name: Build macOS (${{ matrix.arch }})
+    needs: prepare-obfuscate
     strategy:
       fail-fast: false   # Jika 1 arch gagal, arch lain tetap jalan
       matrix:
         include:
           # Apple Silicon — macOS 15 Sequoia runner (ARM64 native)
-          # macos-14 juga bisa dipakai, macos-15 lebih baru
           - os: macos-15
             arch: arm64
             go_arch: arm64
@@ -36,8 +117,6 @@ jobs:
             artifact_suffix: "arm64"
 
           # Intel Mac — macOS 15 Intel runner (x86_64 native)
-          # PENTING: macos-13 sudah RETIRED (4 Des 2025) → gunakan macos-15-intel
-          # Didukung hingga Agustus 2027 (Intel EOL dari Apple)
           - os: macos-15-intel
             arch: x86_64
             go_arch: amd64
@@ -51,12 +130,18 @@ jobs:
 
     steps:
       # ─────────────────────────────────────────────────────────────
-      # 1. CHECKOUT
+      # 1. CHECKOUT & DOWNLOAD OBFUSCATED BACKEND
       # ─────────────────────────────────────────────────────────────
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Download Obfuscated Backend
+        uses: actions/download-artifact@v4
+        with:
+          name: obfuscated-backend
+          path: backend/
 
       # ─────────────────────────────────────────────────────────────
       # 2. SETUP TOOLS
@@ -78,20 +163,27 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache-dependency-path: playback-engine/go.sum
+          cache-dependency-path: |
+            playback-engine/go.sum
+            camera-service/go.sum
 
       # ─────────────────────────────────────────────────────────────
-      # 3. BUILD GO PLAYBACK ENGINE (arch sesuai matrix)
+      # 3. BUILD GO PLAYBACK ENGINE & CAMERA SERVICE (arch sesuai matrix)
       # ─────────────────────────────────────────────────────────────
-      - name: Build Go Engine (${{ matrix.arch }})
+      - name: Build Go Services (${{ matrix.arch }})
         run: |
           cd playback-engine
           GOOS=darwin GOARCH=${{ matrix.go_arch }} CGO_ENABLED=0 \
             go build -ldflags="-s -w" -o ../backend/playback-engine ./cmd/
           chmod +x ../backend/playback-engine
-          echo "=== Go Engine ==="
-          file ../backend/playback-engine
-          echo "Size: $(du -sh ../backend/playback-engine | cut -f1)"
+          cd ../camera-service
+          GOOS=darwin GOARCH=${{ matrix.go_arch }} CGO_ENABLED=0 \
+            go build -ldflags="-s -w" -o ../backend/camera-service ./cmd/
+          chmod +x ../backend/camera-service
+          cd ..
+          echo "=== Go Services ==="
+          file backend/playback-engine backend/camera-service
+          du -sh backend/playback-engine backend/camera-service
 
       # ─────────────────────────────────────────────────────────────
       # 4. SETUP FFMPEG (arch sesuai matrix)
@@ -129,23 +221,27 @@ jobs:
           backend/ffmpeg -version 2>&1 | head -3
 
       # ─────────────────────────────────────────────────────────────
-      # 5. VERIFY BINARIES DI BACKEND/
+      # 5. VERIFY BINARIES & PYARMOR RUNTIME DI BACKEND/
       # ─────────────────────────────────────────────────────────────
-      - name: Verify backend/ binaries
+      - name: Verify backend/ binaries and PyArmor runtime
         run: |
           echo "=== backend/ listing ==="
           ls -lh backend/
-          for f in backend/ffmpeg backend/playback-engine; do
+          for f in backend/ffmpeg backend/playback-engine backend/camera-service; do
             if [ -f "$f" ]; then
-              echo "OK: $f | arch: $(file $f | grep -o 'arm64\|x86_64\|Mach-O')"
+              echo "OK: $f | arch: $(file "$f" | grep -o 'arm64\|x86_64\|Mach-O')"
             else
               echo "MISSING: $f"
               exit 1
             fi
           done
+          if [ ! -d "backend/pyarmor_runtime_000000" ]; then
+            echo "MISSING: backend/pyarmor_runtime_000000"
+            exit 1
+          fi
 
       # ─────────────────────────────────────────────────────────────
-      # 6. CONVERT ICON .ICO → .ICNS
+      # 6. CONVERT ICON .ICO → .ICNS (fallback jika src/app.icns belum ada)
       # ─────────────────────────────────────────────────────────────
       - name: Convert app.ico to app.icns
         run: |
@@ -157,31 +253,29 @@ jobs:
             exit 0
           fi
 
-          # Fallback placeholder jika tidak ada ico
-          if [ ! -f "$ICO" ]; then
-            echo "WARNING: $ICO not found, creating placeholder..."
-            python3 -c "
-          from PIL import Image
-          img = Image.new('RGBA', (512, 512), (30, 30, 46, 255))
-          img.save('/tmp/icon_src.png')
-          "
-            ICO="/tmp/icon_src.png"
-          fi
-
           PNG="/tmp/app_icon.png"
-          sips -s format png "$ICO" --out "$PNG" 2>/dev/null || cp "$ICO" "$PNG"
+          python3 -c "
+          from PIL import Image
+          import os
+          src = '$ICO' if os.path.exists('$ICO') else 'backend/static/logo.png'
+          img = Image.open(src)
+          if hasattr(img, 'n_frames') and img.n_frames > 1:
+              best = max((img.seek(i) or img.copy() for i in range(img.n_frames)), key=lambda im: im.width * im.height)
+              img = best
+          img.convert('RGBA').save('$PNG')
+          "
 
           ICONSET="/tmp/AppIcon.iconset"
           mkdir -p "$ICONSET"
-          for sz in 16 32 64 128 256 512; do
+          for sz in 16 32 128 256 512; do
             sips -z $sz $sz "$PNG" --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null 2>&1
             sz2=$((sz*2))
             sips -z $sz2 $sz2 "$PNG" --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null 2>&1
           done
 
           iconutil -c icns "$ICONSET" -o "$ICNS" \
-            && echo "app.icns created: $(du -sh $ICNS | cut -f1)" \
-            || echo "WARNING: iconutil gagal, electron-builder akan menggunakan default icon"
+            && echo "app.icns created: $(du -sh "$ICNS" | cut -f1)" \
+            || { echo "ERROR: iconutil failed"; exit 1; }
 
       # ─────────────────────────────────────────────────────────────
       # 7. INSTALL PYTHON DEPENDENCIES
@@ -190,14 +284,11 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           pip install -r backend/requirements-macos.txt
-          pip install "pyinstaller>=6.0.0,<7.0.0"
           echo "=== Key packages ==="
-          pip list | grep -E "PyInstaller|Pillow|PyAV|PyMuPDF|uvicorn|fastapi|pydantic"
+          pip list | grep -E "PyInstaller|Pillow|PyAV|PyMuPDF|uvicorn|fastapi|pydantic|Jinja2|python-multipart"
 
       # ─────────────────────────────────────────────────────────────
       # 8. BUILD PYTHON BACKEND (PyInstaller — arch sesuai runner)
-      #    target_arch=None → ikuti arsitektur runner secara otomatis
-      #    macos-14 → arm64, macos-13 → x86_64
       # ─────────────────────────────────────────────────────────────
       - name: Build Python Backend (PyInstaller ${{ matrix.arch }})
         working-directory: backend
@@ -205,30 +296,47 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           echo "=== Pre-build check ==="
-          file ffmpeg playback-engine
+          echo "Python: $(python3 --version)"
+          echo "PyInstaller: $(python3 -m PyInstaller --version)"
+          file ffmpeg playback-engine camera-service
+
+          # Isolate PyArmor runtime .so STRICTLY per TARGET_ARCH (cegah IncompatibleBinaryArchError)
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            rm -rf pyarmor_runtime_000000/darwin_x86_64
+          else
+            rm -rf pyarmor_runtime_000000/darwin_arm64 pyarmor_runtime_000000/darwin_aarch64
+          fi
+          ls -laR pyarmor_runtime_000000/
+
           echo ""
           echo "=== Starting PyInstaller (${{ matrix.arch }}) ==="
-          ARCH=${{ matrix.arch }} pyinstaller ShowLyrics-macos.spec --clean --noconfirm
+          ARCH=${{ matrix.arch }} python3 -m PyInstaller ShowLyrics-macos.spec --clean --noconfirm
 
           echo ""
           echo "=== Output ==="
           ls -lh dist/ShowLyrics/
           echo "Total: $(du -sh dist/ShowLyrics/ | cut -f1)"
+          find dist/ShowLyrics/ -name "pyarmor_runtime.so" -exec file {} \;
 
       # ─────────────────────────────────────────────────────────────
-      # 9. SETUP BIN/
+      # 9. SETUP BIN/ & AD-HOC CODESIGN
       # ─────────────────────────────────────────────────────────────
       - name: Setup bin/ for Electron
         run: |
           rm -rf bin && mkdir -p bin
           cp -r backend/dist/ShowLyrics/* bin/
-          find bin/ -type f \( -name "ShowLyrics" -o -name "playback-engine" -o -name "ffmpeg" \) \
+          find bin/ -type f \( -name "ShowLyrics" -o -name "playback-engine" -o -name "camera-service" -o -name "ffmpeg" \) \
             -exec chmod +x {} \;
+
+          # Ad-hoc codesign semua Mach-O binaries agar Apple Silicon (arm64) tidak SIGKILL
+          find bin/ -type f | while read -r f; do
+            if file "$f" | grep -q "Mach-O"; then
+              codesign --force --sign - "$f" || true
+            fi
+          done
 
           echo "=== bin/ ==="
           ls -lh bin/
-          echo "=== bin/internal (sample) ==="
-          ls bin/internal/ 2>/dev/null | head -15
           echo "Total: $(du -sh bin/ | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
@@ -239,23 +347,19 @@ jobs:
 
       # ─────────────────────────────────────────────────────────────
       # 11. BUILD ELECTRON APP BUNDLE
-      #     Strategi: build dengan target 'dir' dulu (hanya .app bundle)
-      #     MENGAPA: electron-builder 24.x + macOS 15 Sequoia punya bug
-      #     hdiutil dimana disk image tidak bisa di-detach (Resource busy)
-      #     saat build DMG. Target 'dir' tidak pakai hdiutil sama sekali.
       # ─────────────────────────────────────────────────────────────
       - name: Build Electron App Bundle (${{ matrix.arch }})
         timeout-minutes: 20
         run: |
           echo "Building Electron app bundle for ${{ matrix.arch }}..."
-          # Build hanya .app bundle (tidak langsung jadi DMG/ZIP)
-          # --publish never: nonaktifkan semua publish/upload ke GitHub
           npx electron-builder --mac dir ${{ matrix.electron_arch }} --publish never
 
           echo ""
           echo "=== App bundle output ==="
           APP_DIR=$(find dist/ -name "*.app" -maxdepth 3 | head -1)
           if [ -n "$APP_DIR" ]; then
+            echo "Ad-hoc signing $APP_DIR ..."
+            codesign --force --deep --sign - "$APP_DIR" || true
             echo "OK: $APP_DIR ($(du -sh "$APP_DIR" | cut -f1))"
           else
             echo "ERROR: .app bundle tidak ditemukan!"
@@ -266,18 +370,18 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       # ─────────────────────────────────────────────────────────────
-      # 11b. CREATE DMG dengan create-dmg (tidak pakai hdiutil internal)
-      #      create-dmg adalah Homebrew tool yang lebih reliable di macOS 15
+      # 11b. CREATE DMG dengan create-dmg (atau fallback ZIP)
       # ─────────────────────────────────────────────────────────────
       - name: Create DMG (${{ matrix.arch }})
         timeout-minutes: 10
         run: |
-          # Install create-dmg (ringan, sudah ada di Homebrew macOS runner)
           brew install create-dmg 2>/dev/null || true
 
+          VERSION=$(node -p "require('./package.json').version")
           APP_DIR=$(find dist/ -name "*.app" -maxdepth 3 | head -1)
-          DMG_NAME="ShowLyricsApp-2.5.0-${{ matrix.artifact_suffix }}.dmg"
+          DMG_NAME="ShowLyricsApp-${VERSION}-${{ matrix.artifact_suffix }}.dmg"
           DMG_PATH="dist/$DMG_NAME"
+          ZIP_NAME="ShowLyricsApp-${VERSION}-${{ matrix.artifact_suffix }}.zip"
 
           echo "Creating DMG: $DMG_PATH from $APP_DIR"
 
@@ -289,14 +393,12 @@ jobs:
             --icon "ShowLyricsApp.app" 130 200 \
             --hide-extension "ShowLyricsApp.app" \
             --app-drop-link 410 200 \
+            --skip-jenkins \
             "$DMG_PATH" \
             "$APP_DIR" \
             || {
               echo "WARNING: create-dmg gagal, membuat ZIP sebagai fallback..."
-              cd dist
-              ZIP_NAME="ShowLyricsApp-2.5.0-${{ matrix.artifact_suffix }}.zip"
-              ditto -c -k --sequesterRsrc --keepParent "$(basename "$APP_DIR")" "$ZIP_NAME"
-              cd ..
+              ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "dist/$ZIP_NAME"
               echo "OK: Fallback ZIP dibuat: dist/$ZIP_NAME"
             }
 
@@ -312,7 +414,6 @@ jobs:
           echo "=== dist/ final artifacts ==="
           ls -lh dist/
 
-          # Cek DMG atau ZIP (salah satu harus ada)
           DMG_FILE=$(find dist/ -maxdepth 1 -name "*.dmg" | head -1)
           ZIP_FILE=$(find dist/ -maxdepth 1 -name "*.zip" | head -1)
 
@@ -345,42 +446,52 @@ jobs:
           if-no-files-found: ignore
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # (OPSIONAL) CREATE RELEASE — hanya jika workflow_dispatch create_release=true
+  # AUTOMATIC CREATE RELEASE — Berjalan pada push ke main, tag, & workflow_dispatch
   # ═══════════════════════════════════════════════════════════════════════════
   create-release:
     name: Create GitHub Release
-    needs: build-macos
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' }}
+    needs: [prepare-obfuscate, build-macos]
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release != 'false') || startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: Download all DMG artifacts
+      - name: Checkout package.json for version
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download all release artifacts (DMG, ZIP, hashes)
         uses: actions/download-artifact@v4
         with:
           path: release-assets/
-          pattern: ShowLyricsApp-macOS-*-DMG
+          pattern: ShowLyricsApp-macOS-*
           merge-multiple: true
 
       - name: List release assets
         run: |
           echo "=== Release assets ==="
-          find release-assets/ -name "*.dmg" | sort
-          DMG_COUNT=$(find release-assets/ -name "*.dmg" | wc -l)
-          echo "Total DMGs: $DMG_COUNT"
-          if [ "$DMG_COUNT" -eq 0 ]; then
-            echo "ERROR: No DMG files found for release!"
+          find release-assets/ -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.json" \) | sort
+          ASSET_COUNT=$(find release-assets/ -type f \( -name "*.dmg" -o -name "*.zip" \) | wc -l)
+          echo "Total installers: $ASSET_COUNT"
+          if [ "$ASSET_COUNT" -eq 0 ]; then
+            echo "ERROR: No DMG or ZIP files found for release!"
             exit 1
           fi
+          echo "APP_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.5.0-build.${{ github.run_number }}
-          name: ShowLyricsApp v2.5.0 (Build ${{ github.run_number }})
+          tag_name: v${{ env.APP_VERSION }}-build.${{ github.run_number }}
+          name: ShowLyricsApp v${{ env.APP_VERSION }} (Build ${{ github.run_number }})
           draft: false
           prerelease: false
           fail_on_unmatched_files: false
           files: |
             release-assets/**/*.dmg
+            release-assets/**/*.zip
+            release-assets/**/*.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

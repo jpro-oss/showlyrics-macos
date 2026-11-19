@@ -28,7 +28,12 @@
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "darkModeSupport": true,
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "extendInfo": {
+        "NSCameraUsageDescription": "ShowLyrics requires camera access for live video background and lower-third projection.",
+        "NSMicrophoneUsageDescription": "ShowLyrics requires microphone access for audio capture.",
+        "NSLocalNetworkUsageDescription": "ShowLyrics uses the local network to synchronize stage displays, controllers, and remote projection outputs."
+      }
     },
     "dmg": {
       "title": "ShowLyricsApp ${version}",

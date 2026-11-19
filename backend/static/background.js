@@ -14,28 +14,58 @@
         /* ========== DETEKSI KAPASITAS PERANGKAT ========== */
         (function detectDevice() {
             const cores = navigator.hardwareConcurrency || 4;
-
-            // BUG FIX: navigator.deviceMemory || 4 menyebabkan isLow SELALU true di Electron!
-            // Karena deviceMemory bisa undefined di Electron, fallback ke 4, lalu 4 <= 4 = TRUE.
-            // Fix: gunakan nilai aktual atau null — JANGAN fallback ke 4.
             const mem = navigator.deviceMemory || null;
+            
+            // Query GPU menggunakan WebGL (Bekerja di Electron maupun Browser)
+            let gpu = "";
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debugInfo) {
+                        gpu = (gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || "").toLowerCase();
+                    }
+                }
+            } catch (e) {}
 
-            // Deteksi apakah berjalan di Electron (via User-Agent string)
-            const isElectron = /Electron\//.test(navigator.userAgent);
+            let tier = "mid"; // default fallback
 
-            if (isElectron) {
-                // Di Electron: paksa 'high' tier untuk mendapat sync interval MINIMUM.
-                // HEARTBEAT_THROTTLE_MS = 0 artinya SETIAP heartbeat diproses.
-                // Ini penting karena video di Electron butuh sinkronisasi presisi.
-                window._bgDeviceTier = "high";
-            } else {
-                // Di browser biasa: deteksi tier berdasarkan hardware aktual
-                const memIsLow = (mem !== null) && (mem <= 4);
-                const isLow = cores <= 4 || memIsLow;
-                const memIsMid = (mem !== null) && (mem <= 8);
-                const isMid = !isLow && (cores <= 8 || memIsMid);
-                window._bgDeviceTier = isLow ? "low" : (isMid ? "mid" : "high");
+            // 1. Klasifikasi LOW-END (Kentang)
+            const isLowCpuOrRam = (cores <= 4) || (mem !== null && mem <= 4);
+            const isLowGpu = gpu.includes("intel(r) hd") || 
+                             gpu.includes("intel(r) uhd") || 
+                             gpu.includes("intel hd") || 
+                             gpu.includes("intel uhd") || 
+                             gpu.includes("microsoft basic") || 
+                             gpu.includes("swiftshader") || 
+                             gpu.includes("llvmpipe");
+
+            if (isLowCpuOrRam || isLowGpu) {
+                tier = "low";
+            } 
+            // 2. Klasifikasi HIGH-END
+            else {
+                const hasDiscreteGpu = gpu.includes("rtx") || 
+                                       gpu.includes("gtx") || 
+                                       gpu.includes("geforce") || 
+                                       gpu.includes("nvidia") || 
+                                       gpu.includes("radeon rx") || 
+                                       gpu.includes("apple m") || 
+                                       gpu.includes("arc(tm)") || 
+                                       gpu.includes("discrete");
+                
+                const hasHighCpuAndRam = (cores >= 6) && (mem === null || mem >= 8);
+                
+                if (hasDiscreteGpu && hasHighCpuAndRam) {
+                    tier = "high";
+                } else if (cores >= 8 && (mem === null || mem >= 8)) {
+                    tier = "high";
+                }
             }
+
+            window._bgDeviceTier = tier;
+            console.log(`[BG] Assigned device capacity tier: ${window._bgDeviceTier} (CPU: ${cores} cores, RAM: ${mem ? mem + 'GB' : 'unknown'}, GPU: ${gpu || 'unknown'})`);
         })();
 
         /* ========== KONFIGURASI ========== */
@@ -114,6 +144,7 @@
 
         // BroadcastChannel snapshot state (mengganti localStorage)
         let lastSnapshot = null;   // { videoUrl, playbackStartedAt, pausedAt, playing, generationId }
+        window._isFtbActive = false;
 
         let ws = null;
         let reconnectTimer = null;
@@ -165,21 +196,48 @@
             video.setAttribute("muted", "");
         }
 
+        let bgVolume = 1.0;
+        let bgMuted = false;
+        let audioOutputDeviceId = 'default';
+
+        // [FIX] Display output video selalu MUTED — audio hanya dari masterBgAudio di control.html
+        // initVideoOutputDevice() dinonaktifkan: tidak perlu routing audio di output page
+        async function initVideoOutputDevice() {
+            // NO-OP: Display video always muted. Audio routed via control.html masterBgAudio only.
+            forceMuted(v1);
+            forceMuted(v2);
+        }
+        initVideoOutputDevice();
+
+        // [FIX] Display output SELALU MUTED — audio hanya dari control.html via masterBgAudio
         function applyVolumeState(video) {
-            // Background.html selalu mute — audio dikelola oleh audio.html
             if (!video) return;
-            video.muted = true;
-            video.volume = 0;
-            video.setAttribute("muted", "");
+            // Selalu force muted di display output — tidak ada audio dari halaman output
+            forceMuted(video);
+        }
+
+        // [PLAY-PAUSE FIX] Helpers dengan tracking _intentionalPause & dataset untuk anti-stall guard
+        function pauseVideo(video) {
+            if (!video) return;
+            video._intentionalPause = true;
+            video.dataset.intentionalPause = "true";
+            video.pause();
+            if (video.playbackRate !== 1.0) video.playbackRate = 1.0;
+        }
+
+        function playVideo(video) {
+            if (!video) return Promise.resolve();
+            video._intentionalPause = false;
+            video.dataset.intentionalPause = "false";
+            return video.play();
         }
 
         function cleanupVideo(video) {
             if (!video) return;
             try {
-                video.pause();
+                pauseVideo(video);
                 video.removeAttribute("src");
                 video.src = "";
-                video.load();
                 video.style.opacity = "0";
                 video.dataset.behavior = "";
                 video.playbackRate = 1.0;
@@ -281,6 +339,11 @@
             let t = parseFloat(rawValue);
             if (!Number.isFinite(t)) return;
 
+            // [PLAY-PAUSE FIX] Jangan ubah posisi/rate jika video sedang di-pause — tunggu tombol Play ditekan
+            if (curr.paused || curr._intentionalPause || curr.dataset.intentionalPause === "true") {
+                return;
+            }
+
             if (curr.duration && curr.duration > 0 && curr.loop) {
                 t = t % curr.duration;
             }
@@ -288,9 +351,15 @@
             const drift = curr.currentTime - t;
             const absDrift = Math.abs(drift);
             const targetRate = options.playbackRate || 1.0;
+            const isRemote = options.isRemote || false;
+
+            // Toleransi drift lebih longgar jika remote video agar tidak memicu micro-stutter di WiFi
+            const microIgnore = isRemote ? 1.2 : SYNC_MICRO_IGNORE;
+            const mediumLimit = isRemote ? 2.5 : SYNC_MEDIUM_LIMIT;
+            const hardSeekLimit = isRemote ? 2.0 : SYNC_HARD_SEEK_LIMIT;
 
             /* TIER 1 — Micro drift: abaikan & kembalikan playbackRate normal */
-            if (absDrift < SYNC_MICRO_IGNORE && !options.force) {
+            if (absDrift < microIgnore && !options.force) {
                 if (curr.playbackRate !== targetRate) {
                     curr.playbackRate = targetRate;
                 }
@@ -303,7 +372,7 @@
              * [RC-8] Rate proporsional: drift besar → rate lebih agresif
              * [PERF-FIX] SYNC_MEDIUM_LIMIT diperluas ke 1.5s (low-end) agar drift ≤600ms
              * selalu di-handle via playbackRate, tidak pernah trigger hard seek. */
-            if (absDrift <= SYNC_MEDIUM_LIMIT && !options.force) {
+            if (absDrift <= mediumLimit && !options.force) {
                 if (drift < 0) {
                     // Video tertinggal — percepat secara adaptif
                     curr.playbackRate = targetRate * getAdaptiveCatchupRate(absDrift);
@@ -323,7 +392,7 @@
              * hard seek yang mengganggu visual dan memicu reconnect loop.
              * JANGAN seek saat buffering (readyState < 3) karena seek membatalkan buffer fill!
              * JANGAN seek di 0.5s pertama agar decoder sempat decode frame awal. */
-            if (!options.force && absDrift <= SYNC_HARD_SEEK_LIMIT) return;
+            if (!options.force && absDrift <= hardSeekLimit) return;
             if (!options.force && curr.readyState < 3) return;
             if (!options.force && curr.currentTime < 0.5) return;
             maskedHardSeek(curr, t);
@@ -338,7 +407,7 @@
             if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
             syncDebounceTimer = setTimeout(() => {
                 syncDebounceTimer = null;
-                applySyncTime(rawValue);
+                applySyncTime(rawValue, options);
             }, SYNC_DEBOUNCE_MS);
         }
 
@@ -378,6 +447,9 @@
             forceMuted(video);
 
             video.addEventListener("error", () => {
+                if (!video.src || video.src === "" || !video.getAttribute("src")) {
+                    return;
+                }
                 videoErrorCount++;
                 console.warn(`Background video error (${videoErrorCount}):`, video.error);
                 if (videoErrorCount >= MAX_VIDEO_ERRORS) videoErrorCount = 0;
@@ -396,12 +468,22 @@
                 if (video.dataset.behavior === "once_clear") {
                     video.style.opacity = "0";
                     setTimeout(() => cleanupVideo(video), crossfadeTime);
+                } else if (video.dataset.behavior === "once" || video.dataset.behavior === "once_hold") {
+                    pauseVideo(video);
+                    if (video.duration > 0.05) {
+                        try { video.currentTime = video.duration - 0.05; } catch (_) { }
+                    }
                 }
             });
         }
 
         /* ========== BACKGROUND MANAGER (RACE-SAFE) ========== */
         function setBackground(payload = {}) {
+            const mediaSource = payload.source || 'local';
+            if (mediaSource !== 'remote_sender') {
+                // Master Priority: Media lokal SHOWLYRICS APP paling prioritas, FTB otomatis mati
+                window._isFtbActive = false;
+            }
             let url = payload.url || "";
             if (url) {
                 if (url.startsWith('/')) {
@@ -422,6 +504,13 @@
 
             // Dedup: parameter sama & tidak di-force-replay → hanya update timeline
             if (signature === lastBgSignature && url && !forceReplay) {
+                const currVidDedup = getCurrentVideo();
+                if (currVidDedup) {
+                    currVidDedup.dataset.mediaSource = mediaSource;
+                }
+                if (mediaSource !== 'remote_sender') {
+                    window._isFtbActive = false;
+                }
                 // Terima start_time update (misalnya dari reconnect/join baru)
                 if (payload.start_time !== undefined && (isCalibrated || hasCalibratedOnce)) {
                     applySyncTime(payload.start_time);
@@ -464,7 +553,7 @@
                 
                 if (payload.clear_type === "clearlayer") {
                     currVid.style.opacity = "0";
-                    currVid.pause();
+                    pauseVideo(currVid);
                     try { currVid.currentTime = 0; } catch (_) {}
                     isTransitioning = false;
                     return;
@@ -501,20 +590,29 @@
 
             // URL sama (tidak force replay): hanya perbarui timeline
             if (currUrl === incomingUrl) {
-                // Pastikan opacity di-restore ke 1 (jika sebelumnya disembunyikan oleh clearlayer)
-                currVid.style.opacity = "1";
-                
-                // Selalu replay dari awal ("tetap di replay dari awal") ketika unclear / muat ulang
-                currVid.dataset.behavior = behavior;
-                currVid.loop = (behavior === "loop" || behavior === undefined);
-                try { currVid.currentTime = 0; } catch (_) { }
-                currVid.play().catch(() => { });
+                currVid.dataset.mediaSource = mediaSource;
+                if (mediaSource !== 'remote_sender') {
+                    window._isFtbActive = false;
+                }
+                if (window._isFtbActive && currVid.dataset.mediaSource === 'remote_sender') {
+                    currVid.style.opacity = "0";
+                    pauseVideo(currVid);
+                    currVid._intentionalPause = true;
+                    currVid.dataset.intentionalPause = "true";
+                } else {
+                    currVid.style.opacity = "1";
+                    currVid.dataset.behavior = behavior;
+                    currVid.loop = (behavior === "loop" || behavior === undefined);
+                    try { currVid.currentTime = 0; } catch (_) { }
+                    playVideo(currVid).catch(() => { });
+                }
                 return;
             }
 
             // --- URL BARU: siapkan next video ---
             cleanupVideo(nextVid);
             nextVid.dataset.behavior = behavior;
+            nextVid.dataset.mediaSource = mediaSource;
             nextVid.loop = (behavior === "loop" || behavior === undefined);
             nextVid.preload = "auto"; // upgrade preload hanya saat transisi
             nextVid.setAttribute("preload", "auto");
@@ -551,7 +649,7 @@
                 if (playbackStarted) return;
                 playbackStarted = true;
 
-                nextVid.play().then(() => {
+                playVideo(nextVid).then(() => {
                     if (requestId !== bgRequestId) return;
 
                     // Terapkan posisi awal jika ada start_time yang disimpan
@@ -577,8 +675,16 @@
                     nextVid.style.willChange = "opacity, transform";
                     currVid.style.willChange = "opacity, transform";
 
-                    nextVid.style.opacity = "1";
-                    currVid.style.opacity = "0";
+                    if (window._isFtbActive && nextVid.dataset.mediaSource === 'remote_sender') {
+                        nextVid.style.opacity = "0";
+                        currVid.style.opacity = "0";
+                        pauseVideo(nextVid);
+                        nextVid._intentionalPause = true;
+                        nextVid.dataset.intentionalPause = "true";
+                    } else {
+                        nextVid.style.opacity = "1";
+                        currVid.style.opacity = "0";
+                    }
 
                     // Setelah fade selesai: bersihkan old video
                     fadeTimeout = setTimeout(() => {
@@ -597,7 +703,7 @@
                 }).catch((err) => {
                     console.warn("Autoplay prevented or playback error, forcing mute and retrying:", err);
                     forceMuted(nextVid);
-                    nextVid.play().then(() => {
+                    playVideo(nextVid).then(() => {
                         if (requestId !== bgRequestId) return;
 
                         if (nextVid._targetStartTime !== undefined && nextVid._targetStartTime > 0.5) {
@@ -620,8 +726,16 @@
                         nextVid.style.willChange = "opacity, transform";
                         currVid.style.willChange = "opacity, transform";
 
-                        nextVid.style.opacity = "1";
-                        currVid.style.opacity = "0";
+                        if (window._isFtbActive && nextVid.dataset.mediaSource === 'remote_sender') {
+                            nextVid.style.opacity = "0";
+                            currVid.style.opacity = "0";
+                            pauseVideo(nextVid);
+                            nextVid._intentionalPause = true;
+                            nextVid.dataset.intentionalPause = "true";
+                        } else {
+                            nextVid.style.opacity = "1";
+                            currVid.style.opacity = "0";
+                        }
 
                         fadeTimeout = setTimeout(() => {
                             if (requestId !== bgRequestId) return;
@@ -635,8 +749,16 @@
                         console.error("Critical: Retrying playback failed:", finalErr);
                         // Walaupun gagal mutar, tetap transisi ke opacity 1 agar frame pertama terlihat daripada hitam pekat
                         activeVid = activeVid === 1 ? 2 : 1;
-                        nextVid.style.opacity = "1";
-                        currVid.style.opacity = "0";
+                        if (window._isFtbActive && nextVid.dataset.mediaSource === 'remote_sender') {
+                            nextVid.style.opacity = "0";
+                            currVid.style.opacity = "0";
+                            pauseVideo(nextVid);
+                            nextVid._intentionalPause = true;
+                            nextVid.dataset.intentionalPause = "true";
+                        } else {
+                            nextVid.style.opacity = "1";
+                            currVid.style.opacity = "0";
+                        }
                     });
                 });
             };
@@ -738,11 +860,24 @@
                         }
                     }, 25000);
                 }
+
+                if (typeof _WEShield !== 'undefined' && typeof _WEShield.attachSocket === 'function') {
+                    _WEShield.attachSocket(ws);
+                }
             };
 
             ws.onmessage = (event) => {
+                if (typeof _WEShield !== 'undefined' && typeof _WEShield.dispatch === 'function') {
+                    _WEShield.dispatch(event.data, (data) => {
+                        handleBgWsMessage(data);
+                    });
+                } else {
+                    try { handleBgWsMessage(JSON.parse(event.data)); } catch (_) {}
+                }
+            };
+
+            function handleBgWsMessage(data) {
                 try {
-                    const data = JSON.parse(event.data);
                     const action = data.action || data.type;
                     const payload = data.payload || {};
 
@@ -800,10 +935,12 @@
                         const position = data.position;
                         const playing = data.playing;
                         const playbackRate = data.playback_rate || 1.0;
+                        const isRemote = data.is_remote || false;
 
                         const curr = getCurrentVideo();
                         // ONLY sync to heartbeat if clock calibration has completed or has run at least once before
-                        if (curr && curr.src && playing && !isTransitioning && (isCalibrated || hasCalibratedOnce)) {
+                        // AND only if video is NOT paused by control (anti-stall guard protection)
+                        if (curr && curr.src && playing && !curr.paused && !curr._intentionalPause && curr.dataset.intentionalPause !== "true" && !isTransitioning && (isCalibrated || hasCalibratedOnce)) {
                             // [OPT] network_advance compensation:
                             // Server mengirim estimasi half-RTT (detik). Ditambahkan ke targetPos
                             // agar video sedikit "proaktif" — mengkompensasi latency:
@@ -812,7 +949,19 @@
                             const networkAdvance = data.network_advance || 0;
                             const elapsed = (getServerTimeNow() - serverTime) / 1000;
                             const targetPos = position + elapsed * playbackRate + networkAdvance;
-                            scheduleSync(targetPos, { force: false, playbackRate: playbackRate });
+                            scheduleSync(targetPos, { force: false, playbackRate: playbackRate, isRemote: isRemote });
+                            if (bc && Number.isFinite(curr.currentTime)) {
+                                try {
+                                    bc.postMessage({
+                                        type: "bg_video_pos",
+                                        currentTime: curr.currentTime,
+                                        paused: curr.paused,
+                                        playbackRate: curr.playbackRate || 1.0,
+                                        mediaSource: curr.dataset.mediaSource || "",
+                                        ts: Date.now()
+                                    });
+                                } catch (_) { }
+                            }
                         }
                     }
 
@@ -828,7 +977,11 @@
                     }
 
                     if (action === "update_background") {
+                        // [FIX] Display output selalu muted — abaikan payload.muted
+                        // Audio video diputar oleh masterBgAudio di control.html, bukan di sini
+                        bgMuted = true;
                         setBackground(payload);
+                        applyVolumeState(getCurrentVideo());
 
                         let mediaId = payload.media_id;
                         if (!mediaId && payload.url) {
@@ -842,33 +995,63 @@
 
                     if (action === "bg_control" && payload.target === "video") {
                         const currVid = getCurrentVideo();
+                        const otherVid = getNextVideo();
                         const cmd = payload.command;
 
                         if (cmd === "play") {
-                            currVid.play().catch(() => { });
+                            if (window._isFtbActive && currVid && currVid.dataset.mediaSource === 'remote_sender') return;
+                            if (currVid) {
+                                currVid._intentionalPause = false;
+                                currVid.dataset.intentionalPause = "false";
+                            }
+                            playVideo(currVid).catch(() => { });
 
                         } else if (cmd === "pause") {
-                            currVid.pause();
-                            if (currVid.playbackRate !== 1.0) currVid.playbackRate = 1.0;
+                            pauseVideo(currVid);
+                            pauseVideo(otherVid);
+                            if (currVid) {
+                                currVid._intentionalPause = true;
+                                currVid.dataset.intentionalPause = "true";
+                            }
+
+                        } else if (cmd === "stop") {
+                            pauseVideo(currVid);
+                            pauseVideo(otherVid);
+                            if (currVid) {
+                                currVid._intentionalPause = true;
+                                currVid.dataset.intentionalPause = "true";
+                            }
 
                         } else if (cmd === "replay") {
+                            currVid._intentionalPause = false;
+                            currVid.dataset.intentionalPause = "false";
                             const expectedUrl = payload.url ? normalizeUrl(payload.url) : "";
                             const currentUrl = normalizeUrl(currVid.currentSrc || currVid.src);
                             if (!expectedUrl || currentUrl === expectedUrl) {
                                 currVid.currentTime = 0;
-                                currVid.play().catch(() => { });
+                                playVideo(currVid).catch(() => { });
                             }
 
                         } else if (cmd === "loop") {
                             currVid.loop = (payload.value === "loop" || payload.value === true);
 
                         } else if (cmd === "volume") {
+                            bgVolume = parseFloat(payload.value);
                             applyVolumeState(currVid);
 
                         } else if (cmd === "mute") {
+                            bgMuted = true;
+                            applyVolumeState(currVid);
+
+                        } else if (cmd === "unmute") {
+                            bgMuted = false;
                             applyVolumeState(currVid);
 
                         } else if (cmd === "sync_time") {
+                            // Abaikan sync_time jika sedang di-pause — tunggu tombol Play ditekan
+                            if ((window._isFtbActive && currVid && currVid.dataset.mediaSource === 'remote_sender') || (currVid && (currVid.paused || currVid._intentionalPause || currVid.dataset.intentionalPause === "true"))) {
+                                return;
+                            }
                             // [OPT] preservesPitch = false saat rate adjustment:
                             // Mencegah pitch shift audio saat playbackRate berubah via sync.
                             // Sebelumnya hanya dipasang di nextVid saat transisi —
@@ -882,10 +1065,76 @@
                         } else if (cmd === "update_behavior") {
                             currVid.dataset.behavior = payload.value;
                             currVid.loop = (payload.value === "loop" || payload.value === undefined);
+
+                        } else if (cmd === "seek") {
+                            const seekTime = parseFloat(payload.value);
+                            if (Number.isFinite(seekTime) && currVid) {
+                                try {
+                                    currVid.currentTime = seekTime;
+                                } catch (_) {}
+                            }
+                        }
+                    }
+
+                    if (action === "ftb" || (action === "bg_control" && payload.command === "ftb")) {
+                        let isFtbActive = false;
+                        if (payload.enabled !== undefined) {
+                            isFtbActive = Boolean(payload.enabled);
+                        } else if (payload.value !== undefined) {
+                            if (typeof payload.value === "object" && payload.value !== null) {
+                                isFtbActive = Boolean(payload.value.active);
+                            } else {
+                                isFtbActive = Boolean(payload.value);
+                            }
+                        }
+
+                        const ftbSource = payload.source || 'remote_sender';
+                        const target = payload.target || 'all';
+                        const currVid = getCurrentVideo();
+                        const otherVid = getNextVideo();
+
+                        // FTB dari Sender HANYA mempengaruhi media remote_sender!
+                        // Jika media yang sedang aktif di background adalah lokal, abaikan FTB sama sekali!
+                        const vidUrl = (currVid && (currVid.currentSrc || currVid.src)) || '';
+                        const isSenderVid = (currVid && currVid.dataset.mediaSource === 'remote_sender') || vidUrl.includes(':18890') || vidUrl.includes(':18889');
+                        if (ftbSource === 'remote_sender' && !isSenderVid) {
+                            return;
+                        }
+
+                        // Jika FTB ditargetkan khusus foto atau audio, jangan sentuh video
+                        if (target !== 'all' && target !== 'video') {
+                            return;
+                        }
+
+                        window._isFtbActive = isFtbActive;
+                        const transDuration = crossfadeTime > 0 ? crossfadeTime : 350;
+                        if (isFtbActive) {
+                            if (currVid) {
+                                currVid.style.transition = `opacity ${transDuration}ms ease`;
+                                currVid.style.opacity = "0";
+                                pauseVideo(currVid);
+                                currVid._intentionalPause = true;
+                                currVid.dataset.intentionalPause = "true";
+                            }
+                            if (otherVid) {
+                                otherVid.style.transition = `opacity ${transDuration}ms ease`;
+                                otherVid.style.opacity = "0";
+                                pauseVideo(otherVid);
+                                otherVid._intentionalPause = true;
+                                otherVid.dataset.intentionalPause = "true";
+                            }
+                        } else {
+                            if (currVid) {
+                                currVid.style.transition = `opacity ${transDuration}ms ease`;
+                                currVid.style.opacity = "1";
+                                currVid._intentionalPause = false;
+                                currVid.dataset.intentionalPause = "false";
+                                playVideo(currVid).catch(() => {});
+                            }
                         }
                     }
                 } catch (e) {
-                    console.error("Gagal parsing data WS", e);
+                    console.error("Error processing WS msg:", e);
                 }
             };
 
@@ -929,6 +1178,12 @@
         // SW adalah satu-satunya penulis cache → tidak ada lock contention
         function checkAndPreloadCache(url, mediaId) {
             if (!url || !mediaId) return;
+
+            // [OPT] Jangan preload remote video stream (sender_*) lewat Service Worker
+            // Streaming over network harus dilakukan on-demand agar tidak menghabiskan bandwidth WiFi
+            if (mediaId.startsWith("sender_") || (url && url.includes("sender_"))) {
+                return;
+            }
 
             // Cek apakah SW sudah melaporkan status caching untuk video ini
             const swStatus = swCacheStatusMap.get(mediaId);
@@ -1060,7 +1315,7 @@
             }
 
             const curr = getCurrentVideo();
-            if (!curr || !curr.src || curr.paused || curr.ended) {
+            if (!curr || !curr.src || curr.paused || curr._intentionalPause || curr.dataset.intentionalPause === "true" || curr.ended) {
                 stuckDuration = 0;
                 lastCheckedTime = -1;
                 lastCheckedPos = -1;

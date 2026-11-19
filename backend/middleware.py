@@ -91,8 +91,9 @@ async def log_requests(request: Request, call_next):
         f"{response.status_code} ({process_time:.3f}s)"
     )
 
-    # Filter static files & polling diagnostics supaya log tidak penuh
-    if not request.url.path.startswith("/static") and request.url.path != "/api/diagnostics":
+    # Filter static files, polling diagnostics, dan health check supaya log tidak penuh
+    skip_paths = {"/api/diagnostics", "/api/health"}
+    if not request.url.path.startswith("/static") and request.url.path not in skip_paths:
         system_logs.append(log_msg)
 
     return response

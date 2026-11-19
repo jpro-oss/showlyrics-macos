@@ -65,6 +65,22 @@ async def save_app_settings(request: Request):
     return {"status": "success"}
 
 
+@router.post("/api/settings/apply-gpu-mode")
+async def apply_gpu_mode():
+    """
+    Broadcast notifikasi restart ke semua klien yang terhubung.
+    Dipanggil setelah GPU Compatibility Mode diubah — karena Chromium GPU flags
+    hanya berlaku saat cold-start (sebelum app.ready()), restart diperlukan.
+    """
+    if _manager:
+        await _manager.broadcast({
+            "type": "restart_required",
+            "reason": "gpu_compatibility_mode_changed",
+            "message": "Pengaturan GPU berubah. Restart diperlukan agar efektif."
+        })
+    return {"status": "restart_pending"}
+
+
 # ------------------------------------------------------------------
 # CAMERA SETTINGS
 # ------------------------------------------------------------------
@@ -104,7 +120,10 @@ def _run_osascript(script: str, timeout: int = 60):
         if result.returncode == 0:
             output = result.stdout.strip()
             return output if output else None
-        # returncode 1 = user cancel (normal, bukan error)
+        # returncode 1 dengan "User canceled" / -128 = user cancel (normal)
+        stderr_msg = (result.stderr or "").strip()
+        if stderr_msg and "User canceled" not in stderr_msg and "(-128)" not in stderr_msg:
+            print(f"[DIALOG] osascript error ({result.returncode}): {stderr_msg}")
         return None
     except subprocess.TimeoutExpired:
         return None
@@ -139,7 +158,7 @@ async def browse_file_dialog():
     Return list file yang dipilih, atau status 'canceled'.
     """
     script = """
-        set fList to choose file ¬with prompt "Pilih File Video" ¬with multiple selections allowed ¬of type {"mp4", "webm", "mov", "m4v", "mkv"}
+        set fList to choose file with prompt "Pilih File Video" with multiple selections allowed of type {"mp4", "webm", "mov", "m4v", "mkv"}
         set output to ""
         repeat with f in fList
             set output to output & POSIX path of f & linefeed
@@ -175,7 +194,7 @@ async def browse_file_dialog_cat(category: str):
         # Buat list AppleScript: {"mp4", "webm", ...}
         ext_as = '{' + ', '.join(f'"{e}"' for e in exts) + '}'
         script = f"""
-            set fList to choose file ¬with prompt "{prompt}" ¬with multiple selections allowed ¬of type {ext_as}
+            set fList to choose file with prompt "{prompt}" with multiple selections allowed of type {ext_as}
             set output to ""
             repeat with f in fList
                 set output to output & POSIX path of f & linefeed
@@ -245,7 +264,7 @@ async def api_diagnostics():
             try:
                 # Gunakan load_json yang sudah di-cache — tidak buka file manual
                 data = load_json(path)
-                db_status[name] = "OK" if isinstance(data, dict) else "CORRUPT"
+                db_status[name] = "OK" if isinstance(data, (dict, list)) else "CORRUPT"
             except Exception:
                 db_status[name] = "CORRUPT"
 
@@ -461,13 +480,27 @@ async def import_showlyrics_backup(mode: str = "append", file: UploadFile = File
         
         with zipfile.ZipFile(zip_data) as zf:
             # Filter zip file names to ignore any that are in the excluded list
+            app_abs = os.path.abspath(app_folder)
+
+            def _safe_backup_dest(member_name: str):
+                rel_name = member_name.replace("\\", "/").lstrip("/")
+                if not rel_name or rel_name.endswith("/"):
+                    return None, ""
+                filename = os.path.basename(rel_name)
+                if not filename or filename in EXCLUDED_JSONS:
+                    return None, filename
+                dest = os.path.abspath(os.path.join(app_abs, rel_name))
+                if not dest.startswith(app_abs + os.sep):
+                    return None, filename
+                return dest, filename
+
             json_files_in_zip = [
-                name for name in zf.namelist() 
-                if name.endswith(".json") and os.path.basename(name) not in EXCLUDED_JSONS
+                name for name in zf.namelist()
+                if name.endswith(".json") and _safe_backup_dest(name)[0] is not None
             ]
             if not json_files_in_zip:
                 return {"status": "error", "message": "Backup file contains no exportable database files."}
-                
+
             if mode == "replace":
                 # Clear existing non-excluded json files
                 for root, dirs, files in os.walk(app_folder):
@@ -477,44 +510,40 @@ async def import_showlyrics_backup(mode: str = "append", file: UploadFile = File
                                 os.remove(os.path.join(root, f))
                             except Exception:
                                 pass
-                
+
                 # Extract backup files
-                for name in zf.namelist():
-                    if name.endswith(".json"):
-                        filename = os.path.basename(name)
-                        if filename in EXCLUDED_JSONS:
-                            continue
-                        dest_path = os.path.join(app_folder, name)
-                        dest_dir = os.path.dirname(dest_path)
-                        os.makedirs(dest_dir, exist_ok=True)
-                        with open(dest_path, "wb") as f:
-                            f.write(zf.read(name))
+                for name in json_files_in_zip:
+                    dest_path, _ = _safe_backup_dest(name)
+                    if not dest_path:
+                        continue
+                    dest_dir = os.path.dirname(dest_path)
+                    os.makedirs(dest_dir, exist_ok=True)
+                    with open(dest_path, "wb") as f:
+                        f.write(zf.read(name))
             else:
                 # Merge (append) files
-                for name in zf.namelist():
-                    if name.endswith(".json"):
-                        filename = os.path.basename(name)
-                        if filename in EXCLUDED_JSONS:
-                            continue
-                        dest_path = os.path.join(app_folder, name)
-                        dest_dir = os.path.dirname(dest_path)
-                        os.makedirs(dest_dir, exist_ok=True)
-                        
-                        incoming_data = json.loads(zf.read(name).decode("utf-8"))
-                        
-                        if os.path.exists(dest_path):
-                            try:
-                                with open(dest_path, "r", encoding="utf-8") as f:
-                                    existing_data = json.load(f)
-                            except Exception:
-                                existing_data = {}
-                            
-                            merged_data = merge_json_values(existing_data, incoming_data)
-                        else:
-                            merged_data = incoming_data
-                            
-                        with open(dest_path, "w", encoding="utf-8") as f:
-                            json.dump(merged_data, f, ensure_ascii=False, indent=2)
+                for name in json_files_in_zip:
+                    dest_path, _ = _safe_backup_dest(name)
+                    if not dest_path:
+                        continue
+                    dest_dir = os.path.dirname(dest_path)
+                    os.makedirs(dest_dir, exist_ok=True)
+
+                    incoming_data = json.loads(zf.read(name).decode("utf-8"))
+
+                    if os.path.exists(dest_path):
+                        try:
+                            with open(dest_path, "r", encoding="utf-8") as f:
+                                existing_data = json.load(f)
+                        except Exception:
+                            existing_data = {}
+
+                        merged_data = merge_json_values(existing_data, incoming_data)
+                    else:
+                        merged_data = incoming_data
+
+                    with open(dest_path, "w", encoding="utf-8") as f:
+                        json.dump(merged_data, f, ensure_ascii=False, indent=2)
                             
         # Clear in-memory config cache
         import config

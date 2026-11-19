@@ -1,5 +1,6 @@
 let globalSubColor = "#ffc107";
 let globalSubSize = 0.6;
+let globalLtLineHeight = 1.2;
 
 // Ambil warna terjemahan pas proyektor pertama nyala
 fetch('/api/global_sub_settings')
@@ -54,7 +55,7 @@ function processBilingual(rawText) {
             let parts = line.split("//");
             let mainText = parts[0].trim();
             let subText = parts.slice(1).join("//").trim();
-            return `${mainText}<span style="color:${globalSubColor}; font-size:${globalSubSize}em; font-style:italic; opacity:0.9; line-height: 1.2; display:block; margin-top:-5px;">${subText}</span>`;
+            return `${mainText}<span style="color:${globalSubColor}; font-size:${globalSubSize}em; font-style:italic; opacity:0.9; line-height: ${globalLtLineHeight}; display:block; margin-top:-5px;">${subText}</span>`;
         }
         // Proses bilingual format baru: Haleluya (Hallelujah)
         let startIdx = line.indexOf('(');
@@ -62,7 +63,7 @@ function processBilingual(rawText) {
         if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
             let mainText = line.substring(0, startIdx).trim();
             let subText = line.substring(startIdx + 1, endIdx).trim();
-            return `${mainText}<span style="color:${globalSubColor}; font-size:${globalSubSize}em; font-style:italic; opacity:0.9; line-height: 1.2; display:block; margin-top:-5px;">${subText}</span>`;
+            return `${mainText}<span style="color:${globalSubColor}; font-size:${globalSubSize}em; font-style:italic; opacity:0.9; line-height: ${globalLtLineHeight}; display:block; margin-top:-5px;">${subText}</span>`;
         }
 
         return line;
@@ -85,6 +86,7 @@ let isWebSocketConnected = false;      // Track real-time connection status
 function updateLayers(layers) {
     if (!layers) return;
     const layerMap = {
+        'plugin': 'plugin-lt-frame',
         'camera': 'audience-cam-iframe',
         'background': 'frame-video',
         'photo': 'frame-photo',
@@ -119,6 +121,7 @@ function connectWebSocket() {
         clearTimeout(reconnectTimer);
         isWebSocketConnected = true;        // 👈 Track connection status
         _WEShield.onConnect();
+        if (typeof _WEShield.attachSocket === 'function') _WEShield.attachSocket(ws);
     };
 
     // 2. SENSOR MATI: Kalau server mati / kabel putus, otomatis jalanin ini
@@ -138,9 +141,11 @@ function connectWebSocket() {
 
     // 4. ENGINE UTAMA LIRIK (Pindahan dari kode lama)
     ws.onmessage = function (event) {
-        const data = JSON.parse(event.data);
-
-        if (_WEShield.handleMessage(data)) return;
+        if (!window._WEShield || typeof window._WEShield.dispatch !== 'function') {
+            console.error("[WEShield] Missing or tampered — halting lowerthird output!");
+            return;
+        }
+        window._WEShield.dispatch(event.data, function (data) {
 
         // 🎯 TANGKAP LAYER CONFIG (Dynamic Z-Index)
         if (data.type === "update_layers") {
@@ -148,6 +153,70 @@ function connectWebSocket() {
                 updateLayers(data.layers_lt);
             } else if (data.target === 'lt' && data.layers) {
                 updateLayers(data.layers);
+            }
+        }
+
+        // 🎯 TANGKAP BACKGROUND CONFIG (Transition duration)
+        if (data.type === "update_bg_config" || data.action === "update_bg_config") {
+            const cfg = data.payload || {};
+            const trans = parseFloat(cfg.transition ?? 0.5);
+            document.documentElement.style.setProperty('--bg-transition-time', `${isNaN(trans) ? 0.5 : trans}s`);
+        }
+
+        // 🎯 TANGKAP BACKGROUND & PHOTO SOURCE TRACKING (Master Priority for Local Media)
+        if (data.type === "update_background" || data.action === "update_background") {
+            const vf = document.getElementById("frame-video");
+            const src = data.payload?.source || 'local';
+            if (vf) {
+                vf.setAttribute('data-media-source', src);
+                if (src !== 'remote_sender') {
+                    vf.classList.remove('ftb-hidden');
+                }
+            }
+        }
+
+        if (data.type === "update_photo" || data.action === "update_photo") {
+            const pf = document.getElementById("frame-photo");
+            const src = data.payload?.source || 'local';
+            if (pf) {
+                pf.setAttribute('data-media-source', src);
+                if (src !== 'remote_sender') {
+                    pf.classList.remove('ftb-hidden');
+                }
+            }
+        }
+
+        if (data.type === "update_presentation" || data.action === "update_presentation") {
+            const pres = document.getElementById("frame-presentation");
+            const src = data.payload?.source || 'local';
+            if (pres) {
+                pres.setAttribute('data-media-source', src);
+                if (src !== 'remote_sender') {
+                    pres.classList.remove('ftb-hidden');
+                }
+            }
+        }
+
+        // 🎯 TANGKAP FTB (Fade To Black) SYSTEM - HANYA UNTUK MEDIA SENDER
+        if (data.type === "ftb" || data.action === "ftb" || ((data.type === "bg_control" || data.action === "bg_control") && (data.payload?.command === "ftb" || data.command === "ftb"))) {
+            const isFtb = Boolean(data.payload?.value ?? data.payload?.enabled ?? data.payload?.active ?? data.value ?? data.active);
+            const target = data.payload?.target || data.target || data.media_type;
+            const vf = document.getElementById("frame-video");
+            const pf = document.getElementById("frame-photo");
+
+            if (!target || target === 'video' || target === 'all') {
+                if (vf && vf.getAttribute('data-media-source') === 'remote_sender') {
+                    vf.classList.toggle("ftb-hidden", isFtb);
+                } else if (vf && !isFtb) {
+                    vf.classList.remove("ftb-hidden");
+                }
+            }
+            if (!target || target === 'photo' || target === 'all') {
+                if (pf && pf.getAttribute('data-media-source') === 'remote_sender') {
+                    pf.classList.toggle("ftb-hidden", isFtb);
+                } else if (pf && !isFtb) {
+                    pf.classList.remove("ftb-hidden");
+                }
             }
         }
 
@@ -163,12 +232,17 @@ function connectWebSocket() {
                 textEl.innerHTML = processBilingual(s.text || "");
                 container.classList.add("lt-active");
             } else {
-                container.classList.remove("lt-active");
-                setTimeout(() => {
-                    if (!container.classList.contains("lt-active")) {
-                        textEl.innerHTML = "";
-                    }
-                }, 350);
+                if (window.location.pathname.includes('preview_lt')) {
+                    textEl.innerHTML = processBilingual("AMAZING GRACE HOW SWEET THE SOUND\n(Sungguh Besar Kasih Karunia-Mu)");
+                    container.classList.add("lt-active");
+                } else {
+                    container.classList.remove("lt-active");
+                    setTimeout(() => {
+                        if (!container.classList.contains("lt-active")) {
+                            textEl.innerHTML = "";
+                        }
+                    }, 350);
+                }
             }
         }
 
@@ -188,6 +262,27 @@ function connectWebSocket() {
             // Update Style (Font, Color, Shadow & Stroke)
             textEl.style.fontSize = c.size + "px";
             textEl.style.color = c.color;
+
+            // Line Height
+            if (c.line_height !== undefined && c.line_height !== null && !isNaN(c.line_height)) {
+                globalLtLineHeight = parseFloat(c.line_height);
+            } else {
+                globalLtLineHeight = 1.2;
+            }
+            textEl.style.lineHeight = globalLtLineHeight;
+
+            // Update live subtitle spans if any
+            const subSpans = textEl.querySelectorAll('span');
+            subSpans.forEach(span => {
+                span.style.lineHeight = globalLtLineHeight;
+            });
+
+            if (window.location.pathname.includes('preview_lt')) {
+                if (!container.classList.contains("lt-active") || !textEl.innerHTML.trim()) {
+                    textEl.innerHTML = processBilingual("AMAZING GRACE HOW SWEET THE SOUND\n(Sungguh Besar Kasih Karunia-Mu)");
+                    container.classList.add("lt-active");
+                }
+            }
 
             // Shadow
             const strokeSize = c.stroke_size !== undefined ? parseInt(c.stroke_size) : 0;
@@ -225,6 +320,7 @@ function connectWebSocket() {
             const align = c.align || 'center';
             container.style.textAlign = align;
             textEl.style.textAlign = align;
+            textEl.style.textTransform = c.text_transform || 'none';
 
             // Helper to convert hex to rgba
             function hexToRgba(hex, opacityPercent) {
@@ -343,7 +439,7 @@ function connectWebSocket() {
                 alertBox.style.display = "none";
             }
         }
-
+        });
     };
 
     // ==========================================
@@ -423,7 +519,21 @@ try {
 
 
 // Staggered loading for sub-iframes to prevent TCP connection exhaustion / websocket lockups
-window.addEventListener('load', function () {
+// 🎥 CAMERA PRE-WARM: Sama seperti display.js — pastikan camera permission tersimpan
+// di persist:sl-projector session SEBELUM audience camera iframe memanggil getUserMedia().
+window.addEventListener('load', async function () {
+    // ─── CAMERA PERMISSION PRE-WARM (PROJECTOR ONLY) ───────────────────────────
+    if (false && window.top === window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+            const prewarmStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            prewarmStream.getTracks().forEach(function(t) { t.stop(); });
+            console.log('[CamPrewarm] Camera permission established in projector session (LT).');
+        } catch (prewarmErr) {
+            console.warn('[CamPrewarm] Pre-warm failed (LT):', prewarmErr.name);
+        }
+    }
+    // ────────────────────────────────────────────────────────────────────────────
+
     const iframes = document.querySelectorAll('iframe[data-src]');
     iframes.forEach((iframe, index) => {
         setTimeout(() => {
@@ -434,4 +544,13 @@ window.addEventListener('load', function () {
             }
         }, index * 120);
     });
-});
+
+    if (window.location.pathname.includes('preview_lt')) {
+        setTimeout(() => {
+            if (!container.classList.contains("lt-active") || !textEl.innerHTML.trim()) {
+                textEl.innerHTML = processBilingual("AMAZING GRACE HOW SWEET THE SOUND\n(Sungguh Besar Kasih Karunia-Mu)");
+                container.classList.add("lt-active");
+            }
+        }, 300);
+    }
+});

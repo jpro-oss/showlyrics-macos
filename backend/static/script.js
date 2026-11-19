@@ -1,6 +1,8 @@
 let currentActiveTab = 'library'; // Lacak tab apa yang lagi dibuka
 
 window.activeLibraryPlayers = { video: false, audio: false, photo: false };
+window.activeSenderMedia = { video: false, audio: false, photo: false };
+window.currentSongHasLocalBg = false;
 // =======================================================
 // --- THEME AUTO-RESET ENGINE (FIX OVERGLOW) ---
 // =======================================================
@@ -94,6 +96,21 @@ const THEME_DEFAULTS = {
 };
 
 const ws = new WebSocket("ws://" + window.location.host + "/ws");
+window.ws = ws; // expose globally so plugin.js and other modules can send messages
+ws.addEventListener('open', () => {
+    if (typeof _WEShield !== 'undefined' && typeof _WEShield.attachSocket === 'function') {
+        _WEShield.attachSocket(ws);
+    }
+    if (typeof applyScriptureSettings === "function") {
+        applyScriptureSettings();
+    }
+    if (typeof sendLTConfig === "function") {
+        sendLTConfig();
+    }
+    if (typeof sendFBConfig === "function") {
+        sendFBConfig();
+    }
+});
 window.pendingThumbWatchers = window.pendingThumbWatchers || new Map();
 
 function markThumbAsReadyRealtime(category, itemId) {
@@ -148,6 +165,66 @@ window.startThumbRealtimeWatcher = function (ids, category = "video") {
 // 🎯 MASTER AUDIO ENGINE (MEMINDAHKAN AUDIO KE CONTROL.HTML)
 const masterBgAudio = new Audio();
 const masterSfxAudio = new Audio();
+const monitorBgAudio = new Audio();
+const monitorSfxAudio = new Audio();
+// [FIX] Expose players on window so external.js (Media Sender receiver) can pause/resume/stop them.
+// Top-level `const` does NOT create window properties; without this, every window.masterXAudio call was a silent no-op.
+window.masterBgAudio = masterBgAudio;
+window.masterSfxAudio = masterSfxAudio;
+window.monitorBgAudio = monitorBgAudio;
+window.monitorSfxAudio = monitorSfxAudio;
+window._localBgVolume = 1.0;
+window._localSfxVolume = 1.0;
+
+// True when Media Sender FTB is active and the incoming update belongs to the Sender (staged under blackout)
+function isRemoteStagedUnderFtb(payload) {
+    try {
+        return Boolean(
+            payload && payload.source === "remote_sender" &&
+            window.externalMediaReceiver && typeof window.externalMediaReceiver.isFtbActive === "function" &&
+            window.externalMediaReceiver.isFtbActive()
+        );
+    } catch (_) { return false; }
+}
+
+function syncMonitorPlayer(master, monitor) {
+    if (!window._audioMonitorEnabled) {
+        monitor.pause();
+        monitor.muted = true;
+        return;
+    }
+    const masterAttrSrc = master.getAttribute ? master.getAttribute("src") : "";
+    if (!masterAttrSrc || masterAttrSrc.trim() === "") {
+        if (!monitor.paused) monitor.pause();
+        if (monitor.getAttribute && monitor.getAttribute("src")) {
+            monitor.removeAttribute("src");
+            try { monitor.load(); } catch (_) { }
+        }
+        return;
+    }
+    monitor.muted = false;
+    if (monitor.src !== master.src) {
+        monitor.src = master.src;
+    }
+    monitor.loop = master.loop;
+    monitor.volume = master.volume;
+    if (master.paused) {
+        monitor.pause();
+    } else {
+        if (monitor.paused || Math.abs(monitor.currentTime - master.currentTime) > 0.8) {
+            monitor.currentTime = master.currentTime;
+        }
+        monitor.play().catch(() => { });
+    }
+}
+window.syncMonitorPlayer = syncMonitorPlayer;
+
+// Keep monitor players perfectly in sync with the master players
+setInterval(() => {
+    syncMonitorPlayer(masterBgAudio, monitorBgAudio);
+    syncMonitorPlayer(masterSfxAudio, monitorSfxAudio);
+}, 500);
+
 const VIDEO_TIMELINE_SNAPSHOT_KEY = "showlyrics_video_timeline_snapshot";
 
 function normalizeMediaVolume(value) {
@@ -155,6 +232,33 @@ function normalizeMediaVolume(value) {
     if (!Number.isFinite(num)) return 1;
     return Math.max(0, Math.min(1, num > 1 ? num / 100 : num));
 }
+
+function getEffectiveLocalVolume(target) {
+    const isAudio = (target === "audio" || target === "sfx");
+    try {
+        const fpId = isAudio ? "fp-audio" : "fp-video";
+        const fpEl = document.getElementById(fpId);
+        if (fpEl && window.activeLibraryPlayers && window.activeLibraryPlayers[isAudio ? "audio" : "video"]) {
+            const fpSlider = fpEl.querySelector(".fp-dynamic-vol-slider");
+            if (fpSlider && fpSlider.value !== undefined) {
+                return normalizeMediaVolume(fpSlider.value);
+            }
+        }
+        if (
+            window._liveMediaActive &&
+            window.activeMediaScheduledItem &&
+            window.activeMediaScheduledItem.resolved_category === (isAudio ? "audio" : "video")
+        ) {
+            const schedSlider = document.getElementById("media-vol-slider");
+            if (schedSlider && schedSlider.value !== undefined) {
+                return normalizeMediaVolume(Number(schedSlider.value) / 100);
+            }
+        }
+    } catch (_) { }
+    const stored = isAudio ? window._localSfxVolume : window._localBgVolume;
+    return Number.isFinite(stored) ? Math.max(0, Math.min(1, stored)) : 1.0;
+}
+window.getEffectiveLocalVolume = getEffectiveLocalVolume;
 
 function saveVideoTimelineSnapshot(extra = {}) {
     const snapshot = {
@@ -173,12 +277,46 @@ function applyMediaTimeSync(targetPlayer, rawValue, options = {}) {
     const targetTime = Number(rawValue);
     if (!Number.isFinite(targetTime)) return;
 
-    const currentTime = Number.isFinite(targetPlayer.currentTime) ? targetPlayer.currentTime : 0;
-    const drift = Math.abs(currentTime - targetTime);
-    const threshold = options.force ? 0.05 : 0.65;
-    if (drift < threshold) return;
-
     try {
+        if ("preservesPitch" in targetPlayer) targetPlayer.preservesPitch = true;
+        else if ("webkitPreservesPitch" in targetPlayer) targetPlayer.webkitPreservesPitch = true;
+    } catch (_) { }
+
+    const currentTime = Number.isFinite(targetPlayer.currentTime) ? targetPlayer.currentTime : 0;
+    const signedDrift = currentTime - targetTime;
+    const drift = Math.abs(signedDrift);
+
+    if (options.force) {
+        if (drift < 0.05) return;
+        try {
+            if (targetPlayer.playbackRate !== 1.0) targetPlayer.playbackRate = 1.0;
+            targetPlayer.currentTime = Math.max(0, targetTime);
+        } catch (_) { }
+        return;
+    }
+
+    // Tier 1 (< 0.35s): ignore micro-drift and restore normal rate when aligned
+    if (drift < 0.35) {
+        if (drift < 0.12 && targetPlayer.playbackRate !== 1.0) {
+            try { targetPlayer.playbackRate = 1.0; } catch (_) { }
+        }
+        return;
+    }
+
+    // Tier 2 (0.35s - 1.5s): smooth catch-up via playbackRate without flushing audio buffer
+    if (drift <= 1.5) {
+        if (targetPlayer.readyState >= 3 && !targetPlayer.paused) {
+            const newRate = signedDrift < 0 ? 1.02 : 0.98;
+            if (Math.abs((targetPlayer.playbackRate || 1.0) - newRate) > 0.003) {
+                try { targetPlayer.playbackRate = newRate; } catch (_) { }
+            }
+        }
+        return;
+    }
+
+    // Tier 3 (> 1.5s): hard-seek
+    try {
+        if (targetPlayer.playbackRate !== 1.0) targetPlayer.playbackRate = 1.0;
         targetPlayer.currentTime = Math.max(0, targetTime);
     } catch (_) { }
 }
@@ -190,7 +328,8 @@ setInterval(() => {
         if (!masterBgAudio.paused && masterBgAudio.readyState > 0) {
             saveVideoTimelineSnapshot();
         }
-        if (!masterSfxAudio.paused && masterSfxAudio.readyState > 0) {
+        const isRemoteSenderAudio = Boolean(window.activeSenderMedia && window.activeSenderMedia.audio);
+        if (!isRemoteSenderAudio && !masterSfxAudio.paused && masterSfxAudio.readyState > 0) {
             ws.send(JSON.stringify({
                 action: "bg_control",
                 payload: { target: "audio", command: "sync_time", value: masterSfxAudio.currentTime }
@@ -203,8 +342,17 @@ setInterval(() => {
 // ⚙️ SINKRONISASI UI GLOBAL & MASTER AUDIO
 // ==========================================
 ws.addEventListener("message", function (event) {
+    if (typeof _WEShield !== 'undefined' && typeof _WEShield.dispatch === 'function') {
+        _WEShield.dispatch(event.data, function (data) {
+            handleMasterWsMessage(data);
+        });
+    } else {
+        try { handleMasterWsMessage(JSON.parse(event.data)); } catch (_) { }
+    }
+});
+
+function handleMasterWsMessage(data) {
     try {
-        const data = JSON.parse(event.data);
         const action = data.action || data.type;
         const payload = data.payload || {};
 
@@ -230,9 +378,34 @@ ws.addEventListener("message", function (event) {
             return;
         }
 
+        if (action === "update_plugin_state") {
+            if (typeof window.handlePluginStateUpdate === "function") {
+                window.handlePluginStateUpdate(data.active_plugins);
+            }
+            return;
+        }
+
         // --- 🎯 TANGKAP MASTER AUDIO ---
         if (action === "update_background") {
             if (payload.url) {
+                // [SINGLE-OWNER FIX Q7] When source is remote_sender, external.js owns masterBgAudio (including its lightweight .m4a stream, mute state, and fade-in).
+                // Do not overwrite masterBgAudio.src, reset currentTime, or force muted = false here.
+                if (payload.source === "remote_sender") {
+                    const snapshotExtra = { activeVideoUrl: payload.url, isPlaying: payload.playing !== false };
+                    if (payload.forceReplay) snapshotExtra.currentTime = 0;
+                    else if (payload.start_time !== undefined) snapshotExtra.currentTime = parseFloat(payload.start_time) || 0;
+                    saveVideoTimelineSnapshot(snapshotExtra);
+                    return;
+                }
+                if (typeof window.cancelExternalAudioFade === "function") {
+                    window.cancelExternalAudioFade("bg");
+                }
+                masterBgAudio._intendedPlaying = true;
+                masterBgAudio.onerror = null;
+                masterBgAudio.onloadedmetadata = null;
+                masterBgAudio.onended = null;
+                try { masterBgAudio.playbackRate = 1.0; } catch (_) { }
+
                 let url = payload.url;
                 if (url.startsWith('/')) {
                     url = window.location.protocol + "//" + window.location.hostname + ":18899" + url;
@@ -245,7 +418,8 @@ ws.addEventListener("message", function (event) {
                         url = url.replace(/:\d+/, ":18899").replace("localhost", window.location.hostname).replace("127.0.0.1", window.location.hostname);
                     }
                 }
-                const isSameVideo = (masterBgAudio.currentSrc || masterBgAudio.src || "").includes(url);
+                const currentBgSrc = masterBgAudio.getAttribute ? (masterBgAudio.getAttribute("src") || "") : "";
+                const isSameVideo = Boolean(currentBgSrc && (masterBgAudio.currentSrc || masterBgAudio.src || "").includes(url));
                 if (!isSameVideo || payload.forceReplay) {
                     masterBgAudio.src = url;
                     if (payload.forceReplay) {
@@ -261,43 +435,182 @@ ws.addEventListener("message", function (event) {
                 }
                 masterBgAudio.loop = (payload.behavior === "loop" || payload.behavior === undefined);
                 masterBgAudio.dataset.behavior = payload.behavior || "loop";
-                masterBgAudio.muted = (payload.muted !== undefined) ? payload.muted : false;
-                masterBgAudio.play().catch(e => console.warn(e));
+                // [FIX] masterBgAudio di control.html SELALU unmuted — payload.muted hanya untuk display output
+                // Audio routing dikelola via updateMonitorPlayersRouting() -> setSinkId ke audio_output_device
+                masterBgAudio.muted = false;
+                masterBgAudio.volume = getEffectiveLocalVolume("video");
+                if (isRemoteStagedUnderFtb(payload)) { masterBgAudio.pause(); } else { masterBgAudio.play().catch(e => console.warn(e)); }
                 const snapshotExtra = { activeVideoUrl: payload.url, isPlaying: true };
                 if (payload.forceReplay) snapshotExtra.currentTime = 0;
                 else if (payload.start_time !== undefined) snapshotExtra.currentTime = parseFloat(payload.start_time) || 0;
                 saveVideoTimelineSnapshot(snapshotExtra);
             } else {
+                // When source is remote_sender, external.js has already stopped its own channel synchronously.
+                // Never wipe masterBgAudio if local video has already taken over.
+                if (payload.source === "remote_sender") {
+                    const currentBgSrc = masterBgAudio.getAttribute ? (masterBgAudio.getAttribute("src") || "") : "";
+                    if (!currentBgSrc) {
+                        saveVideoTimelineSnapshot({ activeVideoUrl: "", isPlaying: false, currentTime: 0 });
+                    }
+                    return;
+                }
+                if (typeof window.cancelExternalAudioFade === "function") {
+                    window.cancelExternalAudioFade("bg");
+                }
+                masterBgAudio._intendedPlaying = false;
+                masterBgAudio.onerror = null;
+                masterBgAudio.onloadedmetadata = null;
+                masterBgAudio.onended = null;
+                try { masterBgAudio.playbackRate = 1.0; } catch (_) { }
                 masterBgAudio.pause();
                 masterBgAudio.removeAttribute('src');
+                try { masterBgAudio.load(); } catch (_) { }
+                masterBgAudio.muted = false;
+                masterBgAudio.volume = getEffectiveLocalVolume("video");
                 saveVideoTimelineSnapshot({ activeVideoUrl: "", isPlaying: false, currentTime: 0 });
             }
         }
         else if (action === "update_audio") {
             if (payload.url) {
-                masterSfxAudio.src = payload.url;
-                masterSfxAudio.play().catch(e => console.warn(e));
+                // [SINGLE-OWNER FIX Q7] Sender audio is owned and initialized directly by external.js: do NOT reload or re-trigger play here.
+                if (payload.source === "remote_sender") {
+                    return;
+                }
+                if (typeof window.cancelExternalAudioFade === "function") {
+                    window.cancelExternalAudioFade("sfx");
+                }
+                masterSfxAudio._intendedPlaying = true;
+                masterSfxAudio.onerror = null;
+                masterSfxAudio.onloadedmetadata = null;
+                masterSfxAudio.onended = null;
+                try { masterSfxAudio.playbackRate = 1.0; } catch (_) { }
+
+                let sameAudio = false;
+                const currentSfxSrc = masterSfxAudio.getAttribute ? (masterSfxAudio.getAttribute("src") || "") : "";
+                if (currentSfxSrc) {
+                    try { sameAudio = masterSfxAudio.src === new URL(payload.url, window.location.href).href; } catch (_) { }
+                }
+                if (!sameAudio) {
+                    masterSfxAudio.src = payload.url;
+                }
+                masterSfxAudio.loop = (payload.loop !== false && payload.behavior !== "once");
+                masterSfxAudio.dataset.behavior = payload.behavior || (masterSfxAudio.loop ? "loop" : "once");
+                masterSfxAudio.muted = false;
+                masterSfxAudio.volume = getEffectiveLocalVolume("audio");
+                if (isRemoteStagedUnderFtb(payload)) { masterSfxAudio.pause(); }
+                else { masterSfxAudio.play().catch(e => console.warn(e)); }
             } else {
+                if (payload.source === "remote_sender") {
+                    return;
+                }
+                if (typeof window.cancelExternalAudioFade === "function") {
+                    window.cancelExternalAudioFade("sfx");
+                }
+                masterSfxAudio._intendedPlaying = false;
+                masterSfxAudio.onerror = null;
+                masterSfxAudio.onloadedmetadata = null;
+                masterSfxAudio.onended = null;
+                try { masterSfxAudio.playbackRate = 1.0; } catch (_) { }
                 masterSfxAudio.pause();
                 masterSfxAudio.removeAttribute('src');
+                try { masterSfxAudio.load(); } catch (_) { }
+                masterSfxAudio.muted = false;
+                masterSfxAudio.volume = getEffectiveLocalVolume("audio");
             }
         }
         else if (action === "bg_control") {
             const cmd = payload.command;
+            // [SINGLE-OWNER FIX Q7] When source is remote_sender, external.js has already applied the control command
+            // directly to masterBgAudio / masterSfxAudio in control.html and only sent bg_control for display outputs.
+            if (payload.source === "remote_sender") {
+                if (payload.target === "video") {
+                    const isManualRemoteSync = cmd === "sync_time" && payload.manual === true;
+                    if (!isManualRemoteSync || payload.force === true) saveVideoTimelineSnapshot();
+                }
+                return;
+            }
             const targetPlayer = (payload.target === "video") ? masterBgAudio : masterSfxAudio;
-            if (cmd === "play") targetPlayer.play();
-            else if (cmd === "pause") targetPlayer.pause();
+            if (cmd === "play") {
+                targetPlayer._intendedPlaying = true;
+                targetPlayer.muted = false;
+                if (targetPlayer.volume === 0) {
+                    targetPlayer.volume = getEffectiveLocalVolume(payload.target);
+                }
+                targetPlayer.play().catch(e => console.warn(e));
+                if (typeof activePlayers !== "undefined" && activePlayers[payload.target]) {
+                    activePlayers[payload.target].playing = true;
+                    const fpBtn = document.getElementById(`btn-play-${payload.target}`);
+                    if (fpBtn) {
+                        fpBtn.innerHTML = "⏸️ PAUSE";
+                        fpBtn.className = "fp-dynamic-btn fp-dynamic-btn-play";
+                    }
+                }
+                const schedPlayBtn = document.getElementById("media-btn-play");
+                if (schedPlayBtn) {
+                    schedPlayBtn.classList.remove("paused");
+                    const iconSpan = document.getElementById("media-play-icon");
+                    const textSpan = document.getElementById("media-play-text");
+                    if (iconSpan) iconSpan.innerText = "⏸️";
+                    if (textSpan) textSpan.innerText = "PAUSE LIVE";
+                }
+            }
+            else if (cmd === "pause") {
+                targetPlayer._intendedPlaying = false;
+                targetPlayer.pause();
+                if (typeof activePlayers !== "undefined" && activePlayers[payload.target]) {
+                    activePlayers[payload.target].playing = false;
+                    const fpBtn = document.getElementById(`btn-play-${payload.target}`);
+                    if (fpBtn) {
+                        fpBtn.innerHTML = "▶️ PLAY";
+                        fpBtn.className = "fp-dynamic-btn fp-dynamic-btn-pause";
+                    }
+                }
+                const schedPlayBtn = document.getElementById("media-btn-play");
+                if (schedPlayBtn) {
+                    schedPlayBtn.classList.add("paused");
+                    const iconSpan = document.getElementById("media-play-icon");
+                    const textSpan = document.getElementById("media-play-text");
+                    if (iconSpan) iconSpan.innerText = "▶️";
+                    if (textSpan) textSpan.innerText = "PLAY LIVE";
+                }
+            }
+            else if (cmd === "stop") {
+                targetPlayer._intendedPlaying = false;
+                targetPlayer.onerror = null;
+                targetPlayer.onloadedmetadata = null;
+                targetPlayer.onended = null;
+                try { targetPlayer.playbackRate = 1.0; } catch (_) { }
+                targetPlayer.pause();
+                try { targetPlayer.currentTime = 0; } catch (_) { }
+                targetPlayer.removeAttribute("src");
+                try { targetPlayer.load(); } catch (_) { }
+                targetPlayer.muted = false;
+                targetPlayer.volume = getEffectiveLocalVolume(payload.target);
+            }
             else if (cmd === "replay") {
                 const expectedUrl = payload.url || "";
                 const currentUrl = targetPlayer.currentSrc || targetPlayer.src || "";
                 if (!expectedUrl || currentUrl.includes(expectedUrl)) {
+                    targetPlayer._intendedPlaying = true;
+                    targetPlayer.muted = false;
+                    if (targetPlayer.volume === 0) {
+                        targetPlayer.volume = getEffectiveLocalVolume(payload.target);
+                    }
+                    try { targetPlayer.playbackRate = 1.0; } catch (_) { }
                     targetPlayer.currentTime = 0;
-                    targetPlayer.play();
+                    targetPlayer.play().catch(e => console.warn(e));
                 }
             }
-            else if (cmd === "volume") { targetPlayer.volume = normalizeMediaVolume(payload.value); }
+            else if (cmd === "volume") {
+                const normVol = normalizeMediaVolume(payload.value);
+                if (payload.target === "video") window._localBgVolume = normVol;
+                else window._localSfxVolume = normVol;
+                targetPlayer.volume = normVol;
+                targetPlayer.muted = false;
+            }
             else if (cmd === "loop") { targetPlayer.loop = (payload.value === true || payload.value === "loop"); }
-            else if (cmd === "mute_toggle" || cmd === "mute") { targetPlayer.muted = payload.value; }
+            else if (cmd === "mute_toggle" || cmd === "mute") { targetPlayer.muted = Boolean(payload.value); }
+            else if (cmd === "unmute") { targetPlayer.muted = false; }
             else if (cmd === "update_behavior") {
                 targetPlayer.dataset.behavior = payload.value;
                 targetPlayer.loop = (payload.value === "loop" || payload.value === undefined);
@@ -551,7 +864,7 @@ ws.addEventListener("message", function (event) {
     } catch (e) {
         console.error("Settings sync failed:", e);
     }
-});
+}
 
 // Stage Rundown State & Functions
 let rundownState = {
@@ -1016,8 +1329,10 @@ async function loadRundownPresetsList() {
 
         if (rundownState.presetName && presets[rundownState.presetName]) {
             select.value = rundownState.presetName;
+            loadSelectedRundownPreset();
         } else if (def && presets[def]) {
             select.value = def;
+            loadSelectedRundownPreset();
         }
     } catch (e) {
         console.error("Failed to load rundown presets list:", e);
@@ -1045,7 +1360,7 @@ async function loadSelectedRundownPreset() {
             rundownState.overtimeFlash = preset.overtimeFlash !== undefined ? preset.overtimeFlash : true;
             rundownState.overtimeColor = preset.overtimeColor || "#ff4081";
             rundownState.overtimeSpeed = preset.overtimeSpeed !== undefined ? preset.overtimeSpeed : 1.0;
-            
+
             updateRundownStyleUI();
 
             rundownState.activeIndex = -1;
@@ -1505,9 +1820,8 @@ function showMiniToast(message, type = "info", duration = 4000, toastId = "") {
     } else {
         toast = document.createElement("div");
         if (toastId) toast.id = toastId;
-        toast.style.background = "rgba(18, 18, 18, 0.92)";
-        toast.style.backdropFilter = "blur(6px)";
-        toast.style.webkitBackdropFilter = "blur(6px)";
+        toast.style.background = "rgba(14, 14, 18, 0.97)";
+        // backdropFilter removed: was causing GPU overhead on every toast appearance
         toast.style.border = "1px solid " + (type === "success" ? "#28a745" : (type === "error" ? "#dc3545" : (type === "loading" ? "#ff9800" : "#00e5ff")));
         toast.style.boxShadow = "0 3px 10px rgba(0,0,0,0.35)";
         toast.style.borderRadius = "5px";
@@ -1606,15 +1920,13 @@ function updateRundownStyleUI() {
 }
 
 function toggleRundownTitleAuto() {
-    const miniTitle = document.getElementById("rundown-mini-title-size");
     const miniTitleAuto = document.getElementById("rundown-mini-title-auto");
-    if (miniTitle && miniTitleAuto) {
-        miniTitle.disabled = miniTitleAuto.checked;
+    if (miniTitleAuto) {
+        setElementDisabled("rundown-mini-title-container", miniTitleAuto.checked);
     }
-    const fullTitle = document.getElementById("rundown-full-title-size");
     const fullTitleAuto = document.getElementById("rundown-full-title-auto");
-    if (fullTitle && fullTitleAuto) {
-        fullTitle.disabled = fullTitleAuto.checked;
+    if (fullTitleAuto) {
+        setElementDisabled("rundown-full-title-container", fullTitleAuto.checked);
     }
     // Also sync and send state so it applies in real-time
     if (typeof syncRundownStyleFromUI === 'function') {
@@ -1798,8 +2110,18 @@ function getDisplayConfigFromUI() {
         text_wrap: parseInt(document.getElementById("text-wrap-input").value),
         pad_x: parseInt(document.getElementById("margin-x-input").value),
         font_size: parseFloat(document.getElementById("font-size-input").value),
+        line_height: (() => { const el = document.getElementById("line-height-input"); return el ? parseFloat(el.value) : 1.0; })(),
         sub_color: document.getElementById("sub-color-input").value,
         sub_size: parseFloat(document.getElementById("sub-size-input").value),
+        sub_bold: subTextState.bold,
+        sub_italic: subTextState.italic,
+        sub_underline: subTextState.underline,
+        sub_font: (() => {
+            const chk = document.getElementById('sub-font-follow');
+            if (!chk || chk.checked) return 'follow';
+            const inp = document.getElementById('sub-font-input');
+            return (inp && inp.value.trim()) ? inp.value.trim() : 'follow';
+        })(),
 
         text_transform: document.getElementById("transform-input").value,
         font_weight: textState.bold ? 'bold' : 'normal',
@@ -1893,7 +2215,7 @@ function matchShortcut(e, action) {
     let shortcutKey = s.key.toUpperCase();
 
     return eventKey === shortcutKey &&
-        !!e.ctrlKey === !!s.ctrlKey &&
+        (!!e.ctrlKey || !!e.metaKey) === !!s.ctrlKey &&
         !!e.shiftKey === !!s.shiftKey &&
         !!e.altKey === !!s.altKey;
 }
@@ -1914,12 +2236,17 @@ async function loadAppShortcutsFromServer() {
 
 // 🎯 FIX 1: Ubah isShowing menjadi true
 let lyricsData = []; let currentIndex = -1; let isShowing = true; let currentSongTitle = "";
-let allSongs = []; let scheduleList = []; let savedSchedules = {};
+let allSongs = []; let scheduleList = []; let savedSchedules = {}; let lastSelectedSched = "";
+let scriptureGroupExpanded = true; // 🎯 State accordion SCRIPTURE LIST di schedule
+let scrVerseDragGroupIdx = -1;   // 🎯 Drag tracking untuk verse reorder
+let scrVerseDragVerseIdx = -1;
 let dispPresetsData = {};
 let globalDefaultDisplayConfig = null;
 
 window.onload = async function () {
     await loadAppShortcutsFromServer();
+    // Load and route audio settings on startup
+    try { await loadSavedAudioSettings(); } catch (e) { }
     // 🎯 FIX: Pastikan langsung masuk tab library waktu baru refresh biar tidak tabrakan
     switchTab('library');
     setupPlaylistResizer();
@@ -1939,6 +2266,27 @@ window.onload = async function () {
             document.getElementById("sub-size-input").value = subData.size;
             document.getElementById("val-sub-size").innerText = subData.size + 'em';
         }
+        // JOB 3: Load sub B/I/U state
+        if (subData.bold !== undefined) subTextState.bold = subData.bold;
+        if (subData.italic !== undefined) subTextState.italic = subData.italic;
+        if (subData.underline !== undefined) subTextState.underline = subData.underline;
+        // Update sub B/I/U button states
+        ['bold', 'italic', 'underline'].forEach(type => {
+            const btn = document.getElementById('sub-btn-' + type);
+            if (btn) {
+                if (subTextState[type]) btn.classList.add('active');
+                else btn.classList.remove('active');
+            }
+        });
+        // FIX: Load sub font + checkbox state
+        const isFollow = !subData.font || subData.font === 'follow';
+        const chk = document.getElementById('sub-font-follow');
+        const inp = document.getElementById('sub-font-input');
+        if (chk) chk.checked = isFollow;
+        if (inp) {
+            inp.disabled = isFollow;
+            inp.value = isFollow ? '' : (subData.font || '');
+        }
     } catch (e) { }
 
     // fetchActiveSchedule() dimatikan biar schedule selalu kosong pas awal buka
@@ -1949,6 +2297,7 @@ window.onload = async function () {
 let toastTimeout;
 function showToast(message, type = "info", duration = 0) {
     const modal = document.getElementById("save-progress-modal");
+    if (!modal) return;
     const box = modal.querySelector('.modal-box');
     const icon = document.getElementById("save-icon");
     const title = document.getElementById("save-title");
@@ -1956,36 +2305,87 @@ function showToast(message, type = "info", duration = 0) {
 
     clearTimeout(toastTimeout); // Reset timer
 
-    // Munculkan modal overlay (layar belakang otomatis jadi gelap karena class modal-overlay)
+    // Munculkan modal overlay
     modal.style.display = "flex";
-    msgBox.innerText = message;
+    if (msgBox) msgBox.innerText = message;
 
     // Ganti tema warna & icon sesuai status
     if (type === "loading") {
-        box.style.borderColor = "#ffc107"; // Kuning
-        title.style.color = "#ffc107";
-        title.innerText = "SAVING DATA";
-        icon.innerText = "⏳";
-        icon.style.animation = "pulseIcon 1s infinite ease-in-out"; // Kasih animasi detak
+        if (box) box.style.borderColor = "#ffc107"; // Kuning
+        if (title) {
+            title.style.color = "#ffc107";
+            title.innerText = "SAVING DATA";
+        }
+        if (icon) {
+            icon.innerText = "⏳";
+            icon.style.animation = "pulseIcon 1s infinite ease-in-out"; // Kasih animasi detak
+        }
     } else if (type === "success") {
-        box.style.borderColor = "#28a745"; // Hijau
-        title.style.color = "#28a745";
-        title.innerText = "SUCCESS";
-        icon.innerText = "✅";
-        icon.style.animation = "none"; // Matikan animasi
+        if (box) box.style.borderColor = "#28a745"; // Hijau
+        if (title) {
+            title.style.color = "#28a745";
+            title.innerText = "SUCCESS";
+        }
+        if (icon) {
+            icon.innerText = "✅";
+            icon.style.animation = "none";
+        }
+    } else if (type === "warning") {
+        if (box) box.style.borderColor = "#fd7e14"; // Oranye / Amber
+        if (title) {
+            title.style.color = "#fd7e14";
+            title.innerText = "WARNING";
+        }
+        if (icon) {
+            icon.innerText = "⚠️";
+            icon.style.animation = "none";
+        }
     } else if (type === "error") {
-        box.style.borderColor = "#dc3545"; // Merah
-        title.style.color = "#dc3545";
-        title.innerText = "ERROR";
-        icon.innerText = "❌";
-        icon.style.animation = "none";
+        if (box) box.style.borderColor = "#dc3545"; // Merah
+        if (title) {
+            title.style.color = "#dc3545";
+            title.innerText = "ERROR";
+        }
+        if (icon) {
+            icon.innerText = "❌";
+            icon.style.animation = "none";
+        }
+    } else { // "info" atau status lainnya
+        if (box) box.style.borderColor = "#00e5ff"; // Cyan
+        if (title) {
+            title.style.color = "#00e5ff";
+            title.innerText = "INFO";
+        }
+        if (icon) {
+            icon.innerText = "ℹ️";
+            icon.style.animation = "none";
+        }
     }
 
-    // Auto-tutup modalnya setelah durasi habis
-    if (duration > 0) {
+    // Auto-tutup modalnya setelah durasi habis (standar durasi dipercepat sesuai permintaan)
+    const TOAST_DURATIONS = {
+        warning: 1500, // 1.5 detik
+        error: 1300,   // 1.3 detik
+        success: 1000, // 1.0 detik
+        info: 2000,    // 2.0 detik
+        loading: 0     // loading tetap tampil hingga digantikan toast lain
+    };
+
+    let effectiveDuration = TOAST_DURATIONS[type] !== undefined ? TOAST_DURATIONS[type] : 2000;
+    const parsedDur = parseInt(duration, 10);
+    if (!isNaN(parsedDur) && parsedDur > 0) {
+        // Jika durasi lama warisan (>= 1500), gunakan standar durasi baru yang dipercepat
+        if ([2000, 2500, 3000, 3500, 4000].includes(parsedDur)) {
+            effectiveDuration = TOAST_DURATIONS[type] !== undefined ? TOAST_DURATIONS[type] : parsedDur;
+        } else {
+            effectiveDuration = parsedDur;
+        }
+    }
+
+    if (effectiveDuration > 0) {
         toastTimeout = setTimeout(() => {
             modal.style.display = "none";
-        }, duration);
+        }, effectiveDuration);
     }
 }
 
@@ -2537,21 +2937,646 @@ if (typeof dragStartIndex === 'undefined') {
     window.dragStartIndex = -1;
 }
 
+// ====================================================================
+// 🎬 MEDIA SCHEDULED VIEW & 2-COLUMN SPLIT CONTROLLER ENGINE
+// ====================================================================
+
+// --- Audio Routing State ---
+window._audioMonitorEnabled = false;
+window._audioOutputDeviceId = 'default';
+window._audioMonitorDeviceId = 'default';
+
+function supportsAudioRouting() {
+    return typeof HTMLMediaElement !== 'undefined' &&
+        typeof HTMLMediaElement.prototype.setSinkId === 'function';
+}
+
+function applyAudioRouting(el, deviceId, enabled = true) {
+    if (!el) return;
+    if (enabled) {
+        el.muted = false;
+        if (el.setSinkId && deviceId && deviceId !== 'default') {
+            el.setSinkId(deviceId).catch((err) => {
+                console.warn('[Audio Routing] Failed to set sink ID:', err);
+            });
+        } else if (el.setSinkId) {
+            el.setSinkId('default').catch(() => { });
+        }
+    } else {
+        el.muted = true;
+    }
+}
+window.applyAudioRouting = applyAudioRouting;
+
+function applyMonitorRouting(el) {
+    applyAudioRouting(el, window._audioMonitorDeviceId, window._audioMonitorEnabled);
+}
+window.applyMonitorRouting = applyMonitorRouting;
+
+function updateMonitorPlayersRouting() {
+    // Route master players (output/jemaat)
+    if (typeof masterBgAudio !== 'undefined') applyAudioRouting(masterBgAudio, window._audioOutputDeviceId, true);
+    if (typeof masterSfxAudio !== 'undefined') applyAudioRouting(masterSfxAudio, window._audioOutputDeviceId, true);
+
+    // Route monitor players (operator/headphones)
+    if (typeof monitorBgAudio !== 'undefined') applyAudioRouting(monitorBgAudio, window._audioMonitorDeviceId, window._audioMonitorEnabled);
+    if (typeof monitorSfxAudio !== 'undefined') applyAudioRouting(monitorSfxAudio, window._audioMonitorDeviceId, window._audioMonitorEnabled);
+
+    // Route live monitor element (scheduled media preview)
+    if (window._liveMonitorEl) applyAudioRouting(window._liveMonitorEl, window._audioMonitorDeviceId, window._audioMonitorEnabled);
+
+    // Also update any active media scheduled preview element
+    const previewEl = document.getElementById('media-sched-preview-el');
+    if (previewEl) {
+        applyAudioRouting(previewEl, window._audioMonitorDeviceId, window._audioMonitorEnabled);
+    }
+}
+window.updateMonitorPlayersRouting = updateMonitorPlayersRouting;
+
+async function loadAudioDevices() {
+    const outputSel = document.getElementById('audio-output-select');
+    const monitorSel = document.getElementById('audio-monitor-select');
+    if (!outputSel && !monitorSel) return;
+
+    const supported = supportsAudioRouting();
+    const noSupportMsg = '<option value="default">⚠️ Not supported in this browser</option>';
+
+    if (!supported) {
+        if (outputSel) outputSel.innerHTML = noSupportMsg;
+        if (monitorSel) monitorSel.innerHTML = noSupportMsg;
+        return;
+    }
+
+    try {
+        // Request permission to enumerate with labels
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()); } catch (e) { }
+        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
+
+        const buildOptions = (savedId) => {
+            let html = '<option value="default">🔊 Default System Audio</option>';
+            audioOutputs.forEach(d => {
+                const label = d.label || `Speaker (${d.deviceId.substring(0, 8)})`;
+                const sel = d.deviceId === savedId ? ' selected' : '';
+                html += `<option value="${d.deviceId}"${sel}>${label}</option>`;
+            });
+            return html;
+        };
+
+        if (outputSel) outputSel.innerHTML = buildOptions(window._audioOutputDeviceId);
+        if (monitorSel) monitorSel.innerHTML = buildOptions(window._audioMonitorDeviceId);
+
+        // Restore saved selections
+        if (outputSel && window._audioOutputDeviceId) outputSel.value = window._audioOutputDeviceId;
+        if (monitorSel && window._audioMonitorDeviceId) monitorSel.value = window._audioMonitorDeviceId;
+    } catch (e) {
+        console.warn('[Audio Routing] Failed to enumerate devices:', e);
+    }
+}
+
+async function loadSavedAudioSettings() {
+    try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        window._audioOutputDeviceId = data.audio_output_device || 'default';
+        window._audioMonitorDeviceId = data.audio_monitor_device || 'default';
+        window._audioMonitorEnabled = !!data.audio_monitor_enabled;
+
+        const monitorToggle = document.getElementById('audio-monitor-toggle');
+        if (monitorToggle) monitorToggle.checked = window._audioMonitorEnabled;
+
+        const monitorRow = document.getElementById('audio-monitor-device-row');
+        if (monitorRow) monitorRow.style.display = window._audioMonitorEnabled ? 'block' : 'none';
+
+        updateMonitorPlayersRouting();
+    } catch (e) {
+        console.warn('[Audio Routing] Failed to load saved audio settings:', e);
+    }
+}
+
+async function saveAudioSettings() {
+    const outputSel = document.getElementById('audio-output-select');
+    const monitorSel = document.getElementById('audio-monitor-select');
+    const monitorToggle = document.getElementById('audio-monitor-toggle');
+
+    if (outputSel) window._audioOutputDeviceId = outputSel.value;
+    if (monitorSel) window._audioMonitorDeviceId = monitorSel.value;
+    if (monitorToggle) window._audioMonitorEnabled = monitorToggle.checked;
+
+    try {
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                audio_output_device: window._audioOutputDeviceId,
+                audio_monitor_device: window._audioMonitorDeviceId,
+                audio_monitor_enabled: window._audioMonitorEnabled
+            })
+        });
+    } catch (e) {
+        console.warn('[Audio Routing] Failed to save audio settings:', e);
+    }
+
+    updateMonitorPlayersRouting();
+}
+
+function onAudioMonitorToggle() {
+    const monitorToggle = document.getElementById('audio-monitor-toggle');
+    const monitorRow = document.getElementById('audio-monitor-device-row');
+    window._audioMonitorEnabled = monitorToggle ? monitorToggle.checked : false;
+    if (monitorRow) monitorRow.style.display = window._audioMonitorEnabled ? 'block' : 'none';
+    saveAudioSettings();
+}
+window.onAudioMonitorToggle = onAudioMonitorToggle;
+window.loadAudioDevices = loadAudioDevices;
+window.loadSavedAudioSettings = loadSavedAudioSettings;
+window.saveAudioSettings = saveAudioSettings;
+
+// --- Media Scheduled View ---
+
+function loadMediaScheduledView(item) {
+    const grid = document.getElementById("grid-container");
+    if (!grid) return;
+
+    window.currentSongTitle = item.title;
+    window.activeMediaScheduledItem = item;
+    if (typeof renderSchedule === 'function') renderSchedule();
+
+    const titleStr = item.title || "";
+    let category = item.media_category;
+    if (!category) {
+        if (titleStr.includes('VIDEO')) category = 'video';
+        else if (titleStr.includes('PHOTO')) category = 'photo';
+        else category = 'audio';
+    }
+
+    let mediaId = item.media_id;
+    let mediaName = item.media_name;
+
+    if (!mediaId || !mediaName) {
+        const parts = titleStr.split(': ');
+        const extracted = parts.length > 1 ? parts.slice(1).join(': ').trim() : titleStr;
+        mediaId = mediaId || extracted;
+        mediaName = mediaName || extracted;
+    }
+
+    window.activeMediaScheduledItem.resolved_category = category;
+    window.activeMediaScheduledItem.resolved_id = mediaId;
+    window.activeMediaScheduledItem.resolved_name = mediaName;
+
+    const icon = category === 'video' ? '🎬' : (category === 'photo' ? '📷' : '🎵');
+    const safeName = mediaName.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+
+    let streamUrl = `/api/stream_video/${mediaId}`;
+    if (category === 'photo') streamUrl = `/api/stream_photo/${mediaId}`;
+    else if (category === 'audio') streamUrl = `/api/stream_audio/${mediaId}`;
+
+    let previewMediaHtml = "";
+    const previewBoxClass = `media-preview-box${category === 'audio' ? ' audio-mode' : ''}`;
+
+    if (category === 'video') {
+        previewMediaHtml = `<video id="media-sched-preview-el" class="media-sched-video" src="${streamUrl}" loop playsinline controls></video>`;
+    } else if (category === 'photo') {
+        previewMediaHtml = `<img id="media-sched-preview-el" class="media-sched-photo" src="${streamUrl}" onerror="this.src='/static/logo.png'">`;
+    } else if (category === 'audio') {
+        previewMediaHtml = `
+            <div class="audio-preview-wrapper">
+                <div class="audio-visualizer-box">
+                    <div class="audio-disc-icon">🎵</div>
+                    <div class="sound-wave-bars">
+                        <span class="sw-bar"></span><span class="sw-bar"></span><span class="sw-bar"></span>
+                        <span class="sw-bar"></span><span class="sw-bar"></span>
+                    </div>
+                </div>
+                <audio id="media-sched-preview-el" src="${streamUrl}" loop controls></audio>
+            </div>`;
+    }
+
+    grid.innerHTML = `
+        <div class="media-sched-container">
+            <!-- LEFT COLUMN: PREVIEW (native controls) -->
+            <div class="media-sched-preview-col">
+                <div class="${previewBoxClass}">
+                    ${previewMediaHtml}
+                </div>
+                <div class="media-preview-label">LOCAL PREVIEW</div>
+            </div>
+
+            <!-- RIGHT COLUMN: LIVE OUTPUT CONTROLLER -->
+            <div class="media-sched-control-col">
+                <div class="media-control-header">
+                    <span class="media-cat-badge ${category}">${icon} ${category.toUpperCase()} MEDIA</span>
+                    <h3 class="media-control-title" title="${safeName}">${mediaName}</h3>
+                </div>
+
+                <div class="media-control-body">
+                    ${category !== 'photo' ? `
+                    <!-- LIVE OUTPUT CONTROLS — video & audio only -->
+                    <div class="media-control-section">
+                        <label class="media-ctrl-label">🎯 LIVE OUTPUT CONTROLS</label>
+                        <div class="media-playback-btns">
+                            <button id="media-btn-play" class="media-ctrl-btn media-btn-play" onclick="toggleLiveMediaPlay('${category}', '${mediaId}', '${safeName}')">
+                                <span id="media-play-icon">▶️</span> <span id="media-play-text">PLAY LIVE</span>
+                            </button>
+                            <button id="media-btn-loop" class="media-ctrl-btn media-btn-loop active" onclick="toggleLiveMediaLoop('${category}', '${mediaId}')">
+                                🔁 LOOP: ON
+                            </button>
+                            <button id="media-btn-replay" class="media-ctrl-btn media-btn-replay" onclick="replayLiveMedia('${category}', '${mediaId}', '${safeName}')">
+                                🔄 RESTART
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- LIVE OUTPUT VOLUME -->
+                    <div class="media-control-section">
+                        <div class="media-vol-header">
+                            <label class="media-ctrl-label"><span id="media-vol-icon">🔊</span> OUTPUT VOLUME</label>
+                            <span id="media-vol-val" class="media-vol-val">100%</span>
+                        </div>
+                        <div class="media-vol-slider-wrap">
+                            <input type="range" id="media-vol-slider" class="media-vol-slider" min="0" max="100" value="100"
+                                oninput="onLiveVolumeChange(this.value, '${category}', '${mediaId}')">
+                        </div>
+                        <small class="media-ctrl-hint">Controls volume on live display output</small>
+                    </div>
+                    ` : ''}
+
+                    <!-- SHOW NOW / CLEAR -->
+                    <div class="media-control-section media-live-section">
+                        <label class="media-ctrl-label">DISPLAY OUTPUT</label>
+                        <div class="media-live-btns">
+                            <button class="media-live-btn btn-go-live" onclick="sendMediaToLiveDisplay('${category}', '${mediaId}', '${safeName}')">
+                                🚀 SHOW NOW
+                            </button>
+                            <button class="media-live-btn btn-clear-live" onclick="clearLiveMediaDisplay('${category}')">
+                                ⏹️ HIDE / CLEAR
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Apply monitor routing to the preview element
+    setTimeout(() => {
+        const previewEl = document.getElementById("media-sched-preview-el");
+        if (previewEl && (category === 'video' || category === 'audio')) {
+            if (window._audioMonitorEnabled) {
+                applyMonitorRouting(previewEl);
+            }
+        }
+    }, 100);
+
+    // Track live loop state
+    window._liveLoopEnabled = true;
+    window._liveMediaActive = false;
+}
+window.loadMediaScheduledView = loadMediaScheduledView;
+
+// --- LIVE OUTPUT CONTROL FUNCTIONS (send to display via WebSocket) ---
+
+// --- LIVE OUTPUT CONTROL FUNCTIONS (send to display via WebSocket) ---
+
+// --- LIVE OUTPUT CONTROL FUNCTIONS (send to display via WebSocket) ---
+
+window._liveMonitorEl = null;
+
+function playLiveMonitor(category, streamUrl) {
+    stopLiveMonitor();
+
+    if (!window._audioMonitorEnabled) return;
+
+    if (category === 'video' || category === 'audio') {
+        const el = document.createElement(category === 'video' ? 'video' : 'audio');
+        el.src = streamUrl;
+        el.volume = (document.getElementById("media-vol-slider")?.value || 100) / 100;
+        el.loop = window._liveLoopEnabled;
+
+        // Route to monitor device if custom monitor is enabled
+        if (el.setSinkId && window._audioMonitorDeviceId && window._audioMonitorDeviceId !== 'default') {
+            el.setSinkId(window._audioMonitorDeviceId).catch(() => { });
+        }
+
+        window._liveMonitorEl = el;
+        el.play().catch(() => { });
+    }
+}
+window.playLiveMonitor = playLiveMonitor;
+
+function stopLiveMonitor() {
+    if (window._liveMonitorEl) {
+        try {
+            window._liveMonitorEl.pause();
+            window._liveMonitorEl.src = "";
+            window._liveMonitorEl.removeAttribute('src');
+            window._liveMonitorEl.load();
+        } catch (e) { }
+        window._liveMonitorEl = null;
+    }
+}
+window.stopLiveMonitor = stopLiveMonitor;
+
+function checkAndClearLiveMediaController(willPlayNewVis = false) {
+    if (window._liveMediaActive) {
+        stopLiveMonitor();
+        window._liveMediaActive = false;
+
+        const playBtn = document.getElementById("media-btn-play");
+        const iconSpan = document.getElementById("media-play-icon");
+        const textSpan = document.getElementById("media-play-text");
+        if (iconSpan) iconSpan.innerText = "▶️";
+        if (textSpan) textSpan.innerText = "PLAY LIVE";
+        if (playBtn) playBtn.classList.remove("paused");
+
+        if (!willPlayNewVis) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
+                ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
+                ws.send(JSON.stringify({ action: "update_audio", payload: { url: "" } }));
+            }
+        }
+    }
+}
+window.checkAndClearLiveMediaController = checkAndClearLiveMediaController;
+
+function toggleLiveMediaPlay(category, mediaId, mediaName) {
+    const playBtn = document.getElementById("media-btn-play");
+    const iconSpan = document.getElementById("media-play-icon");
+    const textSpan = document.getElementById("media-play-text");
+    if (!playBtn) return;
+
+    if (!window._liveMediaActive) {
+        sendMediaToLiveDisplay(category, mediaId, mediaName);
+        return;
+    }
+
+    const isPaused = playBtn.classList.contains("paused");
+    const target = (category === 'audio') ? 'audio' : 'video';
+    const cmd = isPaused ? 'play' : 'pause';
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            action: "bg_control",
+            payload: { target: target, command: cmd }
+        }));
+    }
+
+    // Sync local hidden live monitor element instead of preview element to avoid double audio
+    if (window._liveMonitorEl) {
+        if (isPaused) {
+            window._liveMonitorEl.play().catch(() => { });
+        } else {
+            window._liveMonitorEl.pause();
+        }
+    }
+
+    // Pause the preview element on the left so that sound doesn't double
+    const previewEl = document.getElementById("media-sched-preview-el");
+    if (previewEl) {
+        previewEl.pause();
+    }
+
+    if (isPaused) {
+        if (iconSpan) iconSpan.innerText = "⏸️";
+        if (textSpan) textSpan.innerText = "PAUSE LIVE";
+        playBtn.classList.remove("paused");
+    } else {
+        if (iconSpan) iconSpan.innerText = "▶️";
+        if (textSpan) textSpan.innerText = "PLAY LIVE";
+        playBtn.classList.add("paused");
+    }
+}
+window.toggleLiveMediaPlay = toggleLiveMediaPlay;
+
+function toggleLiveMediaLoop(category, mediaId) {
+    window._liveLoopEnabled = !window._liveLoopEnabled;
+    const loopBtn = document.getElementById("media-btn-loop");
+    if (loopBtn) {
+        loopBtn.innerText = window._liveLoopEnabled ? "🔁 LOOP: ON" : "➡️ LOOP: OFF";
+        loopBtn.classList.toggle("active", window._liveLoopEnabled);
+    }
+    const target = (category === 'audio') ? 'audio' : 'video';
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            action: "bg_control",
+            payload: { target: target, command: "loop", value: window._liveLoopEnabled }
+        }));
+    }
+    // Sync local hidden live monitor element loop setting
+    if (window._liveMonitorEl) {
+        window._liveMonitorEl.loop = window._liveLoopEnabled;
+    }
+}
+window.toggleLiveMediaLoop = toggleLiveMediaLoop;
+
+function replayLiveMedia(category, mediaId, mediaName) {
+    const target = (category === 'audio') ? 'audio' : 'video';
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            action: "bg_control",
+            payload: { target: target, command: "replay" }
+        }));
+    }
+
+    // Sync local hidden live monitor element
+    if (window._liveMonitorEl) {
+        window._liveMonitorEl.currentTime = 0;
+        window._liveMonitorEl.play().catch(() => { });
+    }
+
+    // Pause local preview element to avoid double sound
+    const previewEl = document.getElementById("media-sched-preview-el");
+    if (previewEl) {
+        previewEl.pause();
+    }
+
+    // Update play button state to playing
+    const playBtn = document.getElementById("media-btn-play");
+    const iconSpan = document.getElementById("media-play-icon");
+    const textSpan = document.getElementById("media-play-text");
+    if (iconSpan) iconSpan.innerText = "⏸️";
+    if (textSpan) textSpan.innerText = "PAUSE LIVE";
+    if (playBtn) playBtn.classList.remove("paused");
+}
+window.replayLiveMedia = replayLiveMedia;
+
+// Volume controls both live output and the local preview (mirroring)
+function onLiveVolumeChange(volVal, category, mediaId) {
+    const val = parseInt(volVal) || 0;
+    const valSpan = document.getElementById("media-vol-val");
+    if (valSpan) valSpan.innerText = val + "%";
+    const iconSpan = document.getElementById("media-vol-icon");
+    if (iconSpan) iconSpan.innerText = (val === 0) ? "🔇" : (val < 50 ? "🔉" : "🔊");
+
+    const target = (category === 'audio') ? 'audio' : 'video';
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            action: "bg_control",
+            payload: { target: target, command: "volume", value: val / 100 }
+        }));
+    }
+
+    // Sync local hidden live monitor element volume
+    if (window._liveMonitorEl) {
+        window._liveMonitorEl.volume = val / 100;
+    }
+}
+window.onLiveVolumeChange = onLiveVolumeChange;
+
+function onMediaVolumeChange(volVal, category, mediaId) { onLiveVolumeChange(volVal, category, mediaId); }
+window.onMediaVolumeChange = onMediaVolumeChange;
+
+// SHOW NOW from media controller acts like showing slide background (does NOT lock activeLibraryPlayers)
+function sendMediaToLiveDisplay(category, mediaId, mediaName) {
+    if (category === 'video' || category === 'audio') {
+        window._liveMediaActive = true;
+        const schedSlider = document.getElementById("media-vol-slider");
+        const initVol = schedSlider ? normalizeMediaVolume(Number(schedSlider.value) / 100) : 1.0;
+        if (category === 'video') window._localBgVolume = initVol;
+        else window._localSfxVolume = initVol;
+    }
+    if (typeof window.markLocalMediaTookOver === 'function') window.markLocalMediaTookOver(category);
+    const streamUrl = (category === 'video') ? `/api/stream_video/${mediaId}` :
+        (category === 'photo') ? `/api/stream_photo/${mediaId}` :
+            `/api/stream_audio/${mediaId}`;
+
+    if (category === 'video') {
+        if (window.activeSenderMedia) {
+            window.activeSenderMedia.video = false;
+        }
+        if (window.masterBgAudio && !window.masterBgAudio.paused) {
+            window.masterBgAudio.pause();
+        }
+        window.lastTriggeredBg = mediaId;
+        window.lastTriggeredBehavior = window._liveLoopEnabled ? "loop" : "once_hold";
+        window.currentlyPlayingBg = mediaId;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                action: "update_background",
+                payload: {
+                    url: streamUrl,
+                    behavior: window._liveLoopEnabled ? "loop" : "once_hold",
+                    muted: true, // [FIX] Audio hanya dari masterBgAudio di control.html — display selalu muted
+                    name: mediaName
+                }
+            }));
+            // Clear other active media layers
+            ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
+            ws.send(JSON.stringify({ action: "update_audio", payload: { url: "" } }));
+            ws.send(JSON.stringify({ action: "update_presentation", payload: { url: "" } }));
+        }
+    } else if (category === 'photo') {
+        if (window.activeSenderMedia) {
+            window.activeSenderMedia.photo = false;
+        }
+        window.lastTriggeredBg = mediaId;
+        window.currentlyPlayingBg = mediaId;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                action: "update_photo",
+                payload: { url: streamUrl, name: mediaName }
+            }));
+            // Clear other active media layers
+            ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
+            ws.send(JSON.stringify({ action: "update_audio", payload: { url: "" } }));
+            ws.send(JSON.stringify({ action: "update_presentation", payload: { url: "" } }));
+        }
+    } else if (category === 'audio') {
+        if (window.activeSenderMedia) {
+            window.activeSenderMedia.audio = false;
+        }
+        if (window.masterBgAudio && !window.masterBgAudio.paused) {
+            window.masterBgAudio.pause();
+        }
+        if (window.masterSfxAudio && !window.masterSfxAudio.paused) {
+            window.masterSfxAudio.pause();
+        }
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                action: "update_audio",
+                payload: { url: streamUrl, name: mediaName }
+            }));
+            // Clear other active media layers
+            ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
+            ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
+            ws.send(JSON.stringify({ action: "update_presentation", payload: { url: "" } }));
+        }
+    }
+
+    // Play local hidden live monitor element
+    playLiveMonitor(category, streamUrl);
+
+    // Pause the preview element on the left so that sound doesn't double
+    const previewEl = document.getElementById("media-sched-preview-el");
+    if (previewEl) {
+        previewEl.pause();
+    }
+
+    window._liveMediaActive = true;
+    const playBtn = document.getElementById("media-btn-play");
+    const iconSpan = document.getElementById("media-play-icon");
+    const textSpan = document.getElementById("media-play-text");
+    if (iconSpan) iconSpan.innerText = "⏸️";
+    if (textSpan) textSpan.innerText = "PAUSE LIVE";
+    if (playBtn) playBtn.classList.remove("paused");
+}
+window.sendMediaToLiveDisplay = sendMediaToLiveDisplay;
+
+function clearLiveMediaDisplay(category) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        if (category === 'audio') {
+            ws.send(JSON.stringify({ action: "update_audio", payload: { url: "" } }));
+        } else if (category === 'video') {
+            ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
+        } else if (category === 'photo') {
+            ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
+        }
+    }
+
+    // Stop local hidden live monitor element
+    stopLiveMonitor();
+
+    // Pause local preview element
+    const previewEl = document.getElementById("media-sched-preview-el");
+    if (previewEl && (category === 'video' || category === 'audio')) {
+        previewEl.pause();
+        previewEl.currentTime = 0;
+    }
+
+    window._liveMediaActive = false;
+    const iconSpan = document.getElementById("media-play-icon");
+    const textSpan = document.getElementById("media-play-text");
+    const playBtn = document.getElementById("media-btn-play");
+    if (iconSpan) iconSpan.innerText = "▶️";
+    if (textSpan) textSpan.innerText = "PLAY LIVE";
+    if (playBtn) playBtn.classList.remove("paused");
+}
+window.clearLiveMediaDisplay = clearLiveMediaDisplay;
+
+
+
 function renderSchedule() {
     const container = document.getElementById("schedule-list");
     container.innerHTML = "";
 
-    // 🎯 BISA DROP PPT KE AREA KOSONG SCHEDULE (Paling Bawah)
+    // 🎯 BISA DROP PPT / MEDIA KE AREA KOSONG SCHEDULE (Paling Bawah)
     container.ondragover = (e) => { e.preventDefault(); };
     container.ondrop = async (e) => {
         e.preventDefault();
-        e.stopPropagation(); // 🎯 FIX 1: GEMBOK ANTI DOBEL
+        e.stopPropagation();
         try {
             const dataStr = e.dataTransfer.getData("text/plain");
             if (dataStr) {
                 const data = JSON.parse(dataStr);
-                if (data.action === "apply_media" && data.category === "presentation") {
-                    window.addPPTToSchedule(data.id, data.name);
+                if (data.action === "apply_media") {
+                    if (data.category === "presentation") {
+                        window.addPPTToSchedule(data.id, data.name);
+                    } else if (data.category === "video" || data.category === "photo" || data.category === "audio") {
+                        window.addMediaToSchedule(data.category, data.id, data.name);
+                    }
                     return;
                 }
                 if (data.action === "add_song_to_schedule" && data.title) {
@@ -2568,6 +3593,93 @@ function renderSchedule() {
     }
 
     scheduleList.forEach((item, index) => {
+        // 🎯 SCRIPTURE GROUP — Accordion collapsible
+        if (item.type === "scripture_group") {
+            const grpDiv = document.createElement("div");
+            grpDiv.className = "song-item scr-group-item";
+            grpDiv.draggable = true;
+            grpDiv.ondragstart = (e) => {
+                e.stopPropagation();
+                window.dragStartIndex = index;
+                e.dataTransfer.effectAllowed = 'move';
+            };
+            grpDiv.ondragover = (e) => { e.preventDefault(); grpDiv.classList.add('over'); };
+            grpDiv.ondragleave = () => grpDiv.classList.remove('over');
+            grpDiv.ondrop = async (e) => {
+                e.preventDefault(); e.stopPropagation();
+                grpDiv.classList.remove('over');
+                // Ignore if a verse drag is in progress
+                if (scrVerseDragVerseIdx !== -1) { scrVerseDragGroupIdx = -1; scrVerseDragVerseIdx = -1; return; }
+                if (window.dragStartIndex === -1 || window.dragStartIndex === index) return;
+                const draggedItem = scheduleList.splice(window.dragStartIndex, 1)[0];
+                scheduleList.splice(index, 0, draggedItem);
+                renderSchedule();
+                await saveActiveSchedule();
+                window.dragStartIndex = -1;
+            };
+            const arrow = scriptureGroupExpanded ? "\u25BC" : "\u25B6";
+            const count = item.verses ? item.verses.length : 0;
+            grpDiv.innerHTML = `
+                <div class="drag-handle" title="Drag to reorder">\u2630</div>
+                <div class="sched-item-wrap">
+                    <div class="sched-title-text sched-title-scripture scr-group-header">
+                        ${index + 1}. \uD83D\uDCD6 SCRIPTURE LIST
+                        <span class="scr-group-count">(${count} ayat)</span>
+                        <span class="scr-group-arrow">${arrow}</span>
+                    </div>
+                </div>`;
+            grpDiv.onclick = (e) => {
+                if (e.target.classList.contains('drag-handle')) return;
+                scriptureGroupExpanded = !scriptureGroupExpanded;
+                renderSchedule();
+            };
+            grpDiv.oncontextmenu = (e) => { showScheduleContextMenu(e, index, item.title); };
+            container.appendChild(grpDiv);
+
+            if (scriptureGroupExpanded && item.verses && item.verses.length > 0) {
+                item.verses.forEach((verse, vi) => {
+                    const vDiv = document.createElement("div");
+                    vDiv.className = "scr-verse-sched-item";
+                    vDiv.draggable = true;
+                    vDiv.innerHTML = `<span class="scr-verse-sched-dot">\u25B8</span>${verse.display || verse.book + ' ' + verse.chapter + ':' + verse.verse}`;
+                    vDiv.onclick = (e) => {
+                        e.stopPropagation();
+                        document.querySelectorAll('.scr-verse-sched-item').forEach(el => el.classList.remove('scr-verse-sched-active'));
+                        vDiv.classList.add('scr-verse-sched-active');
+                        loadScriptureFromSchedule(verse);
+                    };
+                    vDiv.oncontextmenu = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        showScriptureVerseContextMenu(e, index, vi);
+                    };
+                    vDiv.ondragstart = (e) => {
+                        e.stopPropagation();
+                        scrVerseDragGroupIdx = index;
+                        scrVerseDragVerseIdx = vi;
+                        e.dataTransfer.effectAllowed = 'move';
+                    };
+                    vDiv.ondragover = (e) => { e.preventDefault(); e.stopPropagation(); vDiv.classList.add('over'); };
+                    vDiv.ondragleave = () => vDiv.classList.remove('over');
+                    vDiv.ondrop = async (e) => {
+                        e.preventDefault(); e.stopPropagation();
+                        vDiv.classList.remove('over');
+                        if (scrVerseDragGroupIdx !== index || scrVerseDragVerseIdx === -1 || scrVerseDragVerseIdx === vi) {
+                            scrVerseDragGroupIdx = -1; scrVerseDragVerseIdx = -1; return;
+                        }
+                        const verses = scheduleList[index].verses;
+                        const [draggedVerse] = verses.splice(scrVerseDragVerseIdx, 1);
+                        verses.splice(vi, 0, draggedVerse);
+                        scrVerseDragGroupIdx = -1; scrVerseDragVerseIdx = -1;
+                        renderSchedule();
+                        await saveActiveSchedule();
+                    };
+                    container.appendChild(vDiv);
+                });
+            }
+            return;
+        }
+
         const div = document.createElement("div");
         div.className = "song-item";
         div.draggable = true;
@@ -2589,15 +3701,19 @@ function renderSchedule() {
 
         div.ondrop = async (e) => {
             e.preventDefault();
-            e.stopPropagation(); // 🎯 FIX 1: GEMBOK ANTI BUBBLING (BOCOR KE BAWAH)
+            e.stopPropagation();
             div.classList.remove('over');
 
             try {
                 const dataStr = e.dataTransfer.getData("text/plain");
                 if (dataStr) {
                     const data = JSON.parse(dataStr);
-                    if (data.action === "apply_media" && data.category === "presentation") {
-                        window.addPPTToSchedule(data.id, data.name, index);
+                    if (data.action === "apply_media") {
+                        if (data.category === "presentation") {
+                            window.addPPTToSchedule(data.id, data.name, index);
+                        } else if (data.category === "video" || data.category === "photo" || data.category === "audio") {
+                            window.addMediaToSchedule(data.category, data.id, data.name, index);
+                        }
                         return;
                     }
                     if (data.action === "add_song_to_schedule" && data.title) {
@@ -2616,14 +3732,19 @@ function renderSchedule() {
             window.dragStartIndex = -1;
         };
 
-        // 🎯 CLICK DI FULL KOTAK UNTUK LOAD SONG
+        // 🎯 CLICK DI FULL KOTAK UNTUK LOAD SONG ATAU MEDIA SCHEDULED VIEW
         div.onclick = (e) => {
-            // Jangan load song kalau klik di note
-            if (e.target.classList.contains('sched-note-text')) {
-                return;
+            if (e.target.classList.contains('sched-note-text')) return;
+            window.activeScheduleIndex = index;
+            const isMediaItem = item.type === "media" ||
+                item.title.startsWith("🎬 VIDEO:") ||
+                item.title.startsWith("📷 PHOTO:") ||
+                item.title.startsWith("🎵 AUDIO:");
+            if (isMediaItem) {
+                loadMediaScheduledView(item);
+            } else {
+                loadSong(item.title);
             }
-            // Load song dengan klik di area manapun (tapi bukan note)
-            loadSong(item.title);
         };
 
         // 🎯 RIGHT-CLICK CONTEXT MENU
@@ -2634,7 +3755,6 @@ function renderSchedule() {
         // 🎯 FIX 2: POTONG TEKS KEPANJANGAN
         let safeTitle = item.title.replace(/'/g, "\\'").replace(/"/g, "&quot;");
         let displayTitle = item.title;
-        // Kalau panjang judul lebih dari 25 karakter, potong dan kasih titik-titik!
         if (displayTitle.length > 25) {
             displayTitle = displayTitle.substring(0, 25) + "...";
         }
@@ -2643,7 +3763,15 @@ function renderSchedule() {
         const noteClass = item.note ? "sched-note-active" : "sched-note-empty";
 
         const isPPT = item.title.startsWith("📊 PPT:");
-        const titleClass = isPPT ? "sched-title-text sched-title-ppt" : "sched-title-text";
+        const isVideo = item.title.startsWith("🎬 VIDEO:") || item.media_category === "video";
+        const isPhoto = item.title.startsWith("📷 PHOTO:") || item.media_category === "photo";
+        const isAudio = item.title.startsWith("🎵 AUDIO:") || item.media_category === "audio";
+
+        let titleClass = "sched-title-text";
+        if (isPPT) titleClass += " sched-title-ppt";
+        else if (isVideo) titleClass += " sched-title-video";
+        else if (isPhoto) titleClass += " sched-title-photo";
+        else if (isAudio) titleClass += " sched-title-audio";
 
         div.innerHTML = `
                     <div class="drag-handle" title="Drag to reorder">☰</div>
@@ -2653,11 +3781,10 @@ function renderSchedule() {
                     </div>
                 `;
 
-        // 🎯 ATTACH EDIT NOTE HANDLER KE NOTE TEXT SAJA
         const noteElement = div.querySelector('.sched-note-text');
         if (noteElement) {
             noteElement.onclick = (e) => {
-                e.stopPropagation(); // Jangan propagate ke parent (yang load song)
+                e.stopPropagation();
                 editScheduleNote(index);
             };
             noteElement.style.cursor = 'pointer';
@@ -2685,6 +3812,158 @@ async function removeFromSchedule(index) {
     scheduleList.splice(index, 1);
     renderSchedule();
     await saveActiveSchedule();
+}
+
+// ==========================================
+// 🎯 SCRIPTURE → SCHEDULE SYSTEM
+// ==========================================
+
+function addScriptureToSchedule() {
+    const searchInput = document.getElementById("bible-search-input");
+    if (searchInput && searchInput.value.trim()) {
+        const parsed = parseScriptureReference(searchInput.value.trim());
+        if (parsed.valid) {
+            const bInput = document.getElementById("bible-book");
+            const cInput = document.getElementById("bible-chapter");
+            const vInput = document.getElementById("bible-verse");
+            if (bInput) bInput.value = parsed.bookEng;
+            if (cInput) cInput.value = parsed.chapter;
+            if (vInput) vInput.value = parsed.verse;
+        }
+    }
+
+    const rawBook = document.getElementById("bible-book").value;
+    const chapter = document.getElementById("bible-chapter").value;
+    const verse = document.getElementById("bible-verse").value || "1";
+
+    if (!rawBook || !chapter) {
+        showToast("Fill in Book and Chapter first!", "error", 1300);
+        return;
+    }
+    const checked = document.querySelectorAll(".bible-version-cb:checked");
+    if (checked.length === 0) {
+        showToast("Select at least 1 Bible translation!", "error", 1300);
+        return;
+    }
+
+    const v1 = checked[0].value;
+    const v2 = checked.length > 1 ? checked[1].value : "";
+    const titleLang = document.getElementById('scr-title-lang')?.value || 'id';
+    const engBook = translateBookName(rawBook, 'en');
+    const dispBook = translateBookName(engBook, titleLang);
+    const display = `\uD83D\uDCD6 ${dispBook} ${chapter}:${verse}`;
+
+    const verseData = { book: engBook, chapter, verse, v1, v2, title_lang: titleLang, display };
+
+    // Cari scripture_group yang sudah ada, atau buat baru
+    const groupIdx = scheduleList.findIndex(i => i.type === "scripture_group");
+    if (groupIdx !== -1) {
+        scheduleList[groupIdx].verses.push(verseData);
+        scheduleList[groupIdx].note = `${scheduleList[groupIdx].verses.length} ayat`;
+    } else {
+        scheduleList.push({
+            title: "\uD83D\uDCD6 SCRIPTURE LIST",
+            type: "scripture_group",
+            note: "1 ayat",
+            verses: [verseData]
+        });
+    }
+
+    scriptureGroupExpanded = true;
+    renderSchedule();
+    saveActiveSchedule();
+}
+
+async function loadScriptureFromSchedule(verseData) {
+    // Switch ke tab scripture jika belum aktif
+    if (typeof currentMediaCategory !== 'undefined' && currentMediaCategory !== 'scripture') {
+        switchMediaCategory(null, 'scripture');
+    }
+
+    // Restore Bible version checkboxes — fallback gracefully if version not on this computer
+    document.querySelectorAll('.bible-version-cb').forEach(cb => { cb.checked = false; });
+    if (verseData.v1) {
+        const cb1 = document.querySelector(`.bible-version-cb[value="${verseData.v1}"]`);
+        if (cb1) {
+            cb1.checked = true;
+        } else {
+            // v1 tidak ada di komputer ini — pakai terjemahan pertama yang tersedia
+            const firstCb = document.querySelector('.bible-version-cb');
+            if (firstCb) firstCb.checked = true;
+        }
+    }
+    if (verseData.v2) {
+        const cb2 = document.querySelector(`.bible-version-cb[value="${verseData.v2}"]`);
+        if (cb2) cb2.checked = true;
+        // Jika v2 tidak ada, skip — pakai v1 saja
+    }
+
+    // Restore title lang
+    const langSel = document.getElementById('scr-title-lang');
+    if (langSel && verseData.title_lang) langSel.value = verseData.title_lang;
+
+    // Set input fields
+    const lang = verseData.title_lang || 'id';
+    const bookInput = document.getElementById('bible-book');
+    const chapInput = document.getElementById('bible-chapter');
+    const verseInput = document.getElementById('bible-verse');
+    const dispBook = translateBookName(verseData.book, lang);
+    if (bookInput) bookInput.value = translateBookName(verseData.book, 'en');
+    if (chapInput) chapInput.value = verseData.chapter;
+    if (verseInput) verseInput.value = verseData.verse;
+
+    const searchInput = document.getElementById("bible-search-input");
+    if (searchInput) {
+        searchInput.value = `${dispBook} ${verseData.chapter}:${verseData.verse}`;
+    }
+
+    // Load chapter + auto-fire ayat yang dituju
+    await searchScripture(false);
+}
+
+async function removeScriptureVerseFromGroup(groupIndex, verseIndex) {
+    if (!scheduleList[groupIndex] || scheduleList[groupIndex].type !== 'scripture_group') return;
+    scheduleList[groupIndex].verses.splice(verseIndex, 1);
+    scheduleList[groupIndex].note = `${scheduleList[groupIndex].verses.length} ayat`;
+    renderSchedule();
+    await saveActiveSchedule();
+}
+
+function showScriptureVerseContextMenu(e, groupIndex, verseIndex) {
+    const oldMenu = document.getElementById("schedule-context-menu");
+    if (oldMenu) oldMenu.remove();
+
+    const menu = document.createElement("div");
+    menu.id = "schedule-context-menu";
+    menu.className = "library-context-menu";
+
+    const delOpt = document.createElement("div");
+    delOpt.className = "library-context-item library-context-danger";
+    delOpt.innerHTML = "\uD83D\uDDD1 Remove verse";
+    delOpt.onclick = () => {
+        removeScriptureVerseFromGroup(groupIndex, verseIndex);
+        menu.remove();
+    };
+    menu.appendChild(delOpt);
+    document.body.appendChild(menu);
+
+    let x = e.clientX, y = e.clientY;
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+    requestAnimationFrame(() => {
+        const rect = menu.getBoundingClientRect();
+        if (x + rect.width > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 10) + "px";
+        if (y + rect.height > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 10) + "px";
+    });
+
+    setTimeout(() => {
+        document.addEventListener('click', function rm(e2) {
+            if (!menu.contains(e2.target) && menu.parentElement) {
+                menu.remove();
+                document.removeEventListener('click', rm);
+            }
+        });
+    }, 10);
 }
 
 // 🎯 SCHEDULE CONTEXT MENU (Right-Click)
@@ -2764,29 +4043,67 @@ async function editScheduleNote(index) {
 }
 async function saveActiveSchedule() { await fetch('/api/service', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scheduleList) }); }
 async function fetchSavedSchedules() {
-    const res = await fetch('/api/schedules');
-    savedSchedules = await res.json();
+    try {
+        const res = await fetch('/api/schedules');
+        savedSchedules = await res.json();
+    } catch (e) {
+        console.error("Failed to fetch schedules:", e);
+        return;
+    }
     const select = document.getElementById("saved-sched-select");
+    if (!select) return;
+    const currentVal = select.value;
     select.innerHTML = '<option value="">-- Select Saved --</option>';
 
-    // 🎯 GET ALL SCHEDULE NAMES & SORT - MOST RECENT FIRST (MAX 10)
+    // 🎯 GET ALL SCHEDULE NAMES & SORT - MOST RECENT FIRST
     let scheduleNames = Object.keys(savedSchedules);
 
-    // Sort by name in reverse order (most recent first - assuming last added is last in iteration)
-    // For proper chronological sorting, backend should return timestamps
-    scheduleNames = scheduleNames.reverse().slice(0, 10);
+    // Sort by updated_at descending if available, else reverse insertion order
+    scheduleNames.sort((a, b) => {
+        const dataA = savedSchedules[a];
+        const dataB = savedSchedules[b];
+        const dateA = (dataA && typeof dataA === 'object' && !Array.isArray(dataA) && dataA.updated_at) ? new Date(dataA.updated_at).getTime() : 0;
+        const dateB = (dataB && typeof dataB === 'object' && !Array.isArray(dataB) && dataB.updated_at) ? new Date(dataB.updated_at).getTime() : 0;
+        if (dateA && dateB) return dateB - dateA;
+        if (dateA) return -1;
+        if (dateB) return 1;
+        return 0;
+    });
 
-    scheduleNames.forEach(name => {
+    // If more than 10, limit top 10; otherwise show all
+    const displayNames = scheduleNames.length > 10 ? scheduleNames.slice(0, 10) : scheduleNames;
+
+    displayNames.forEach(name => {
         const opt = document.createElement("option");
         opt.value = name;
         opt.innerText = name;
         select.appendChild(opt);
     });
+
+    // Always append "Show All Schedules..." option at the very bottom
+    const optDivider = document.createElement("option");
+    optDivider.disabled = true;
+    optDivider.innerText = "──────────────";
+    select.appendChild(optDivider);
+
+    const optShowAll = document.createElement("option");
+    optShowAll.value = "__SHOW_ALL__";
+    optShowAll.innerText = "📜 Show All Schedules...";
+    optShowAll.style.fontWeight = "bold";
+    select.appendChild(optShowAll);
+
+    // Restore previous selection if still valid
+    if (currentVal && currentVal !== '__SHOW_ALL__' && savedSchedules[currentVal]) {
+        select.value = currentVal;
+        lastSelectedSched = currentVal;
+    } else {
+        lastSelectedSched = select.value;
+    }
 }
 
 async function saveCurrentGrid() {
     if (currentActiveTab === 'scripture') {
-        showToast("Cannot save song in Scripture mode!", "error", 2000);
+        showToast("Cannot save song in Scripture mode!", "error", 1300);
         return;
     }
     if (lyricsData.length === 0) { showToast("Grid is empty, nothing to save.", "error", 3000); return; }
@@ -2826,6 +4143,7 @@ async function saveCurrentGrid() {
 }
 
 function loadSong(title) {
+    if (typeof setNavigationTarget === 'function') setNavigationTarget('lyrics');
     // Hide stuck PPT loading overlay
     const pptOverlay = document.getElementById('ppt-grid-overlay');
     if (pptOverlay) {
@@ -2838,6 +4156,26 @@ function loadSong(title) {
 
     const song = allSongs.find(s => s.title === title);
     if (song) {
+        const previousHadLocalBg = Boolean(window.currentSongHasLocalBg);
+        const newSongHasLocalBg = song.data && song.data.some(s => s.bg_id && (s.bg_type === 'video' || s.bg_type === 'photo'));
+        if (previousHadLocalBg && !newSongHasLocalBg) {
+            // Lagu sebelumnya punya background lokal, tapi lagu baru tidak punya:
+            // Sesuai Decision 4: bersihkan layar menjadi hitam sampai ada media baru atau sender trigger
+            window.currentVisId = null;
+            window.currentVisType = null;
+            window.currentSongHasLocalBg = false;
+            if (window.activeSenderMedia) {
+                window.activeSenderMedia.video = false;
+                window.activeSenderMedia.photo = false;
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
+                ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
+            }
+        } else if (newSongHasLocalBg) {
+            window.currentSongHasLocalBg = true;
+        }
+
         currentSongTitle = song.title;
         lyricsData = song.data;
 
@@ -3434,6 +4772,8 @@ window.clearScriptureLive = function () {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ action: "update_scripture", payload: { show_display: false, show_lt: false } }));
     }
+    // Hapus status LIVE dari ayat (hilangkan tombol ✖ DISABLE), status selected tetap aman
+    document.querySelectorAll(".scr-verse-box.scr-verse-active").forEach(b => b.classList.remove("scr-verse-active"));
 };
 
 async function loadLibrary() {
@@ -3504,6 +4844,7 @@ window.currentVisId = null; window.currentVisType = null;
 window.currentAudId = null; window.currentSlideNum = null;
 
 function fireLyric(idx, forceShow = false) {
+    if (typeof setNavigationTarget === 'function') setNavigationTarget('lyrics');
     currentIndex = idx;
     const currentSlide = lyricsData[idx] || {};
     const currentSlideBgType = currentSlide.bg_type || (['video', 'audio', 'photo'].includes(currentSlide.type) ? currentSlide.type : (currentSlide.bg_id ? 'video' : null));
@@ -3571,6 +4912,9 @@ function fireLyric(idx, forceShow = false) {
     }
 
     // 3. 🎯 TEMBAK VISUAL (PPT vs VIDEO/FOTO)
+    if (typeof checkAndClearLiveMediaController === 'function') {
+        checkAndClearLiveMediaController(!!activeVisId || isPPT);
+    }
     if (lyricsData[idx] && lyricsData[idx].type === 'remote_ppt_slide') {
         const p = lyricsData[idx];
         if (senderWs && senderWs.readyState === WebSocket.OPEN) {
@@ -3591,6 +4935,13 @@ function fireLyric(idx, forceShow = false) {
             }
 
             // Matikan visual lain biar PPT ga ketutupan
+            window.activeSenderMedia = window.activeSenderMedia || { video: false, photo: false, audio: false };
+            window.activeSenderMedia.video = false;
+            window.activeSenderMedia.photo = false;
+            if (typeof window.resetExternalFtb === 'function') window.resetExternalFtb();
+            if (window.masterBgAudio && !window.masterBgAudio.paused) {
+                window.masterBgAudio.pause();
+            }
             if (!window.activeLibraryPlayers?.video) ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
             if (!window.activeLibraryPlayers?.photo) ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
         }
@@ -3606,21 +4957,30 @@ function fireLyric(idx, forceShow = false) {
         if (activeVisType === 'video') {
             if (window.currentVisId !== activeVisId || window.currentVisType !== activeVisType) {
                 window.currentVisId = activeVisId; window.currentVisType = activeVisType;
+                window.currentSongHasLocalBg = true;
+                window.activeSenderMedia = window.activeSenderMedia || { video: false, photo: false, audio: false };
+                window.activeSenderMedia.video = false;
+                window.activeSenderMedia.photo = false;
+                if (typeof window.resetExternalFtb === 'function') window.resetExternalFtb();
+                if (window.masterBgAudio && !window.masterBgAudio.paused) {
+                    window.masterBgAudio.pause();
+                }
 
                 // 🎯 CATAT INGATAN: Simpan antrean video biar toggleBlackout tau harus nge-play apa nanti
                 window.lastTriggeredBg = activeVisId;
                 window.lastTriggeredBehavior = activeVisBehav;
+                if (!window.activeLibraryPlayers?.video) window._localBgVolume = 1.0;
+                if (typeof window.markLocalMediaTookOver === 'function') window.markLocalMediaTookOver('video');
 
                 // 🎯 STEALTH FIX: Jangan berani-berani nembak video kalau layar lagi di-BLACKOUT (!isVideoCleared)
                 if (!clearStates.video && !isVideoCleared && !window.activeLibraryPlayers?.video) {
-                    const isMuted = lyricsData[idx].bg_muted === true;
                     const videoUrl = `/api/stream_video/${activeVisId}`;
                     ws.send(JSON.stringify({
                         action: "update_background",
                         payload: {
                             url: videoUrl,
                             behavior: activeVisBehav,
-                            muted: isMuted,
+                            muted: true, // [FIX] Display selalu muted — audio diputar masterBgAudio di control.html
                             name: activeVisName,
                             forceReplay: shouldReplayAssignedVideo
                         }
@@ -3637,8 +4997,17 @@ function fireLyric(idx, forceShow = false) {
         } else if (activeVisType === 'photo') {
             if (window.currentVisId !== activeVisId || window.currentVisType !== activeVisType) {
                 window.currentVisId = activeVisId; window.currentVisType = activeVisType;
+                window.currentSongHasLocalBg = true;
+                window.activeSenderMedia = window.activeSenderMedia || { video: false, photo: false, audio: false };
+                window.activeSenderMedia.video = false;
+                window.activeSenderMedia.photo = false;
+                if (typeof window.resetExternalFtb === 'function') window.resetExternalFtb();
+                if (window.masterBgAudio && !window.masterBgAudio.paused) {
+                    window.masterBgAudio.pause();
+                }
 
                 window.lastTriggeredBg = activeVisId; // Catat ingatan
+                if (typeof window.markLocalMediaTookOver === 'function') window.markLocalMediaTookOver('photo');
 
                 // 🎯 STEALTH FIX: Berlaku juga untuk Foto
                 if (!clearStates.photo && !isVideoCleared && !window.activeLibraryPlayers?.photo) {
@@ -3647,15 +5016,26 @@ function fireLyric(idx, forceShow = false) {
                 if (!window.activeLibraryPlayers?.video) ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
             }
         } else {
+            // TIDAK ADA MEDIA LOKAL DI SLIDE INI
             window.currentVisId = null; window.currentVisType = null;
-            if (!window.activeLibraryPlayers?.video) ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
-            if (!window.activeLibraryPlayers?.photo) ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
+            // Jika Media Sender sedang aktif, JANGAN matikan background / photo!
+            window.activeSenderMedia = window.activeSenderMedia || { video: false, photo: false, audio: false };
+            if (!window.activeLibraryPlayers?.video && !window.activeSenderMedia.video) {
+                ws.send(JSON.stringify({ action: "update_background", payload: { url: "" } }));
+            }
+            if (!window.activeLibraryPlayers?.photo && !window.activeSenderMedia.photo) {
+                ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
+            }
         }
     }
 
     // 4. 🎯 TEMBAK AUDIO (Sistem Prioritas Library)
     if (window.currentAudId !== activeAudId) {
         window.currentAudId = activeAudId;
+        if (activeAudId && !clearStates.audio && !window.activeLibraryPlayers?.audio) {
+            window._localSfxVolume = 1.0;
+            if (typeof window.markLocalMediaTookOver === 'function') window.markLocalMediaTookOver('audio');
+        }
         // HANYA TEMBAK JIKA LIBRARY AUDIO TIDAK SEDANG PLAY
         if (!clearStates.audio && !window.activeLibraryPlayers?.audio) {
             ws.send(JSON.stringify({ action: "update_audio", payload: { url: activeAudId ? `/api/stream_audio/${activeAudId}` : "" } }));
@@ -3681,10 +5061,15 @@ function fireLyric(idx, forceShow = false) {
             const verseInput = document.getElementById("bible-verse");
             if (verseInput) verseInput.value = item.verse;
 
-            if (!isScreenCleared) {
-                const targetLang = document.getElementById('scr-title-lang')?.value || 'id';
-                const finalBookName = translateBookName(item.book, targetLang);
+            const targetLang = document.getElementById('scr-title-lang')?.value || 'id';
+            const finalBookName = translateBookName(item.book, targetLang);
 
+            const searchInput = document.getElementById("bible-search-input");
+            if (searchInput) {
+                searchInput.value = `${finalBookName} ${item.chapter}:${item.verse}`;
+            }
+
+            if (!isScreenCleared) {
                 const showDisp = document.getElementById('scr-disp-enable')?.checked ?? true;
                 const showLt = document.getElementById('scr-lt-enable')?.checked ?? true;
 
@@ -3834,7 +5219,7 @@ function toggleVideoOnly() {
         const url = window.lastTriggeredBg ? `/api/stream_video/${window.lastTriggeredBg}` : "";
         ws.send(JSON.stringify({
             action: "update_background",
-            payload: { url: url, behavior: window.lastTriggeredBehavior || "loop" }
+            payload: { url: url, behavior: window.lastTriggeredBehavior || "loop", muted: true } // [FIX] Display muted
         }));
     }
 
@@ -3870,7 +5255,7 @@ function toggleBlackout() {
     } else {
         window.currentlyPlayingBg = window.lastTriggeredBg;
         const url = window.lastTriggeredBg ? `/api/stream_video/${window.lastTriggeredBg}` : "";
-        ws.send(JSON.stringify({ action: "update_background", payload: { url: url } }));
+        ws.send(JSON.stringify({ action: "update_background", payload: { url: url, muted: true } })); // [FIX] Display muted
     }
 }
 
@@ -3907,8 +5292,15 @@ function updateSettings() {
         runThrottle();
     }
 
-    // 3. SIMPAN SETTINGAN BILINGUAL
-    const subPayload = { color: payload.sub_color, size: payload.sub_size };
+    // 3. SIMPAN SETTINGAN BILINGUAL (termasuk B/I/U dan font)
+    const subPayload = {
+        color: payload.sub_color,
+        size: payload.sub_size,
+        bold: payload.sub_bold,
+        italic: payload.sub_italic,
+        underline: payload.sub_underline,
+        font: payload.sub_font
+    };
     fetch('/api/global_sub_settings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subPayload)
     });
@@ -3919,7 +5311,34 @@ function sendUpdate(textOverride) {
     if (lyricsData.length > 0 && currentIndex >= 0 && currentIndex < lyricsData.length - 1) {
         nextTextVal = lyricsData[currentIndex + 1].text.substring(0, 50) + "..."; // Ambil 50 huruf aja
     } else {
-        nextTextVal = "(End of Song)";
+        // Cari lagu berikutnya di scheduleList jika lagu sudah di posisi slide terakhir
+        let nextSongTitle = "";
+        if (typeof scheduleList !== 'undefined' && scheduleList && scheduleList.length > 0) {
+            let currentSchedIdx = -1;
+            if (typeof window.activeScheduleIndex === 'number' && window.activeScheduleIndex >= 0 && window.activeScheduleIndex < scheduleList.length) {
+                const activeItem = scheduleList[window.activeScheduleIndex];
+                const activeTitle = typeof activeItem === 'string' ? activeItem : (activeItem.title || activeItem.name || "");
+                if (activeTitle === currentSongTitle) {
+                    currentSchedIdx = window.activeScheduleIndex;
+                }
+            }
+            if (currentSchedIdx === -1 && currentSongTitle) {
+                currentSchedIdx = scheduleList.findIndex(item => {
+                    const t = typeof item === 'string' ? item : (item.title || item.name || "");
+                    return t === currentSongTitle;
+                });
+            }
+            if (currentSchedIdx !== -1 && currentSchedIdx < scheduleList.length - 1) {
+                const nextItem = scheduleList[currentSchedIdx + 1];
+                nextSongTitle = typeof nextItem === 'string' ? nextItem : (nextItem.title || nextItem.name || "");
+            }
+        }
+
+        if (nextSongTitle) {
+            nextTextVal = "NEXT: " + nextSongTitle;
+        } else {
+            nextTextVal = "(End of Song)";
+        }
     }
 
     // AMBIL SEMUA DATA CONFIG DARI UI
@@ -3947,6 +5366,22 @@ document.addEventListener('keydown', (e) => {
     if (matchShortcut(e, 'clear_audio')) { e.preventDefault(); clearLayer('audio'); return; }
     if (matchShortcut(e, 'clear_photo')) { e.preventDefault(); clearLayer('photo'); return; }
     if (matchShortcut(e, 'clear_presentation')) { e.preventDefault(); clearLayer('presentation'); return; }
+
+    // 🎯 SCRIPTURE KEYBOARD NAVIGATION (EXCLUSIVE)
+    if (typeof isScriptureNavActive === 'function' && isScriptureNavActive()) {
+        if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.code === "Space") {
+            e.preventDefault();
+            navigateScripture('next');
+            return;
+        }
+        if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+            e.preventDefault();
+            navigateScripture('prev');
+            return;
+        }
+        // Nonaktifkan jump shortcut dan angka 1-9 lirik saat scripture aktif
+        return;
+    }
 
     // 2. Jump Live Shortcuts
     if (matchShortcut(e, 'jump_verse')) { e.preventDefault(); jumpToType('verse'); return; }
@@ -3992,7 +5427,7 @@ document.addEventListener('keydown', (e) => {
     }
 
     // 4. Default Navigation & Numbers
-    if (!e.shiftKey && !e.ctrlKey && !e.altKey) {
+    if (!e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         const key = e.key.toUpperCase();
 
         // PPT REMOTE MODE: Arrow keys control slide navigation
@@ -4323,6 +5758,45 @@ function destroyTextEditPreview() {
     clearIframeContainer(document.getElementById('modal-preview-wrapper'));
 }
 
+let scrMiniResizeObserver = null;
+
+function scaleScriptureMiniIframes() {
+    const items = [
+        { mount: document.getElementById('scr-mini-display-mount'), frame: document.getElementById('scr-mini-display') },
+        { mount: document.getElementById('scr-mini-lt-mount'), frame: document.getElementById('scr-mini-lt') }
+    ];
+    items.forEach(({ mount, frame }) => {
+        if (mount && frame) {
+            const width = mount.offsetWidth;
+            if (width > 0) {
+                frame.style.transform = `scale(${width / 1920})`;
+            }
+        }
+    });
+}
+
+function attachScriptureMiniScaler() {
+    detachScriptureMiniScaler();
+    const dispMount = document.getElementById('scr-mini-display-mount');
+    const ltMount = document.getElementById('scr-mini-lt-mount');
+    if (!dispMount && !ltMount) return;
+
+    scrMiniResizeObserver = new ResizeObserver(() => {
+        scaleScriptureMiniIframes();
+    });
+    if (dispMount) scrMiniResizeObserver.observe(dispMount);
+    if (ltMount) scrMiniResizeObserver.observe(ltMount);
+    scaleScriptureMiniIframes();
+    requestAnimationFrame(scaleScriptureMiniIframes);
+}
+
+function detachScriptureMiniScaler() {
+    if (scrMiniResizeObserver) {
+        scrMiniResizeObserver.disconnect();
+        scrMiniResizeObserver = null;
+    }
+}
+
 function mountScriptureMiniIframes() {
     const dispMount = document.getElementById('scr-mini-display-mount');
     const ltMount = document.getElementById('scr-mini-lt-mount');
@@ -4334,9 +5808,11 @@ function mountScriptureMiniIframes() {
         clearIframeContainer(ltMount);
         ltMount.appendChild(createControlIframe('/scripture-lt', 'scr-mini-lt', 'scr-mini-iframe'));
     }
+    attachScriptureMiniScaler();
 }
 
 function destroyScriptureMiniIframes() {
+    detachScriptureMiniScaler();
     clearIframeContainer(document.getElementById('scr-mini-display-mount'));
     clearIframeContainer(document.getElementById('scr-mini-lt-mount'));
 }
@@ -4481,6 +5957,7 @@ function sendLTConfig() {
 }
 
 let ltPresetsData = {};
+let ltPresetsInitialized = false;
 
 async function fetchLTPresets() {
     const res = await fetch('/api/lt_presets');
@@ -4489,6 +5966,7 @@ async function fetchLTPresets() {
     const defaultName = data.default || "";
 
     const select = document.getElementById("lt-preset-select");
+    const prevVal = select.value;
     select.innerHTML = '<option value="">-- Select Preset --</option>';
     for (const name in ltPresetsData) {
         const opt = document.createElement("option");
@@ -4500,14 +5978,22 @@ async function fetchLTPresets() {
 
     document.getElementById("lt-default-status").innerText = defaultName ? `Default: ${defaultName}` : "Default: None";
 
-    if (defaultName) {
-        if (!sessionStorage.getItem("lt_loaded")) {
+    if (!ltPresetsInitialized) {
+        ltPresetsInitialized = true;
+        if (defaultName && ltPresetsData[defaultName]) {
             loadPresetByName(defaultName);
-            sessionStorage.setItem("lt_loaded", "true");
+            select.value = defaultName;
+            currentActiveLTPreset = "DEFAULT - " + defaultName;
+            updateLTBadge();
         }
-        select.value = defaultName;
-        currentActiveLTPreset = "DEFAULT - " + defaultName;
-        updateLTBadge();
+    } else {
+        const activeName = currentActiveLTPreset
+            .replace(/^DEFAULT - /, "")
+            .replace(/ \(EDITED\)$/, "");
+        const restoreVal = activeName && ltPresetsData[activeName]
+            ? activeName
+            : (prevVal && ltPresetsData[prevVal] ? prevVal : "");
+        select.value = restoreVal;
     }
 }
 
@@ -4613,6 +6099,30 @@ function loadSelectedLTPreset() {
     if (name) loadPresetByName(name);
 }
 
+function setElementDisabled(el, isDisabled) {
+    if (typeof el === 'string') el = document.getElementById(el);
+    if (!el) return;
+
+    if (isDisabled) {
+        el.style.opacity = '0.4';
+        el.style.pointerEvents = 'none';
+        el.style.cursor = 'not-allowed';
+        el.style.userSelect = 'none';
+        const inputs = el.querySelectorAll('input, select, button');
+        inputs.forEach(input => input.disabled = true);
+        if (['INPUT', 'SELECT', 'BUTTON'].includes(el.tagName)) el.disabled = true;
+    } else {
+        el.style.opacity = '1';
+        el.style.pointerEvents = 'auto';
+        el.style.cursor = 'default';
+        el.style.userSelect = 'auto';
+        const inputs = el.querySelectorAll('input, select, button');
+        inputs.forEach(input => input.disabled = false);
+        if (['INPUT', 'SELECT', 'BUTTON'].includes(el.tagName)) el.disabled = false;
+    }
+}
+window.setElementDisabled = setElementDisabled;
+
 function updateLTAlignUI(align) {
     document.getElementById("btn-lt-align-left").style.background = (align === 'left') ? '#007bff' : 'transparent';
     document.getElementById("btn-lt-align-left").style.color = (align === 'left') ? '#fff' : '#aaa';
@@ -4622,6 +6132,8 @@ function updateLTAlignUI(align) {
 
     document.getElementById("btn-lt-align-right").style.background = (align === 'right') ? '#007bff' : 'transparent';
     document.getElementById("btn-lt-align-right").style.color = (align === 'right') ? '#fff' : '#aaa';
+
+    setElementDisabled('lt-pad-x-container', align === 'center');
 }
 
 function setLTAlign(align) {
@@ -4635,6 +6147,10 @@ function toggleLtBannerUI() {
     const mode = document.getElementById("lt-banner-mode").value;
     const widthContainer = document.getElementById("lt-banner-width-container");
     const paddingRow = document.getElementById("lt-banner-padding-row");
+
+    const isNone = (mode === "none");
+    setElementDisabled('lt-banner-color-container', isNone);
+    setElementDisabled('lt-banner-opacity-container', isNone);
 
     if (mode === "none") {
         if (widthContainer) widthContainer.style.display = "none";
@@ -4650,6 +6166,40 @@ function toggleLtBannerUI() {
 
 window.setLTAlign = setLTAlign;
 window.toggleLtBannerUI = toggleLtBannerUI;
+
+let ltConfigDebounceTimer = null;
+
+function updateLtLineHeightUI(val) {
+    const el = document.getElementById('lt-line-height-val');
+    if (el) {
+        const num = parseFloat(val);
+        el.innerText = isNaN(num) ? "1.20" : num.toFixed(2);
+    }
+}
+
+function handleLTLineHeightInput(val) {
+    updateLtLineHeightUI(val);
+    markLtCustom();
+    if (ltConfigDebounceTimer) clearTimeout(ltConfigDebounceTimer);
+    ltConfigDebounceTimer = setTimeout(() => {
+        sendLTConfig();
+        ltConfigDebounceTimer = null;
+    }, 50);
+}
+
+function handleLTLineHeightChange(val) {
+    updateLtLineHeightUI(val);
+    markLtCustom();
+    if (ltConfigDebounceTimer) {
+        clearTimeout(ltConfigDebounceTimer);
+        ltConfigDebounceTimer = null;
+    }
+    sendLTConfig();
+}
+
+window.handleLTLineHeightInput = handleLTLineHeightInput;
+window.handleLTLineHeightChange = handleLTLineHeightChange;
+window.updateLtLineHeightUI = updateLtLineHeightUI;
 
 function loadPresetByName(name) {
     const config = ltPresetsData[name];
@@ -4667,10 +6217,19 @@ function loadPresetByName(name) {
     document.getElementById('lt-stroke-color').value = config.stroke_color || '#000000';
     document.getElementById('lt-font-select').value = config.font || 'Montserrat';
 
+    // Line Height
+    const lh = config.line_height !== undefined ? parseFloat(config.line_height) : 1.2;
+    const lhInput = document.getElementById('lt-line-height');
+    if (lhInput) lhInput.value = lh;
+    updateLtLineHeightUI(lh);
+
     // New alignment & padding inputs
     const align = config.align || 'center';
     document.getElementById('lt-align').value = align;
     document.getElementById('lt-pad-x').value = config.pad_x !== undefined ? config.pad_x : 50;
+    if (document.getElementById('lt-text-transform')) {
+        document.getElementById('lt-text-transform').value = config.text_transform || 'none';
+    }
     updateLTAlignUI(align);
 
     // New banner inputs
@@ -4696,6 +6255,10 @@ function getLTConfigFromUI() {
         position: document.getElementById('lt-pos-mode').value,
         margin_y: parseInt(document.getElementById('lt-margin').value),
         size: parseInt(document.getElementById('lt-size').value),
+        line_height: (() => {
+            const el = document.getElementById('lt-line-height');
+            return el ? parseFloat(el.value) || 1.2 : 1.2;
+        })(),
         color: document.getElementById('lt-color').value,
         shadow_x: parseInt(document.getElementById('lt-shadow-x').value),
         shadow_y: parseInt(document.getElementById('lt-shadow-y').value),
@@ -4707,6 +6270,7 @@ function getLTConfigFromUI() {
         // New alignment & padding fields
         align: document.getElementById('lt-align').value,
         pad_x: parseInt(document.getElementById('lt-pad-x').value) || 0,
+        text_transform: document.getElementById('lt-text-transform') ? document.getElementById('lt-text-transform').value : 'none',
         // New banner fields
         banner_mode: document.getElementById('lt-banner-mode').value,
         banner_width: parseInt(document.getElementById('lt-banner-width').value) || 80,
@@ -4911,6 +6475,13 @@ function applyDisplayPresetToUI(config) {
     document.getElementById("font-size-input").value = fontSizeVal;
     document.getElementById("val-font-size").innerText = fontSizeVal + 'px';
 
+    // LINE HEIGHT
+    const lineHeightPreset = config.line_height !== undefined ? config.line_height : 1.0;
+    if (document.getElementById("line-height-input")) {
+        document.getElementById("line-height-input").value = lineHeightPreset;
+        document.getElementById("val-line-height").innerText = parseFloat(lineHeightPreset).toFixed(2).replace(/0$/, '');
+    }
+
     document.getElementById("shadow-int-input").value = config.shadow_int !== undefined ? config.shadow_int : 0;
     document.getElementById("shadow-color-input").value = config.shadow_color || '#000000';
 
@@ -5008,6 +6579,7 @@ function sendFBConfig() {
     ws.send(JSON.stringify({ action: "update_foldback", payload: payload }));
 }
 let fbPresetsData = {};
+let fbPresetsInitialized = false;
 
 async function fetchFBPresets() {
     const res = await fetch('/api/fb_presets');
@@ -5016,6 +6588,7 @@ async function fetchFBPresets() {
     const defaultName = data.default || "";
 
     const select = document.getElementById("fb-preset-select");
+    const prevVal = select.value;
     select.innerHTML = '<option value="">-- Select Preset --</option>';
     for (const name in fbPresetsData) {
         const opt = document.createElement("option");
@@ -5026,14 +6599,23 @@ async function fetchFBPresets() {
     }
     document.getElementById("fb-default-status").innerText = defaultName ? `Default: ${defaultName}` : "Default: None";
 
-    if (defaultName) {
-        if (!sessionStorage.getItem("fb_loaded")) {
+    if (!fbPresetsInitialized) {
+        fbPresetsInitialized = true;
+        if (defaultName && fbPresetsData[defaultName]) {
             applyFBPresetToUI(fbPresetsData[defaultName]);
-            sessionStorage.setItem("fb_loaded", "true");
+            sendFBConfig();
+            select.value = defaultName;
+            currentActiveFBPreset = "DEFAULT - " + defaultName;
+            updateFBBadge();
         }
-        select.value = defaultName;
-        currentActiveFBPreset = "DEFAULT - " + defaultName;
-        updateFBBadge();
+    } else {
+        const activeName = currentActiveFBPreset
+            .replace(/^DEFAULT - /, "")
+            .replace(/ \(EDITED\)$/, "");
+        const restoreVal = activeName && fbPresetsData[activeName]
+            ? activeName
+            : (prevVal && fbPresetsData[prevVal] ? prevVal : "");
+        select.value = restoreVal;
     }
 }
 
@@ -5142,6 +6724,14 @@ function loadSelectedFBPreset() {
     }
 }
 
+function toggleFBAutoUI() {
+    const currAuto = document.getElementById('fb-curr-auto');
+    const nextAuto = document.getElementById('fb-next-auto');
+    if (currAuto) setElementDisabled('fb-curr-size-container', currAuto.checked);
+    if (nextAuto) setElementDisabled('fb-next-size-container', nextAuto.checked);
+}
+window.toggleFBAutoUI = toggleFBAutoUI;
+
 function applyFBPresetToUI(c) {
     if (!c) return;
     document.getElementById('fb-layout').value = c.layout;
@@ -5150,12 +6740,16 @@ function applyFBPresetToUI(c) {
     document.getElementById('fb-next-size').value = c.next_size;
     document.getElementById('fb-next-color').value = c.next_color;
     document.getElementById('fb-bg-color').value = c.bg_color;
+    if (document.getElementById('fb-text-transform')) {
+        document.getElementById('fb-text-transform').value = c.text_transform || 'none';
+    }
     if (document.getElementById('fb-curr-auto')) {
         document.getElementById('fb-curr-auto').checked = c.curr_auto !== undefined ? c.curr_auto : true;
     }
     if (document.getElementById('fb-next-auto')) {
         document.getElementById('fb-next-auto').checked = c.next_auto !== undefined ? c.next_auto : true;
     }
+    toggleFBAutoUI();
 }
 
 function getFBConfigFromUI() {
@@ -5166,6 +6760,7 @@ function getFBConfigFromUI() {
         next_size: parseInt(document.getElementById('fb-next-size').value),
         next_color: document.getElementById('fb-next-color').value,
         bg_color: document.getElementById('fb-bg-color').value,
+        text_transform: document.getElementById('fb-text-transform') ? document.getElementById('fb-text-transform').value : 'none',
         curr_auto: document.getElementById('fb-curr-auto') ? document.getElementById('fb-curr-auto').checked : true,
         next_auto: document.getElementById('fb-next-auto') ? document.getElementById('fb-next-auto').checked : true
     };
@@ -5865,6 +7460,32 @@ function applyLTConfigToUI(config) {
     document.getElementById('lt-stroke-size').value = config.stroke_size ?? 0;
     document.getElementById('lt-stroke-color').value = config.stroke_color || '#000000';
     document.getElementById('lt-font-select').value = config.font || 'Montserrat';
+
+    // Line Height
+    const lh = config.line_height !== undefined ? parseFloat(config.line_height) : 1.2;
+    const lhInput = document.getElementById('lt-line-height');
+    if (lhInput) lhInput.value = lh;
+    updateLtLineHeightUI(lh);
+
+    // Alignment & Padding
+    const align = config.align || 'center';
+    document.getElementById('lt-align').value = align;
+    document.getElementById('lt-pad-x').value = config.pad_x !== undefined ? config.pad_x : 50;
+    if (document.getElementById('lt-text-transform')) {
+        document.getElementById('lt-text-transform').value = config.text_transform || 'none';
+    }
+    updateLTAlignUI(align);
+
+    // Banner
+    document.getElementById('lt-banner-mode').value = config.banner_mode || 'none';
+    document.getElementById('lt-banner-width').value = config.banner_width !== undefined ? config.banner_width : 80;
+    document.getElementById('lt-banner-color').value = config.banner_color || '#000000';
+    document.getElementById('lt-banner-opacity').value = config.banner_opacity !== undefined ? config.banner_opacity : 50;
+    document.getElementById('lt-banner-pad-y').value = config.banner_pad_y !== undefined ? config.banner_pad_y : 10;
+    document.getElementById('lt-banner-pad-x').value = config.banner_pad_x !== undefined ? config.banner_pad_x : 20;
+    document.getElementById('lt-banner-radius').value = config.banner_radius !== undefined ? config.banner_radius : 8;
+    toggleLtBannerUI();
+
     updateLTPosUI(config.position || 'bottom');
 }
 
@@ -6260,8 +7881,8 @@ function renderEditor(mode) {
                 });
 
                 textarea.addEventListener("keydown", (e) => {
-                    // ↩️ UNDO (CTRL+Z)
-                    if (e.ctrlKey && e.key.toLowerCase() === "z") {
+                    // ↩️ UNDO (CTRL+Z / CMD+Z)
+                    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
                         e.preventDefault();
                         undoEditorState(mode);
                         return;
@@ -6298,8 +7919,8 @@ function renderEditor(mode) {
                         }, 10);
                     }
 
-                    // SPLIT CURSOR (CTRL + ENTER)
-                    if (e.ctrlKey && e.key === "Enter") {
+                    // SPLIT CURSOR (CTRL/CMD + ENTER)
+                    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                         e.preventDefault();
                         saveEditorState();
                         const cursorPos = textarea.selectionStart;
@@ -6534,6 +8155,7 @@ async function newSchedule() {
     }
     scheduleList = [];
     document.getElementById("saved-sched-select").value = ""; // Reset dropdown
+    lastSelectedSched = "";
     renderSchedule();
     await saveActiveSchedule();
 }
@@ -6542,8 +8164,8 @@ async function newSchedule() {
 async function saveCurrentSchedule() {
     let name = document.getElementById("saved-sched-select").value;
 
-    // Kalau belum milih dari dropdown (bikin baru)
-    if (!name) {
+    // Kalau belum milih dari dropdown (bikin baru) atau sedang pilih __SHOW_ALL__
+    if (!name || name === '__SHOW_ALL__') {
         if (scheduleList.length === 0) {
             showToast("Running Order is empty!", "error", 1500);
             return;
@@ -6563,35 +8185,253 @@ async function saveCurrentSchedule() {
 
     // Refresh list dan otomatis pilih nama yang barusan disave
     await fetchSavedSchedules();
-    document.getElementById("saved-sched-select").value = name;
+    const select = document.getElementById("saved-sched-select");
+    if (select) {
+        select.value = name;
+        lastSelectedSched = name;
+    }
 }
 
 // 3. LOAD SCHEDULE
-async function loadSavedSchedule() {
-    const name = document.getElementById("saved-sched-select").value;
-    if (!name) { showToast("Select a schedule from the dropdown!", "error", 1500); return; }
+async function loadSavedSchedule(targetName = null) {
+    const name = targetName || document.getElementById("saved-sched-select").value;
+    if (!name || name === '__SHOW_ALL__') { showToast("Select a schedule from the dropdown!", "error", 1500); return; }
     const isOk = await showCustomDialog("confirm", `Load running order <b>"${name}"</b>?`);
     if (!isOk) return;
 
     // Pastikan data lama mendukung backward compatibility (ubah ke format notes v1.15 jika perlu)
     const rawData = savedSchedules[name];
-    scheduleList = rawData.map(item => typeof item === 'string' ? { title: item, note: '' } : item);
+    const items = (rawData && typeof rawData === 'object' && !Array.isArray(rawData) && Array.isArray(rawData.items)) ? rawData.items : (Array.isArray(rawData) ? rawData : []);
+    scheduleList = items.map(item => typeof item === 'string' ? { title: item, note: '' } : item);
 
     renderSchedule();
     await saveActiveSchedule();
+
+    const select = document.getElementById("saved-sched-select");
+    if (select && savedSchedules[name]) {
+        select.value = name;
+        lastSelectedSched = name;
+    }
 }
 
 // 4. DELETE SCHEDULE
-async function deleteSavedSchedule() {
-    const name = document.getElementById("saved-sched-select").value;
-    if (!name) { showToast("Select a schedule to delete!", "error", 1500); return; }
+async function deleteSavedSchedule(targetName = null) {
+    const name = targetName || document.getElementById("saved-sched-select").value;
+    if (!name || name === '__SHOW_ALL__') { showToast("Select a schedule to delete!", "error", 1500); return; }
     const isOk = await showCustomDialog("confirm", `Delete schedule <b>"${name}"</b> permanently?`);
     if (!isOk) return;
 
-    await fetch(`/api/schedules/${name}`, { method: 'DELETE' });
+    await fetch(`/api/schedules/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    delete savedSchedules[name];
+    showToast(`Schedule "${name}" deleted!`, "success", 1500);
     await fetchSavedSchedules();
 
-    document.getElementById("saved-sched-select").value = "";
+    const select = document.getElementById("saved-sched-select");
+    if (select && select.value === name) {
+        select.value = "";
+        lastSelectedSched = "";
+    }
+}
+
+// ==========================================
+// --- ALL SAVED SCHEDULES MODAL FUNCTIONS ---
+// ==========================================
+let modalSchedulesFilterQuery = "";
+
+function handleSavedSchedChange(el) {
+    if (!el) return;
+    if (el.value === "__SHOW_ALL__") {
+        el.value = (lastSelectedSched && lastSelectedSched !== '__SHOW_ALL__') ? lastSelectedSched : "";
+        openAllSchedulesModal();
+    } else {
+        lastSelectedSched = el.value;
+    }
+}
+
+function formatScheduleDate(dateStr) {
+    if (!dateStr) return "-";
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
+        const day = String(d.getDate()).padStart(2, '0');
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const month = months[d.getMonth()];
+        const year = d.getFullYear();
+        const hours = String(d.getHours()).padStart(2, '0');
+        const mins = String(d.getMinutes()).padStart(2, '0');
+        return `${day} ${month} ${year}, ${hours}:${mins}`;
+    } catch (e) {
+        return dateStr || "-";
+    }
+}
+
+function openAllSchedulesModal() {
+    const modal = document.getElementById("all-schedules-modal");
+    if (!modal) return;
+    const searchInput = document.getElementById("modal-sched-search");
+    if (searchInput) {
+        searchInput.value = "";
+        modalSchedulesFilterQuery = "";
+    }
+    renderModalSchedules();
+    modal.style.display = "flex";
+    modal.style.opacity = "1";
+    setTimeout(() => { if (searchInput) searchInput.focus(); }, 100);
+}
+
+function closeAllSchedulesModal() {
+    safeCloseModal("all-schedules-modal");
+}
+
+function filterModalSchedules(query) {
+    modalSchedulesFilterQuery = (query || "").trim().toLowerCase();
+    renderModalSchedules();
+}
+
+function renderModalSchedules() {
+    const container = document.getElementById("modal-sched-list");
+    const countEl = document.getElementById("modal-sched-count");
+    if (!container) return;
+
+    container.innerHTML = "";
+
+    let allKeys = Object.keys(savedSchedules || {});
+    // Sort by updated_at descending if available, else keep order
+    allKeys.sort((a, b) => {
+        const dataA = savedSchedules[a];
+        const dataB = savedSchedules[b];
+        const dateA = (dataA && typeof dataA === 'object' && !Array.isArray(dataA) && dataA.updated_at) ? new Date(dataA.updated_at).getTime() : 0;
+        const dateB = (dataB && typeof dataB === 'object' && !Array.isArray(dataB) && dataB.updated_at) ? new Date(dataB.updated_at).getTime() : 0;
+        if (dateA && dateB) return dateB - dateA;
+        if (dateA) return -1;
+        if (dateB) return 1;
+        return 0;
+    });
+
+    const filteredKeys = modalSchedulesFilterQuery 
+        ? allKeys.filter(name => name.toLowerCase().includes(modalSchedulesFilterQuery))
+        : allKeys;
+
+    if (countEl) {
+        countEl.innerText = `Total: ${allKeys.length} schedules${modalSchedulesFilterQuery ? ` (${filteredKeys.length} filtered)` : ''}`;
+    }
+
+    if (filteredKeys.length === 0) {
+        const emptyDiv = document.createElement("div");
+        emptyDiv.className = "modal-sched-empty";
+        if (allKeys.length === 0) {
+            emptyDiv.innerHTML = '<span style="font-size: 2em;">📭</span><div>No saved schedules found yet.<br><small style="color: #666;">Create and save schedules from the Running Order sidebar.</small></div>';
+        } else {
+            const safeQuery = modalSchedulesFilterQuery.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            emptyDiv.innerHTML = `<span style="font-size: 2em;">🔍</span><div>No schedules match "<b>${safeQuery}</b>"</div>`;
+        }
+        container.appendChild(emptyDiv);
+        return;
+    }
+
+    filteredKeys.forEach(name => {
+        const rawData = savedSchedules[name];
+        const items = (rawData && typeof rawData === 'object' && !Array.isArray(rawData) && Array.isArray(rawData.items)) ? rawData.items : (Array.isArray(rawData) ? rawData : []);
+        const updatedAt = (rawData && typeof rawData === 'object' && !Array.isArray(rawData)) ? rawData.updated_at : null;
+        const dateFormatted = formatScheduleDate(updatedAt);
+
+        const itemEl = document.createElement("div");
+        itemEl.className = "modal-sched-item";
+
+        const infoDiv = document.createElement("div");
+        infoDiv.className = "modal-sched-info";
+
+        const titleDiv = document.createElement("div");
+        titleDiv.className = "modal-sched-title";
+        titleDiv.innerText = name;
+        titleDiv.title = name;
+
+        const metaDiv = document.createElement("div");
+        metaDiv.className = "modal-sched-meta";
+
+        const timeSpan = document.createElement("span");
+        timeSpan.innerText = `🕒 ${dateFormatted}`;
+
+        const badgeSpan = document.createElement("span");
+        badgeSpan.className = "modal-sched-badge";
+        badgeSpan.innerText = `${items.length} items`;
+
+        metaDiv.appendChild(timeSpan);
+        metaDiv.appendChild(badgeSpan);
+        infoDiv.appendChild(titleDiv);
+        infoDiv.appendChild(metaDiv);
+
+        const actionsDiv = document.createElement("div");
+        actionsDiv.className = "modal-sched-actions";
+
+        const loadBtn = document.createElement("button");
+        loadBtn.className = "btn-mini btn-load";
+        loadBtn.innerText = "📂 LOAD";
+        loadBtn.title = `Load "${name}"`;
+        loadBtn.addEventListener("click", () => loadScheduleFromModal(name));
+
+        const delBtn = document.createElement("button");
+        delBtn.className = "btn-mini btn-del";
+        delBtn.innerText = "🗑️";
+        delBtn.title = `Delete "${name}"`;
+        delBtn.addEventListener("click", () => deleteScheduleFromModal(name));
+
+        actionsDiv.appendChild(loadBtn);
+        actionsDiv.appendChild(delBtn);
+
+        itemEl.appendChild(infoDiv);
+        itemEl.appendChild(actionsDiv);
+        container.appendChild(itemEl);
+    });
+}
+
+async function loadScheduleFromModal(name) {
+    if (!name || !savedSchedules[name]) return;
+    const isOk = await showCustomDialog("confirm", `Load running order <b>"${name}"</b>?`);
+    if (!isOk) return;
+
+    const rawData = savedSchedules[name];
+    const items = (rawData && typeof rawData === 'object' && !Array.isArray(rawData) && Array.isArray(rawData.items)) ? rawData.items : (Array.isArray(rawData) ? rawData : []);
+    scheduleList = items.map(item => typeof item === 'string' ? { title: item, note: '' } : item);
+
+    renderSchedule();
+    await saveActiveSchedule();
+
+    const select = document.getElementById("saved-sched-select");
+    if (select) {
+        select.value = name;
+        lastSelectedSched = name;
+    }
+
+    closeAllSchedulesModal();
+    showToast(`Schedule "${name}" loaded!`, "success", 1500);
+}
+
+async function deleteScheduleFromModal(name) {
+    if (!name || !savedSchedules[name]) return;
+    const isOk = await showCustomDialog("confirm", `Delete schedule <b>"${name}"</b> permanently?`);
+    if (!isOk) return;
+
+    // Optimistic UI update: remove item from modal immediately
+    delete savedSchedules[name];
+    renderModalSchedules();
+
+    try {
+        await fetch(`/api/schedules/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    } catch (e) {
+        console.error("Failed to delete schedule on backend:", e);
+    }
+
+    showToast(`Schedule "${name}" deleted!`, "success", 1500);
+
+    // Refresh main dropdown in background
+    await fetchSavedSchedules();
+
+    const select = document.getElementById("saved-sched-select");
+    if (select && select.value === name) {
+        select.value = "";
+        lastSelectedSched = "";
+    }
 }
 
 function toggleGlobalMode() {
@@ -6834,6 +8674,8 @@ async function loadWindowsFonts() {
     const datalistLt = document.getElementById("lt-font-datalist"); // <--- Tambahan buat LT
     const datalistAlert = document.getElementById("alert-font-datalist"); // <--- Tambahan buat Alert
     const datalistScr = document.getElementById("scr-font-datalist"); // <--- Tambahan buat Scripture
+    const datalistSub = document.getElementById("sub-font-datalist"); // <--- JOB 3: Bilingual sub font
+    const datalistPlugin = document.getElementById("plugin-font-datalist"); // <--- Tambahan buat Plugin
 
     try {
         const availableFonts = await window.queryLocalFonts();
@@ -6845,6 +8687,8 @@ async function loadWindowsFonts() {
         if (datalistLt) datalistLt.innerHTML = "";
         if (datalistAlert) datalistAlert.innerHTML = "";
         if (datalistScr) datalistScr.innerHTML = "";
+        if (datalistSub) datalistSub.innerHTML = "";
+        if (datalistPlugin) datalistPlugin.innerHTML = "";
 
         const sortedFonts = Array.from(fontFamilies).sort();
 
@@ -6864,9 +8708,17 @@ async function loadWindowsFonts() {
                 const opt4 = document.createElement("option"); opt4.value = family;
                 datalistScr.appendChild(opt4);
             }
+            if (datalistSub) {
+                const opt5 = document.createElement("option"); opt5.value = family;
+                datalistSub.appendChild(opt5);
+            }
+            if (datalistPlugin) {
+                const opt6 = document.createElement("option"); opt6.value = family;
+                datalistPlugin.appendChild(opt6);
+            }
         });
 
-        console.log(`✅ Loaded ${sortedFonts.length} fonts from Windows for Lyrics, LT, Alert & Scripture!`);
+        console.log(`✅ Loaded ${sortedFonts.length} fonts from Windows for Lyrics, LT, Alert, Scripture, Sub & Plugin!`);
     } catch (err) {
         console.error("Failed to load Windows fonts:", err);
         const fallbackFonts = ["Arial", "Calibri", "Cambria", "Comic Sans MS", "Consolas", "Courier New", "Georgia", "Impact", "Segoe UI", "Tahoma", "Times New Roman", "Trebuchet MS", "Verdana"];
@@ -6884,6 +8736,10 @@ async function loadWindowsFonts() {
             if (datalistScr) {
                 const opt4 = document.createElement("option"); opt4.value = family;
                 datalistScr.appendChild(opt4);
+            }
+            if (datalistSub) {
+                const opt5 = document.createElement("option"); opt5.value = family;
+                datalistSub.appendChild(opt5);
             }
         });
     }
@@ -7077,10 +8933,8 @@ function selectVisualPreset(name) {
 
 // ==========================================
 // --- SCHEDULE BUNDLER LOGIC ---
-// ==========================================
 
-function exportSchedule() {
-    // Ganti ID-nya jadi saved-sched-select biar sinkron sama HTML lu
+async function exportSchedule() {
     const schedName = document.getElementById("saved-sched-select").value;
 
     if (!schedName) {
@@ -7088,8 +8942,42 @@ function exportSchedule() {
         return;
     }
 
-    // Langsung panggil link download dari backend
-    window.location.href = `/api/export_bundle/${schedName}`;
+    showMiniToast("📦 Processing export schedule...", "loading", 0, "export-zip-toast");
+
+    try {
+        if (typeof window.electronAPI !== "undefined" && typeof window.electronAPI.exportScheduleElectron === "function") {
+            const result = await window.electronAPI.exportScheduleElectron(schedName);
+            if (result.status === "success") {
+                showMiniToast("✅ Export completed successfully!", "success", 3000, "export-zip-toast");
+            } else if (result.status === "canceled") {
+                const toast = document.getElementById("export-zip-toast");
+                if (toast) toast.remove();
+            } else {
+                throw new Error(result.message || "Failed to save file");
+            }
+        } else {
+            const res = await fetch(`/api/export_bundle/${schedName}`);
+            if (!res.ok) throw new Error("HTTP error " + res.status);
+
+            const blob = await res.blob();
+
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `${schedName}_bundle.zip`;
+            document.body.appendChild(a);
+            a.click();
+
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            showMiniToast("✅ Export completed successfully!", "success", 3000, "export-zip-toast");
+        }
+    } catch (e) {
+        console.error("Export error:", e);
+        showMiniToast("❌ Export failed!", "error", 4000, "export-zip-toast");
+    }
 }
 
 async function importBundle(input) {
@@ -7104,35 +8992,33 @@ async function importBundle(input) {
     const formData = new FormData();
     formData.append("file", file);
 
-    // Bikin teks label berubah jadi loading biar VJ tau lagi proses
     const labelBtn = document.querySelector("label[for='import-bundle']");
     const originalText = labelBtn.innerHTML;
     labelBtn.innerHTML = "⏳";
+
+    showMiniToast("📥 Processing import schedule...", "loading", 0, "import-zip-toast");
 
     try {
         const res = await fetch("/api/import_bundle", { method: "POST", body: formData });
         const data = await res.json();
 
         if (data.status === "success") {
-            await showCustomDialog("alert", data.message);
-
-            // REFRESH TOTAL: Biar Library dan Dropdown Schedule otomatis narik data terbaru dari server
-            window.location.reload();
-
+            showMiniToast("✅ Import completed successfully!", "success", 3000, "import-zip-toast");
+            setTimeout(() => {
+                window.location.reload();
+            }, 1200);
         } else {
-            await showCustomDialog("alert", "Import failed: " + data.message);
+            showMiniToast("❌ Import failed: " + data.message, "error", 4000, "import-zip-toast");
         }
     } catch (e) {
         console.error("Bundle import error:", e);
-        await showCustomDialog("alert", "An error occurred during import!");
+        showMiniToast("❌ Import failed!", "error", 4000, "import-zip-toast");
     }
 
-    // Balikin UI dan reset input
     labelBtn.innerHTML = originalText;
     input.value = "";
 }
 
-// ==========================================
 // --- SMART SAVE BUTTON (DIRTY CHECKER) ---
 // ==========================================
 function markSongUnsaved() {
@@ -7197,6 +9083,10 @@ function updateTextPreview(triggerLiveSync = true) {
     if (document.getElementById("margin-x-input")) {
         document.getElementById('val-margin-x').innerText = document.getElementById("margin-x-input").value + '%';
     }
+    if (document.getElementById("line-height-input")) {
+        const lhVal = parseFloat(document.getElementById("line-height-input").value);
+        document.getElementById('val-line-height').innerText = lhVal.toFixed(2).replace(/0$/, '');
+    }
     document.getElementById('val-glow').innerText = document.getElementById("glow-input").value;
     document.getElementById('val-stroke').innerText = document.getElementById("stroke-size-input").value + 'px';
     document.getElementById('val-shadow').innerText = document.getElementById("shadow-int-input").value;
@@ -7234,12 +9124,58 @@ window.addEventListener("resize", scaleModalPreview);
 
 let textState = { bold: false, italic: false, underline: false };
 
+// JOB 3: Sub-lang style state (B/I/U + font)
+let subTextState = { bold: false, italic: true, underline: false };
+
 function toggleFormat(type) {
     textState[type] = !textState[type];
     const btn = document.getElementById('btn-' + type);
     if (btn) {
         if (textState[type]) btn.classList.add('active');
         else btn.classList.remove('active');
+    }
+    updateTextPreview();
+}
+
+// JOB 3: Toggle sub-lang bold/italic/underline
+function toggleSubFormat(type) {
+    subTextState[type] = !subTextState[type];
+    const btn = document.getElementById('sub-btn-' + type);
+    if (btn) {
+        if (subTextState[type]) btn.classList.add('active');
+        else btn.classList.remove('active');
+    }
+    updateSettings();
+}
+
+// FIX: External handler for sub-size range input (no inline JS logic)
+function onSubSizeInput(el) {
+    const span = document.getElementById('val-sub-size');
+    if (span) span.innerText = el.value + 'em';
+    updateSettings();
+}
+
+// FIX: Handle Follow Main Font checkbox toggle
+function handleSubFontFollowChange() {
+    const chk = document.getElementById('sub-font-follow');
+    const inp = document.getElementById('sub-font-input');
+    if (!chk || !inp) return;
+    inp.disabled = chk.checked;
+    if (chk.checked) inp.value = '';
+    updateSettings();
+}
+
+// JOB 1: Handle transition change — disable Fade Speed when CUT is selected
+function handleTransitionChange() {
+    const trans = document.getElementById('trans-input');
+    const fadeSlider = document.getElementById('fade-input');
+    const fadeLabel = document.getElementById('val-fade');
+    const fadeControl = fadeSlider ? fadeSlider.closest('.te-control') : null;
+    if (!trans || !fadeSlider) return;
+    const isCut = trans.value === 'cut';
+    fadeSlider.disabled = isCut;
+    if (fadeControl) {
+        fadeControl.classList.toggle('te-control-disabled', isCut);
     }
     updateTextPreview();
 }
@@ -7292,16 +9228,15 @@ function applyThemePreset() {
 // ==========================================
 function forceCloseToast(event) {
     const modal = document.getElementById("save-progress-modal");
+    if (!modal) return;
 
-    // 1. Cek apakah yang diklik murni background gelapnya (bukan tulisan/kotaknya)
-    if (event.target === modal) {
-        const titleText = document.getElementById("save-title").innerText;
+    const titleEl = document.getElementById("save-title");
+    const titleText = titleEl ? titleEl.innerText : "";
 
-        // 2. SAFETY LOCK: Jangan izinkan tutup kalau masih proses Saving!
-        if (titleText !== "SAVING DATA" && titleText !== "PROCESSING") {
-            clearTimeout(toastTimeout); // Bunuh timer otomatisnya
-            modal.style.display = "none"; // Hilangkan layarnya detik itu juga
-        }
+    // SAFETY LOCK: Jangan izinkan tutup kalau masih proses Saving / Processing
+    if (titleText !== "SAVING DATA" && titleText !== "PROCESSING") {
+        clearTimeout(toastTimeout);
+        modal.style.display = "none";
     }
 }
 
@@ -7535,6 +9470,7 @@ let activeMediaName = "";
 let activePlayers = {};
 
 function fireDirectLiveMedia(mediaId, mediaName, category) {
+    if (typeof window.markLocalMediaTookOver === 'function') window.markLocalMediaTookOver(category);
 
     if (category === 'video' || category === 'photo') {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -7543,7 +9479,7 @@ function fireDirectLiveMedia(mediaId, mediaName, category) {
     }
 
     if (category === 'video') {
-        ws.send(JSON.stringify({ action: "update_background", payload: { url: `/api/stream_video/${mediaId}`, behavior: "loop", muted: false } }));
+        ws.send(JSON.stringify({ action: "update_background", payload: { url: `/api/stream_video/${mediaId}`, behavior: "loop", muted: true } })); // [FIX] Audio hanya dari masterBgAudio di control.html
         ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
     } else if (category === 'photo') {
         ws.send(JSON.stringify({ action: "update_photo", payload: { url: `/api/stream_photo/${mediaId}` } }));
@@ -7567,6 +9503,8 @@ function createOrUpdateFloatingPlayer(category, mediaName) {
 
     // 🎯 KUNCI SONG GRID (PRIORITAS LIBRARY ON)
     window.activeLibraryPlayers[category] = true;
+    if (category === 'video') window._localBgVolume = 1.0;
+    else if (category === 'audio') window._localSfxVolume = 1.0;
 
     if (category === 'video') {
         const photoPlayer = document.getElementById('fp-photo');
@@ -7740,40 +9678,90 @@ function toggleCollapseMedia() {
 // ==========================================
 // 🚨 CLEAR ENGINE (PROPRESENTER STYLE)
 // ==========================================
-let clearStates = { lyrics: false, video: false, audio: false, photo: false, presentation: false };
+let clearStates = { lyrics: false, video: false, audio: false, photo: false, presentation: false, plugin: false };
 
 function clearLayer(layer) {
     clearStates[layer] = !clearStates[layer];
     const btn = document.getElementById('btn-clr-' + layer);
 
     if (clearStates[layer]) {
-        btn.classList.add('btn-clr-dim'); // Dim Visualnya (Mati)
+        if (btn) btn.classList.add('btn-clr-dim'); // Dim Visualnya (Mati)
         if (layer === 'lyrics') {
             sendUpdate("");
         }
-        else if (layer === 'video') { window.currentVisId = null; ws.send(JSON.stringify({ action: "update_background", payload: { url: "", clear_type: "clearlayer" } })); }
-        else if (layer === 'audio') { window.currentAudId = null; ws.send(JSON.stringify({ action: "update_audio", payload: { url: "" } })); }
-        else if (layer === 'photo') { window.currentVisId = null; ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } })); }
-        else if (layer === 'presentation') {
-            window.currentSlideNum = null;
-            ws.send(JSON.stringify({ action: "update_presentation", payload: { url: "" } }));
-        }
-    } else {
-        btn.classList.remove('btn-clr-dim'); // Nyala lagi
-
-        if (layer === 'presentation') window.currentSlideNum = null;
-        if (layer === 'video' || layer === 'photo') window.currentVisId = null;
-        if (layer === 'audio') window.currentAudId = null;
-
-        // 🎯 BUG 1 FIX: Filter rute data agar tidak bocor ke HTML lirik
-        if (layer === 'lyrics' && currentIndex >= 0) {
-            if (lyricsData[currentIndex] && lyricsData[currentIndex].type === 'scripture') {
-                fireLyric(currentIndex, false); // Kembalikan ke jalur tertutup scripture
-            } else {
-                sendUpdate(lyricsData[currentIndex].text); // Jalur lirik normal
+        else if (layer === 'video') {
+            if (!window._liveMediaActive) window.currentVisId = null;
+            if (window.activeSenderMedia) window.activeSenderMedia.video = false;
+            if (window.masterBgAudio && !window.masterBgAudio.paused) {
+                window.masterBgAudio.pause();
+            }
+            ws.send(JSON.stringify({ action: "update_background", payload: { url: "", clear_type: "clearlayer" } }));
+            if (window._liveMediaActive && window.activeMediaScheduledItem && window.activeMediaScheduledItem.resolved_category === 'video') {
+                stopLiveMonitor();
             }
         }
-        else if (currentIndex >= 0) { fireLyric(currentIndex, false); }
+        else if (layer === 'audio') {
+            if (!window._liveMediaActive) window.currentAudId = null;
+            if (window.activeSenderMedia) window.activeSenderMedia.audio = false;
+            if (window.masterBgAudio && !window.masterBgAudio.paused) {
+                window.masterBgAudio.pause();
+            }
+            if (window.masterSfxAudio && !window.masterSfxAudio.paused) {
+                window.masterSfxAudio.pause();
+            }
+            ws.send(JSON.stringify({ action: "update_audio", payload: { url: "" } }));
+            if (window._liveMediaActive && window.activeMediaScheduledItem && window.activeMediaScheduledItem.resolved_category === 'audio') {
+                stopLiveMonitor();
+            }
+        }
+        else if (layer === 'photo') {
+            if (!window._liveMediaActive) window.currentVisId = null;
+            if (window.activeSenderMedia) window.activeSenderMedia.photo = false;
+            ws.send(JSON.stringify({ action: "update_photo", payload: { url: "" } }));
+        }
+        else if (layer === 'presentation') {
+            window.currentSlideNum = null;
+            if (window.activeSenderMedia) {
+                window.activeSenderMedia.video = false;
+                window.activeSenderMedia.photo = false;
+            }
+            ws.send(JSON.stringify({ action: "update_presentation", payload: { url: "" } }));
+        }
+        else if (layer === 'plugin') {
+            if (typeof clearAllActivePlugins === 'function') {
+                clearAllActivePlugins();
+            }
+        }
+    } else {
+        if (btn) btn.classList.remove('btn-clr-dim'); // Nyala lagi
+
+        if (layer === 'presentation') window.currentSlideNum = null;
+        if (!window._liveMediaActive) {
+            if (layer === 'video' || layer === 'photo') window.currentVisId = null;
+            if (layer === 'audio') window.currentAudId = null;
+        }
+
+        // If live media is active, restore/replay it if its layer is uncleared!
+        if (window._liveMediaActive && window.activeMediaScheduledItem) {
+            const item = window.activeMediaScheduledItem;
+            const category = item.resolved_category;
+
+            if (layer === category) {
+                sendMediaToLiveDisplay(category, item.resolved_id, item.resolved_name);
+            }
+        } else {
+            // Standard song slide behavior
+            if (layer === 'lyrics' && currentIndex >= 0) {
+                if (lyricsData[currentIndex] && lyricsData[currentIndex].type === 'scripture') {
+                    fireLyric(currentIndex, false);
+                } else {
+                    sendUpdate(lyricsData[currentIndex].text);
+                }
+            }
+            else if (currentIndex >= 0) {
+                fireLyric(currentIndex, false);
+            }
+        }
     }
 }
 
@@ -7890,7 +9878,6 @@ window.loadPPTToGrid = async function (mediaId, mediaName) {
 };
 
 window.addPPTToSchedule = async function (mediaId, mediaName, insertIndex = -1) {
-    showToast("Preparing PPT for Schedule...", "loading");
     try {
         const res = await fetch(`/api/media/presentation/${mediaId}/slides`);
         const data = await res.json();
@@ -7924,15 +9911,43 @@ window.addPPTToSchedule = async function (mediaId, mediaName, insertIndex = -1) 
         renderSchedule();
         await saveActiveSchedule();
         fetchLibrary();
-
-        showToast(`"${mediaName}" added to Schedule!`, "success", 2000);
     } catch (e) { showToast("Failed to add PPT to Schedule", "error", 3000); }
 };
+
+window.addMediaToSchedule = async function (category, mediaId, mediaName, insertIndex = -1) {
+    const icon = category === 'video' ? '🎬' : (category === 'photo' ? '📷' : '🎵');
+    const labelPrefix = category === 'video' ? 'VIDEO' : (category === 'photo' ? 'PHOTO' : 'AUDIO');
+    const title = `${icon} ${labelPrefix}: ${mediaName}`;
+    const newItem = {
+        title: title,
+        note: `${category.charAt(0).toUpperCase() + category.slice(1)} Media`,
+        type: "media",
+        media_category: category,
+        media_id: mediaId,
+        media_name: mediaName
+    };
+
+    if (insertIndex !== -1 && insertIndex >= 0 && insertIndex <= scheduleList.length) {
+        scheduleList.splice(insertIndex, 0, newItem);
+    } else {
+        scheduleList.push(newItem);
+    }
+
+    renderSchedule();
+    await saveActiveSchedule();
+};
+
+window.scheduleList = scheduleList;
+window.renderSchedule = renderSchedule;
+window.saveActiveSchedule = saveActiveSchedule;
 
 async function openSettingsModal() {
     document.getElementById('settings-modal').style.display = 'flex';
     updateOutputLinks();
     loadLicenseStatus();
+    // Load audio routing settings
+    await loadSavedAudioSettings();
+    await loadAudioDevices();
 }
 
 // Pisahkan logika license ke fungsi sendiri agar bisa dipanggil ulang (polling)
@@ -8169,7 +10184,7 @@ let backupEditorConfig = null; // Memori perlindungan Draft (Snapshot)
 function openTextEditModal(mode = 'current') {
     // 🔒 GEMBOK SCRIPTURE: Jangan biarkan VJ ngedit ayat alkitab jadi lirik!
     if (currentActiveTab === 'scripture') {
-        showToast("Edit disabled in Scripture mode!", "error", 2000);
+        showToast("Edit disabled in Scripture mode!", "error", 1300);
         return;
     }
 
@@ -8417,59 +10432,65 @@ async function handleBibleUpload(event) {
         const res = await fetch("/api/scripture/import", { method: "POST", body: formData });
         const data = await res.json();
         if (data.status === "success") {
-            showToast(data.message, "success", 3000);
+            showToast(data.message, "success", 1000);
             loadBibleTranslations(); // Refresh dropdown
         } else {
-            showToast(data.message, "error", 4000);
+            showToast(data.message, "error", 1300);
         }
     } catch (e) {
-        showToast("Failed to import file", "error");
+        showToast("Failed to import file", "error", 1300);
     }
     event.target.value = ""; // Reset input
 }
 
 async function loadBibleTranslations() {
     try {
+        loadScriptureHistory();
         const res = await fetch("/api/scripture/translations");
         const data = await res.json();
 
         const container = document.getElementById("bible-translation-list");
+        if (!container) return;
         container.innerHTML = "";
 
-        if (data.translations.length === 0) {
+        if (!data.translations || data.translations.length === 0) {
             container.innerHTML = `<div style="color:#666; font-size:0.8em;">No Bible XML imported yet.</div>`;
             return;
         }
 
-        data.translations.forEach((t, index) => {
-            const isChecked = index === 0 ? "checked" : ""; // Default: centang yang pertama aja
+        const selectedList = (Array.isArray(data.selected) && data.selected.length > 0)
+            ? data.selected
+            : [data.translations[0]];
+
+        data.translations.forEach((t) => {
+            const isChecked = selectedList.includes(t) ? "checked" : "";
             container.innerHTML += `
                 <label class="translation-item" oncontextmenu="showTranslationContextMenu(event, '${t.replace(/'/g, "\\'")}')">
-                    <input type="checkbox" class="bible-version-cb" value="${t}" ${isChecked} onchange="handleTranslationCheck()">
+                    <input type="checkbox" class="bible-version-cb" value="${t}" ${isChecked} onchange="handleTranslationCheck(event, true)">
                     ${t}
                 </label>
             `;
         });
 
-        handleTranslationCheck(); // Jalankan pengaman otomatis
-    } catch (e) { console.error("Failed to load translations"); }
+        handleTranslationCheck(null, false); // Jalankan pengaman otomatis tanpa save ulang
+    } catch (e) { console.error("Failed to load translations", e); }
 }
 
-// 🎯 MESIN PENGAMAN MAKSIMAL 2 CHECKBOX
-window.handleTranslationCheck = function (e) {
+// 🎯 MESIN PENGAMAN MAKSIMAL 2 CHECKBOX & PERSISTENSI KE SERVER PYTHON
+window.handleTranslationCheck = function (e, shouldPersist = true) {
     const checkboxes = document.querySelectorAll(".bible-version-cb");
     let checked = document.querySelectorAll(".bible-version-cb:checked");
 
     if (checked.length === 0 && e && e.target) {
-        showToast("At least 1 translation must be active!", "warning");
+        showToast("At least 1 translation must be active!", "warning", 1500);
         e.target.checked = true;
         checked = document.querySelectorAll(".bible-version-cb:checked");
     }
 
-    const maxAllowed = 2; // 🎯 UPDATE 1 FIX: Sekarang selalu diizinkan maksimal 2!
+    const maxAllowed = 2; // Maksimal 2 terjemahan
 
     if (checked.length > maxAllowed && e && e.target) {
-        showToast(`Maximum ${maxAllowed} translations!`, "warning");
+        showToast(`Maximum ${maxAllowed} translations!`, "warning", 1500);
         e.target.checked = false;
         checked = document.querySelectorAll(".bible-version-cb:checked");
     }
@@ -8482,11 +10503,36 @@ window.handleTranslationCheck = function (e) {
         }
     });
 
+    const activeVersions = Array.from(checked).map(cb => cb.value);
+
+    // Kirim pilihan ke server Python jika diubah oleh user (bukan inisialisasi awal)
+    if (shouldPersist && activeVersions.length > 0) {
+        fetch("/api/scripture/selected_translations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ selected: activeVersions })
+        }).catch(err => console.error("Failed to save selected translations to server:", err));
+    }
+
     if (checked.length > 0) loadBibleBooks(checked[0].value);
 
-    const book = document.getElementById("bible-book").value;
-    const chap = document.getElementById("bible-chapter").value;
-    if (book && chap && typeof currentMediaCategory !== 'undefined' && currentMediaCategory === 'scripture') {
+    const searchInput = document.getElementById("bible-search-input");
+    if (searchInput && searchInput.value.trim()) {
+        const parsed = parseScriptureReference(searchInput.value.trim());
+        if (parsed.valid) {
+            const bInput = document.getElementById("bible-book");
+            const cInput = document.getElementById("bible-chapter");
+            const vInput = document.getElementById("bible-verse");
+            if (bInput) bInput.value = parsed.bookEng;
+            if (cInput) cInput.value = parsed.chapter;
+            if (vInput) vInput.value = parsed.verse;
+        }
+    }
+    const book = document.getElementById("bible-book") ? document.getElementById("bible-book").value : "";
+    const chap = document.getElementById("bible-chapter") ? document.getElementById("bible-chapter").value : "";
+    const isScriptureVisible = (typeof currentMediaCategory !== 'undefined' && currentMediaCategory === 'scripture') ||
+                               (typeof currentActiveTab !== 'undefined' && currentActiveTab === 'scripture');
+    if (book && chap && isScriptureVisible) {
         searchScripture(true);
     }
 };
@@ -8509,9 +10555,10 @@ async function loadBibleBooks(version) {
 }
 
 function populateBibleDatalist(availableBooks = null) {
-    const lang = document.getElementById('scr-global-lang')?.value || 'id';
+    const lang = document.getElementById('scr-global-lang')?.value || document.getElementById('scr-title-lang')?.value || 'id';
     const datalist = document.getElementById("bible-books-list");
     const inputBook = document.getElementById("bible-book");
+    const searchInput = document.getElementById("bible-search-input");
     if (!datalist) return;
 
     datalist.innerHTML = "";
@@ -8524,6 +10571,8 @@ function populateBibleDatalist(availableBooks = null) {
         datalist.innerHTML += `<option value="${translated}">`;
     });
 
+    const ph = lang === 'en' ? "e.g. John 3:16, 1Pet 2 10..." : "Cth: Mat 1:1, 1Pet 2 10...";
+    if (searchInput) searchInput.placeholder = ph;
     if (inputBook) inputBook.placeholder = lang === 'en' ? "Book (e.g. John)" : "Kitab (Cth: Yohanes)";
 }
 
@@ -8534,12 +10583,196 @@ function handleLanguageChange() {
     } else {
         populateBibleDatalist();
     }
+    renderScriptureHistory();
 }
+
+// ==========================================
+// 🕒 SCRIPTURE HISTORY SYSTEM
+// ==========================================
+let scriptureHistory = [];
+
+async function loadScriptureHistory() {
+    try {
+        const res = await fetch('/api/scripture/history');
+        const data = await res.json();
+        if (data && data.status === 'success' && Array.isArray(data.history)) {
+            scriptureHistory = data.history;
+        } else {
+            scriptureHistory = [];
+        }
+        renderScriptureHistory();
+    } catch (e) {
+        console.error("Error loading scripture history:", e);
+        scriptureHistory = [];
+        renderScriptureHistory();
+    }
+}
+
+function renderScriptureHistory() {
+    const listEl = document.getElementById("scr-history-list");
+    const clearBtn = document.getElementById("btn-clear-scr-history");
+    if (!listEl) return;
+
+    if (!scriptureHistory || scriptureHistory.length === 0) {
+        listEl.innerHTML = `<div class="scr-history-empty">Belum ada riwayat hari ini</div>`;
+        if (clearBtn) clearBtn.style.display = "none";
+        return;
+    }
+
+    if (clearBtn) clearBtn.style.display = "inline-flex";
+
+    const targetLang = document.getElementById('scr-title-lang')?.value || document.getElementById('scr-global-lang')?.value || 'id';
+
+    let html = "";
+    scriptureHistory.forEach(item => {
+        const canonicalBook = item.book || "";
+        const finalBookName = typeof translateBookName === 'function' ? translateBookName(canonicalBook, targetLang) : canonicalBook;
+        const refLabel = `${finalBookName} ${item.chapter}:${item.verse}`;
+        const timeLabel = item.time || "";
+
+        const safeBook = canonicalBook.replace(/'/g, "\\'");
+        const safeChap = String(item.chapter).replace(/'/g, "\\'");
+        const safeVerse = String(item.verse).replace(/'/g, "\\'");
+
+        html += `
+            <div class="scr-history-item" onclick="clickScriptureHistoryItem('${safeBook}', '${safeChap}', '${safeVerse}')" title="${refLabel} (${timeLabel})">
+                <span class="scr-history-text">${refLabel}</span>
+                <span class="scr-history-time">${timeLabel}</span>
+            </div>
+        `;
+    });
+
+    listEl.innerHTML = html;
+}
+
+async function recordScriptureHistory(book, chapter, verse) {
+    if (!book) return;
+    const chapStr = String(chapter || "1").trim();
+    const verseStr = String(verse || "1").trim();
+    const canonicalBook = typeof translateBookName === 'function' ? translateBookName(book, 'en') : book;
+
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const timeStr = `${hours}:${minutes}`;
+
+    // Instant local update (dedup & unshift)
+    scriptureHistory = scriptureHistory.filter(item =>
+        !(item.book.toLowerCase() === canonicalBook.toLowerCase() &&
+            String(item.chapter) === chapStr &&
+            String(item.verse) === verseStr)
+    );
+    scriptureHistory.unshift({
+        book: canonicalBook,
+        chapter: chapStr,
+        verse: verseStr,
+        time: timeStr
+    });
+    if (scriptureHistory.length > 50) scriptureHistory = scriptureHistory.slice(0, 50);
+
+    renderScriptureHistory();
+
+    // Persist to backend
+    try {
+        await fetch('/api/scripture/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                book: canonicalBook,
+                chapter: chapStr,
+                verse: verseStr,
+                time: timeStr
+            })
+        });
+    } catch (e) {
+        console.error("Error saving scripture history to backend:", e);
+    }
+}
+
+async function clickScriptureHistoryItem(book, chapter, verse) {
+    const bookInput = document.getElementById("bible-book");
+    const chapInput = document.getElementById("bible-chapter");
+    const verseInput = document.getElementById("bible-verse");
+    const searchInput = document.getElementById("bible-search-input");
+
+    const targetLang = document.getElementById('scr-title-lang')?.value || document.getElementById('scr-global-lang')?.value || 'id';
+    const finalBookName = typeof translateBookName === 'function' ? translateBookName(book, targetLang) : book;
+
+    if (bookInput) bookInput.value = book;
+    if (chapInput) chapInput.value = chapter;
+    if (verseInput) verseInput.value = verse;
+    if (searchInput) searchInput.value = `${finalBookName} ${chapter}:${verse}`;
+
+    // Jalankan pencarian dan otomatis fire ayat tersebut ke layar proyektor & LT
+    await searchScripture(false);
+}
+
+async function clearScriptureHistory() {
+    const isOk = await showCustomDialog(
+        "confirm",
+        'Are you sure you want to clear scripture history?<br><small style="color:#888;">Riwayat ayat hari ini akan dihapus permanen.</small>'
+    );
+    if (!isOk) return;
+
+    scriptureHistory = [];
+    renderScriptureHistory();
+
+    try {
+        await fetch('/api/scripture/history', { method: 'DELETE' });
+        if (typeof showToast === 'function') {
+            showToast("Scripture history cleared", "success", 1000);
+        }
+    } catch (e) {
+        console.error("Error clearing scripture history:", e);
+    }
+}
+
+// Auto-init scripture history
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadScriptureHistory);
+} else {
+    loadScriptureHistory();
+}
+
 // 🎯 FIX MUTLAK: Pastikan ada (silent = false) agar tidak error saat dipanggil dari checkbox
 // ==========================================
 // WIRE SCRIPTURE — SISTEM MANDIRI PENUH
 // Tidak terhubung ke lyricsData / currentIndex / fireLyric
 // ==========================================
+
+// 🎯 NAVIGATION TARGET MANAGEMENT (SCRIPTURE vs LYRICS)
+window.activeNavTarget = 'lyrics';
+
+window.setNavigationTarget = function (target) {
+    window.activeNavTarget = (target === 'scripture') ? 'scripture' : 'lyrics';
+};
+
+window.isScriptureNavActive = function () {
+    if (window.activeNavTarget !== 'scripture') return false;
+    const scrPanel = document.getElementById("scr-lib-panel");
+    const bgContent = document.getElementById("bg-library-content");
+    const isScrVisible = scrPanel && scrPanel.style.display !== "none" &&
+                         bgContent && bgContent.style.display !== "none";
+    return !!(isScrVisible && Array.isArray(scriptureData) && scriptureData.length > 0);
+};
+
+window.navigateScripture = function (direction) {
+    if (!Array.isArray(scriptureData) || scriptureData.length === 0) return;
+
+    if (direction === 'next') {
+        if (currentScrIndex === -1) {
+            fireScriptureVerse(0);
+        } else if (currentScrIndex < scriptureData.length - 1) {
+            fireScriptureVerse(currentScrIndex + 1);
+        }
+    } else if (direction === 'prev') {
+        if (currentScrIndex === -1) {
+            fireScriptureVerse(0);
+        } else if (currentScrIndex > 0) {
+            fireScriptureVerse(currentScrIndex - 1);
+        }
+    }
+};
 
 let scriptureData = [];     // Array ayat terpisah dari lyricsData
 let currentScrIndex = -1;  // Index ayat aktif di scripture grid
@@ -8547,26 +10780,42 @@ let currentScrIndex = -1;  // Index ayat aktif di scripture grid
 async function searchScripture(silent = false) {
     const checked = document.querySelectorAll(".bible-version-cb:checked");
     if (checked.length === 0) {
-        if (!silent) showToast("Select at least 1 Bible translation!", "error");
+        if (!silent) showToast("Select at least 1 Bible translation!", "error", 1300);
         return;
     }
 
     const v1 = checked[0].value;
     const v2 = checked.length > 1 ? checked[1].value : "";
 
-    const rawBook = document.getElementById("bible-book").value;
+    const searchInput = document.getElementById("bible-search-input");
+    const bookInput = document.getElementById("bible-book");
     const chapInput = document.getElementById("bible-chapter");
     const verseInput = document.getElementById("bible-verse");
 
+    let shouldAutoFire = true;
+
+    if (searchInput && searchInput.value.trim()) {
+        const parsed = parseScriptureReference(searchInput.value.trim());
+        if (!parsed.valid) {
+            if (!silent) showToast("Format referensi tidak dikenali. Contoh: Mat 1:1 atau 1Pet 2 10", "error", 1300);
+            return;
+        }
+        if (bookInput) bookInput.value = parsed.bookEng;
+        if (chapInput) chapInput.value = parsed.chapter;
+        if (verseInput) verseInput.value = parsed.verse;
+        shouldAutoFire = parsed.isSingleVerse;
+    }
+
+    const rawBook = bookInput ? bookInput.value : "";
     if (!rawBook) {
-        if (!silent) showToast("Book is required!", "error");
+        if (!silent) showToast("Book is required!", "error", 1300);
         return;
     }
 
-    if (!chapInput.value) chapInput.value = "1";
-    if (!verseInput.value) verseInput.value = "1";
+    if (chapInput && !chapInput.value) chapInput.value = "1";
+    if (verseInput && !verseInput.value) verseInput.value = "1";
 
-    const chapter = chapInput.value;
+    const chapter = chapInput ? chapInput.value : "1";
     const engBook = translateBookName(rawBook, 'en');
 
     try {
@@ -8600,39 +10849,80 @@ async function searchScripture(silent = false) {
             currentScrIndex = -1;
             renderScriptureGrid();
 
-            // Auto-fire ayat target (tanpa sentuh song grid)
-            const targetVerse = document.getElementById("bible-verse").value;
+            // Auto-fire atau sorot ayat target
+            const targetVerse = verseInput ? verseInput.value : "1";
             let targetIdx = 0;
             if (targetVerse) {
                 const found = scriptureData.findIndex(item => parseInt(item.verse) === parseInt(targetVerse));
                 if (found !== -1) targetIdx = found;
             }
-            fireScriptureVerse(targetIdx);
+
+            if (shouldAutoFire) {
+                fireScriptureVerse(targetIdx);
+            } else {
+                selectScriptureVersePreview(targetIdx);
+            }
+
+            setNavigationTarget('scripture');
+            if (searchInput) searchInput.blur();
 
         } else {
-            if (!silent) showToast(data.message, "error");
+            if (!silent) showToast(data.message, "error", 1300);
         }
     } catch (e) {
         console.error("Scripture Error Detail:", e);
-        if (!silent) showToast("Network / system error", "error");
+        if (!silent) showToast("Network / system error", "error", 1300);
+    }
+}
+
+// Sorot ayat di Verse List tanpa broadcast live ke proyektor
+function selectScriptureVersePreview(idx) {
+    if (!scriptureData || idx < 0 || idx >= scriptureData.length) return;
+    setNavigationTarget('scripture');
+
+    const item = scriptureData[idx];
+    currentScrIndex = idx;
+    highlightScriptureBox(idx, false);
+
+    const verseInput = document.getElementById("bible-verse");
+    if (verseInput) verseInput.value = item.verse;
+
+    const targetLang = document.getElementById('scr-title-lang')?.value || 'id';
+    const finalBookName = translateBookName(item.book, targetLang);
+    const searchInput = document.getElementById("bible-search-input");
+    if (searchInput) {
+        searchInput.value = `${finalBookName} ${item.chapter}:${item.verse}`;
     }
 }
 
 // Kirim ayat langsung ke display via WebSocket — tanpa fireLyric(), tanpa lyricsData
 function fireScriptureVerse(idx) {
     if (!scriptureData || idx < 0 || idx >= scriptureData.length) return;
+    setNavigationTarget('scripture');
 
     const item = scriptureData[idx];
     currentScrIndex = idx;
-    highlightScriptureBox(idx);
+    highlightScriptureBox(idx, true);
+
+    // Rekam ke history scripture harian
+    if (item && item.book && item.chapter && item.verse) {
+        recordScriptureHistory(item.book, item.chapter, item.verse);
+    }
 
     // Sinkronkan input verse di panel kiri
     const verseInput = document.getElementById("bible-verse");
     if (verseInput) verseInput.value = item.verse;
 
-    // Kirim ke display & LT via WebSocket — wire mandiri
     const targetLang = document.getElementById('scr-title-lang')?.value || 'id';
     const finalBookName = translateBookName(item.book, targetLang);
+
+    // Sinkronkan teks input utama
+    const searchInput = document.getElementById("bible-search-input");
+    if (searchInput) {
+        searchInput.value = `${finalBookName} ${item.chapter}:${item.verse}`;
+    }
+
+    // Kirim ke display & LT via WebSocket — wire mandiri
     const showDisp = document.getElementById('scr-disp-enable')?.checked ?? true;
     const showLt = document.getElementById('scr-lt-enable')?.checked ?? true;
 
@@ -8673,25 +10963,36 @@ function renderScriptureGrid() {
         box.className = "scr-verse-box";
         box.id = `scr-box-${idx}`;
 
+        // Nomor verse — bold, kiri
         const label = document.createElement("div");
         label.className = "scr-verse-label";
-        label.textContent = `VERSE ${item.verse}`;
+        label.textContent = item.verse;
+
+        // Separator vertikal
+        const divider = document.createElement("div");
+        divider.className = "scr-verse-divider";
+
+        // Wrapper teks kanan
+        const content = document.createElement("div");
+        content.className = "scr-verse-content";
 
         const text = document.createElement("div");
         text.className = "scr-verse-text";
         text.textContent = item.text1 || "";
-
-        box.appendChild(label);
-        box.appendChild(text);
+        content.appendChild(text);
 
         if (item.text2) {
             const text2 = document.createElement("div");
             text2.className = "scr-verse-text2";
             text2.textContent = item.text2;
-            box.appendChild(text2);
+            content.appendChild(text2);
         }
 
-        // Tombol MATIKAN (muncul saat ayat aktif)
+        box.appendChild(label);
+        box.appendChild(divider);
+        box.appendChild(content);
+
+        // Tombol MATIKAN (hanya muncul saat ayat LIVE)
         const killBtn = document.createElement("button");
         killBtn.className = "btn-scr-kill";
         killBtn.textContent = "✖ DISABLE";
@@ -8699,24 +11000,31 @@ function renderScriptureGrid() {
         killBtn.onclick = (e) => {
             e.stopPropagation();
             clearScriptureLive();
-            document.querySelectorAll(".scr-verse-box").forEach(b => b.classList.remove("scr-verse-active"));
-            currentScrIndex = -1;
+            box.classList.remove("scr-verse-active");
         };
         box.appendChild(killBtn);
 
         // Klik untuk tampilkan ayat — wire scripture mandiri
-        box.onclick = () => fireScriptureVerse(idx);
+        box.onclick = () => {
+            setNavigationTarget('scripture');
+            fireScriptureVerse(idx);
+        };
 
         container.appendChild(box);
     });
 }
 
-function highlightScriptureBox(idx) {
-    document.querySelectorAll(".scr-verse-box").forEach(b => b.classList.remove("scr-verse-active"));
+function highlightScriptureBox(idx, isLive = false) {
+    document.querySelectorAll(".scr-verse-box").forEach(b => {
+        b.classList.remove("scr-verse-active", "scr-verse-selected");
+    });
     const el = document.getElementById(`scr-box-${idx}`);
     if (el) {
-        el.classList.add("scr-verse-active");
-        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        el.classList.add("scr-verse-selected");
+        if (isLive) {
+            el.classList.add("scr-verse-active");
+        }
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 }
 
@@ -8733,6 +11041,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // Dengarkan kalau VJ ganti bahasa di Modal
     const langSelect = document.getElementById('scr-title-lang');
     if (langSelect) langSelect.addEventListener('change', handleLanguageChange);
+
+    const scrGridEl = document.getElementById("scripture-grid-container");
+    if (scrGridEl) scrGridEl.addEventListener("click", () => setNavigationTarget('scripture'));
+    const lyricGridEl = document.getElementById("grid-container");
+    if (lyricGridEl) lyricGridEl.addEventListener("click", () => setNavigationTarget('lyrics'));
 });
 
 // ==========================================
@@ -8803,42 +11116,112 @@ function toggleScrBgType() {
     }
 }
 
+window.toggleScrStyle = function (pfx, section, style) {
+    const btn = document.getElementById(`scr-${pfx}-${section}-${style}`);
+    if (!btn) return;
+    btn.classList.toggle('active');
+
+    const isFollow = document.getElementById('scr-lt-follow')?.checked;
+    if (isFollow && pfx === 'disp') {
+        const ltBtn = document.getElementById(`scr-lt-${section}-${style}`);
+        if (ltBtn) {
+            ltBtn.classList.toggle('active', btn.classList.contains('active'));
+        }
+    }
+
+    clearTimeout(scrDebounceTimer);
+    scrDebounceTimer = setTimeout(() => {
+        applyScriptureSettings();
+    }, 100);
+};
+
+function getScrIntVal(id, fallback) {
+    const raw = document.getElementById(id)?.value;
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getScrFloatVal(id, fallback) {
+    const raw = document.getElementById(id)?.value;
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    const parsed = parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function setScrFullscreenPosUI(pfx, pos) {
+    const validPos = (pos === 'center' || pos === 'bottom') ? pos : 'top';
+    ['top', 'center', 'bottom'].forEach(p => {
+        const btn = document.getElementById(`scr-${pfx}-fs-pos-${p}`);
+        if (btn) btn.classList.toggle('active', p === validPos);
+    });
+}
+
+function getScrFullscreenPosUI(pfx) {
+    for (const p of ['top', 'center', 'bottom']) {
+        if (document.getElementById(`scr-${pfx}-fs-pos-${p}`)?.classList.contains('active')) {
+            return p;
+        }
+    }
+    return 'top';
+}
+
+window.setScrFullscreenPos = function (pfx, pos) {
+    setScrFullscreenPosUI(pfx, pos);
+    const isFollow = document.getElementById('scr-lt-follow')?.checked;
+    if (isFollow && pfx === 'disp') {
+        setScrFullscreenPosUI('lt', pos);
+    }
+    clearTimeout(scrDebounceTimer);
+    scrDebounceTimer = setTimeout(() => {
+        applyScriptureSettings();
+    }, 100);
+};
+
 function getScrConfig(pfx) {
-    // 🎯 FIX: Pastikan parsing angka yang benar (PX), bukan VW
+    // 🎯 FIX: Pastikan parsing angka yang benar (PX), bukan VW, serta pertahankan nilai 0
     return {
         mode: document.getElementById(`scr-${pfx}-mode`)?.value || 'overlay',
         bg_type: document.getElementById(`scr-${pfx}-bg-type`)?.value || 'transparent',
         bg_color: document.getElementById(`scr-${pfx}-bg-color`)?.value || '#000000',
-        bg_opacity: parseFloat(document.getElementById(`scr-${pfx}-bg-opacity`)?.value || 0.8),
-        bg_blur: parseInt(document.getElementById(`scr-${pfx}-bg-blur`)?.value || 0),
+        bg_opacity: getScrFloatVal(`scr-${pfx}-bg-opacity`, 0.8),
+        bg_blur: getScrIntVal(`scr-${pfx}-bg-blur`, 0),
 
         // 🎯 Parsing persentase ke angka bulat
-        overlay_height: parseInt(document.getElementById(`scr-${pfx}-overlay-height`)?.value || 35),
+        fullscreen_pos: getScrFullscreenPosUI(pfx),
+        overlay_height: getScrIntVal(`scr-${pfx}-overlay-height`, 35),
         overlay_pos: document.getElementById(`scr-${pfx}-overlay-pos`)?.value || 'bottom',
-        overlay_radius: parseInt(document.getElementById(`scr-${pfx}-overlay-radius`)?.value || 15),
+        overlay_radius: getScrIntVal(`scr-${pfx}-overlay-radius`, 15),
 
+        title_pos: document.getElementById(`scr-${pfx}-title-pos`)?.value || 'top',
         title_font: document.getElementById(`scr-${pfx}-title-font`)?.value || 'Montserrat',
-        title_size: parseInt(document.getElementById(`scr-${pfx}-title-size`)?.value || 28),
+        title_size: getScrIntVal(`scr-${pfx}-title-size`, 28),
         title_color: document.getElementById(`scr-${pfx}-title-color`)?.value || '#00e5ff',
         title_align: document.getElementById(`scr-${pfx}-title-align`)?.value || 'left',
+        title_bold: document.getElementById(`scr-${pfx}-title-bold`)?.classList.contains('active') || false,
+        title_italic: document.getElementById(`scr-${pfx}-title-italic`)?.classList.contains('active') || false,
+        title_underline: document.getElementById(`scr-${pfx}-title-underline`)?.classList.contains('active') || false,
 
         // 🎯 Padding PX EXPLISIT
-        title_pad_t: parseInt(document.getElementById(`scr-${pfx}-title-pad-t`)?.value || 15),
-        title_pad_b: parseInt(document.getElementById(`scr-${pfx}-title-pad-b`)?.value || 15),
-        title_pad_l: parseInt(document.getElementById(`scr-${pfx}-title-pad-l`)?.value || 20),
-        title_pad_r: parseInt(document.getElementById(`scr-${pfx}-title-pad-r`)?.value || 20),
+        title_pad_t: getScrIntVal(`scr-${pfx}-title-pad-t`, 15),
+        title_pad_b: getScrIntVal(`scr-${pfx}-title-pad-b`, 15),
+        title_pad_l: getScrIntVal(`scr-${pfx}-title-pad-l`, 20),
+        title_pad_r: getScrIntVal(`scr-${pfx}-title-pad-r`, 20),
 
         body_font: document.getElementById(`scr-${pfx}-body-font`)?.value || 'Montserrat',
-        body_size: parseInt(document.getElementById(`scr-${pfx}-body-size`)?.value || 45),
+        body_size: getScrIntVal(`scr-${pfx}-body-size`, 45),
         body_auto: document.getElementById(`scr-${pfx}-body-auto`)?.checked || false,
         body_color: document.getElementById(`scr-${pfx}-body-color`)?.value || '#ffffff',
         body_align: document.getElementById(`scr-${pfx}-body-align`)?.value || 'left',
+        body_bold: document.getElementById(`scr-${pfx}-body-bold`)?.classList.contains('active') || false,
+        body_italic: document.getElementById(`scr-${pfx}-body-italic`)?.classList.contains('active') || false,
+        body_underline: document.getElementById(`scr-${pfx}-body-underline`)?.classList.contains('active') || false,
 
         // 🎯 Padding PX EXPLISIT
-        body_pad_t: parseInt(document.getElementById(`scr-${pfx}-body-pad-t`)?.value || 20),
-        body_pad_b: parseInt(document.getElementById(`scr-${pfx}-body-pad-b`)?.value || 20),
-        body_pad_l: parseInt(document.getElementById(`scr-${pfx}-body-pad-l`)?.value || 30),
-        body_pad_r: parseInt(document.getElementById(`scr-${pfx}-body-pad-r`)?.value || 30)
+        body_pad_t: getScrIntVal(`scr-${pfx}-body-pad-t`, 20),
+        body_pad_b: getScrIntVal(`scr-${pfx}-body-pad-b`, 20),
+        body_pad_l: getScrIntVal(`scr-${pfx}-body-pad-l`, 30),
+        body_pad_r: getScrIntVal(`scr-${pfx}-body-pad-r`, 30)
     };
 }
 function setScrConfigToUI(pfx, config) {
@@ -8846,34 +11229,48 @@ function setScrConfigToUI(pfx, config) {
     if (document.getElementById(`scr-${pfx}-mode`)) document.getElementById(`scr-${pfx}-mode`).value = config.mode || 'overlay';
     if (document.getElementById(`scr-${pfx}-bg-type`)) document.getElementById(`scr-${pfx}-bg-type`).value = config.bg_type || 'transparent';
     if (document.getElementById(`scr-${pfx}-bg-color`)) document.getElementById(`scr-${pfx}-bg-color`).value = config.bg_color || '#000000';
-    if (document.getElementById(`scr-${pfx}-bg-opacity`)) document.getElementById(`scr-${pfx}-bg-opacity`).value = config.bg_opacity || 0.8;
-    if (document.getElementById(`scr-${pfx}-bg-blur`)) document.getElementById(`scr-${pfx}-bg-blur`).value = config.bg_blur || 0;
-    if (document.getElementById(`scr-${pfx}-overlay-height`)) document.getElementById(`scr-${pfx}-overlay-height`).value = config.overlay_height || 35;
+    if (document.getElementById(`scr-${pfx}-bg-opacity`)) document.getElementById(`scr-${pfx}-bg-opacity`).value = config.bg_opacity ?? 0.8;
+    if (document.getElementById(`scr-${pfx}-bg-blur`)) document.getElementById(`scr-${pfx}-bg-blur`).value = config.bg_blur ?? 0;
+    setScrFullscreenPosUI(pfx, config.fullscreen_pos || 'top');
+    if (document.getElementById(`scr-${pfx}-overlay-height`)) document.getElementById(`scr-${pfx}-overlay-height`).value = config.overlay_height ?? 35;
     if (document.getElementById(`scr-${pfx}-overlay-pos`)) document.getElementById(`scr-${pfx}-overlay-pos`).value = config.overlay_pos || 'bottom';
-    if (document.getElementById(`scr-${pfx}-overlay-radius`)) document.getElementById(`scr-${pfx}-overlay-radius`).value = config.overlay_radius || 15;
+    if (document.getElementById(`scr-${pfx}-overlay-radius`)) document.getElementById(`scr-${pfx}-overlay-radius`).value = config.overlay_radius ?? 15;
 
+    if (document.getElementById(`scr-${pfx}-title-pos`)) document.getElementById(`scr-${pfx}-title-pos`).value = config.title_pos || 'top';
     if (document.getElementById(`scr-${pfx}-title-font`)) document.getElementById(`scr-${pfx}-title-font`).value = config.title_font || 'Montserrat';
-    if (document.getElementById(`scr-${pfx}-title-size`)) document.getElementById(`scr-${pfx}-title-size`).value = config.title_size || 28;
+    if (document.getElementById(`scr-${pfx}-title-size`)) document.getElementById(`scr-${pfx}-title-size`).value = config.title_size ?? 28;
     if (document.getElementById(`scr-${pfx}-title-color`)) document.getElementById(`scr-${pfx}-title-color`).value = config.title_color || '#00e5ff';
     if (document.getElementById(`scr-${pfx}-title-align`)) document.getElementById(`scr-${pfx}-title-align`).value = config.title_align || 'left';
+    const tBold = document.getElementById(`scr-${pfx}-title-bold`);
+    const tItalic = document.getElementById(`scr-${pfx}-title-italic`);
+    const tUnderline = document.getElementById(`scr-${pfx}-title-underline`);
+    if (tBold) tBold.classList.toggle('active', !!config.title_bold);
+    if (tItalic) tItalic.classList.toggle('active', !!config.title_italic);
+    if (tUnderline) tUnderline.classList.toggle('active', !!config.title_underline);
 
     // 🎯 Padding PX EXPLISIT
-    if (document.getElementById(`scr-${pfx}-title-pad-t`)) document.getElementById(`scr-${pfx}-title-pad-t`).value = config.title_pad_t || 15;
-    if (document.getElementById(`scr-${pfx}-title-pad-b`)) document.getElementById(`scr-${pfx}-title-pad-b`).value = config.title_pad_b || 15;
-    if (document.getElementById(`scr-${pfx}-title-pad-l`)) document.getElementById(`scr-${pfx}-title-pad-l`).value = config.title_pad_l || 20;
-    if (document.getElementById(`scr-${pfx}-title-pad-r`)) document.getElementById(`scr-${pfx}-title-pad-r`).value = config.title_pad_r || 20;
+    if (document.getElementById(`scr-${pfx}-title-pad-t`)) document.getElementById(`scr-${pfx}-title-pad-t`).value = config.title_pad_t ?? 15;
+    if (document.getElementById(`scr-${pfx}-title-pad-b`)) document.getElementById(`scr-${pfx}-title-pad-b`).value = config.title_pad_b ?? 15;
+    if (document.getElementById(`scr-${pfx}-title-pad-l`)) document.getElementById(`scr-${pfx}-title-pad-l`).value = config.title_pad_l ?? 20;
+    if (document.getElementById(`scr-${pfx}-title-pad-r`)) document.getElementById(`scr-${pfx}-title-pad-r`).value = config.title_pad_r ?? 20;
 
     if (document.getElementById(`scr-${pfx}-body-font`)) document.getElementById(`scr-${pfx}-body-font`).value = config.body_font || 'Montserrat';
-    if (document.getElementById(`scr-${pfx}-body-size`)) document.getElementById(`scr-${pfx}-body-size`).value = config.body_size || 45;
+    if (document.getElementById(`scr-${pfx}-body-size`)) document.getElementById(`scr-${pfx}-body-size`).value = config.body_size ?? 45;
     if (document.getElementById(`scr-${pfx}-body-auto`)) document.getElementById(`scr-${pfx}-body-auto`).checked = config.body_auto || false;
     if (document.getElementById(`scr-${pfx}-body-color`)) document.getElementById(`scr-${pfx}-body-color`).value = config.body_color || '#ffffff';
     if (document.getElementById(`scr-${pfx}-body-align`)) document.getElementById(`scr-${pfx}-body-align`).value = config.body_align || 'left';
+    const bBold = document.getElementById(`scr-${pfx}-body-bold`);
+    const bItalic = document.getElementById(`scr-${pfx}-body-italic`);
+    const bUnderline = document.getElementById(`scr-${pfx}-body-underline`);
+    if (bBold) bBold.classList.toggle('active', !!config.body_bold);
+    if (bItalic) bItalic.classList.toggle('active', !!config.body_italic);
+    if (bUnderline) bUnderline.classList.toggle('active', !!config.body_underline);
 
     // 🎯 Padding PX EXPLISIT
-    if (document.getElementById(`scr-${pfx}-body-pad-t`)) document.getElementById(`scr-${pfx}-body-pad-t`).value = config.body_pad_t || 20;
-    if (document.getElementById(`scr-${pfx}-body-pad-b`)) document.getElementById(`scr-${pfx}-body-pad-b`).value = config.body_pad_b || 20;
-    if (document.getElementById(`scr-${pfx}-body-pad-l`)) document.getElementById(`scr-${pfx}-body-pad-l`).value = config.body_pad_l || 30;
-    if (document.getElementById(`scr-${pfx}-body-pad-r`)) document.getElementById(`scr-${pfx}-body-pad-r`).value = config.body_pad_r || 30;
+    if (document.getElementById(`scr-${pfx}-body-pad-t`)) document.getElementById(`scr-${pfx}-body-pad-t`).value = config.body_pad_t ?? 20;
+    if (document.getElementById(`scr-${pfx}-body-pad-b`)) document.getElementById(`scr-${pfx}-body-pad-b`).value = config.body_pad_b ?? 20;
+    if (document.getElementById(`scr-${pfx}-body-pad-l`)) document.getElementById(`scr-${pfx}-body-pad-l`).value = config.body_pad_l ?? 30;
+    if (document.getElementById(`scr-${pfx}-body-pad-r`)) document.getElementById(`scr-${pfx}-body-pad-r`).value = config.body_pad_r ?? 30;
 
     // 🎯 UPDATE UI STATE (Disabled inputs, dsb)
     updateScrLayoutUI();
@@ -8882,7 +11279,8 @@ function setScrConfigToUI(pfx, config) {
 let scrDebounceTimer;
 function setupScrRealtime() {
     const modal = document.getElementById('scripture-settings-modal');
-    if (!modal) return;
+    if (!modal || modal.dataset.scrRealtimeInit === '1') return;
+    modal.dataset.scrRealtimeInit = '1';
 
     const inputs = modal.querySelectorAll('.scr-input, .scr-color-picker, input[type="range"], input[type="checkbox"]');
     inputs.forEach(input => {
@@ -8954,7 +11352,7 @@ async function saveAllScrPresets() {
 
 async function deleteScrPreset(pfx) {
     const selectEl = document.getElementById(`scr-${pfx}-preset-select`);
-    if (!selectEl || !selectEl.value) return showToast("Select a preset from the dropdown first!", "warning", 3000);
+    if (!selectEl || !selectEl.value) return showToast("Select a preset from the dropdown first!", "warning", 1500);
 
     const name = selectEl.value;
 
@@ -8963,7 +11361,7 @@ async function deleteScrPreset(pfx) {
 
     showToast("Deleting...", "loading");
     await fetch(`/api/scripture_presets/${name}`, { method: 'DELETE' });
-    showToast("Deleted!", "success", 1500);
+    showToast("Deleted!", "success", 1000);
 
     await fetchScripturePresets();
     selectEl.value = ""; // Reset tampilan dropdown
@@ -8971,11 +11369,11 @@ async function deleteScrPreset(pfx) {
 
 async function setDefaultScrPreset(pfx) {
     const selectEl = document.getElementById(`scr-${pfx}-preset-select`);
-    if (!selectEl || !selectEl.value) return showToast("Select a preset from the dropdown first!", "warning", 3000);
+    if (!selectEl || !selectEl.value) return showToast("Select a preset from the dropdown first!", "warning", 1500);
 
     showToast("Setting default...", "loading");
     await fetch(`/api/scripture_presets/default/${pfx}/${selectEl.value}`, { method: 'POST' });
-    showToast(`Successfully set as Default!`, "success", 1500);
+    showToast(`Successfully set as Default!`, "success", 1000);
 
     fetchScripturePresets();
 }
@@ -9071,6 +11469,9 @@ async function fetchScripturePresets() {
         });
 
         setupScrRealtime(); // Wajib Panggil Disini
+        if (typeof applyScriptureSettings === "function") {
+            applyScriptureSettings();
+        }
     } catch (e) { console.error(e); showToast("Failed to load presets", "error"); }
 }
 
@@ -9093,10 +11494,19 @@ function toggleScrAutoFit() {
 
 // 🎯 FUNGSI BATAL: Kembalikan kondisi layar seperti semula (sebelum diedit)
 
+// Tambahkan flag guard agar tidak double-fire dalam satu rAF tick
+let _scrPreviewResizeScheduled = false;
 function scaleModalPreviewScr() {
-    const wrapper = document.getElementById("scr-preview-box");
-    const frame = document.getElementById("scr-preview-iframe");
-    if (wrapper && frame) { frame.style.transform = `scale(${wrapper.offsetWidth / 1920})`; }
+    if (_scrPreviewResizeScheduled) return;
+    _scrPreviewResizeScheduled = true;
+    window.requestAnimationFrame(() => {
+        const wrapper = document.getElementById("scr-preview-box");
+        const frame = document.getElementById("scr-preview-iframe");
+        if (wrapper && frame) {
+            frame.style.transform = `scale(${wrapper.offsetWidth / 1920})`;
+        }
+        _scrPreviewResizeScheduled = false;
+    });
 }
 
 let iframeScaleObserverScr = null; // Deklarasi di luar agar tidak terjadi duplikasi
@@ -9121,7 +11531,9 @@ function attachIframeScalerScr() {
     if (!iframeScaleObserverScr) {
         iframeScaleObserverScr = new ResizeObserver(entries => {
             const currentWidth = entries[0].contentRect.width;
-            if (currentWidth > 0) {
+            // Threshold 1px: skip micro-changes, konsisten dengan attachTextEditPreviewScaler
+            if (currentWidth > 0 && Math.abs((window._lastScrIframeWidth || 0) - currentWidth) > 1) {
+                window._lastScrIframeWidth = currentWidth;
                 const scaleValue = currentWidth / 1920;
                 iframe.style.transform = `scale(${scaleValue})`;
             }
@@ -9131,14 +11543,220 @@ function attachIframeScalerScr() {
 }
 attachIframeScalerScr();
 
-function getBibleBooksMap() {
+// ==========================================
+// 📖 CANONICAL BIBLE BOOKS & ALIAS SYSTEM
+// ==========================================
+const BIBLE_BOOKS_MASTER = [
+    { num: 1, en: "Genesis", id: "Kejadian", idAbbr: "Kej", enAbbr: "Gen", aliases: ["gen", "kej"] },
+    { num: 2, en: "Exodus", id: "Keluaran", idAbbr: "Kel", enAbbr: "Ex", aliases: ["kel", "ex", "exo", "exod"] },
+    { num: 3, en: "Leviticus", id: "Imamat", idAbbr: "Im", enAbbr: "Lev", aliases: ["im", "ima", "imam", "imamat", "lev", "leviticus"] },
+    { num: 4, en: "Numbers", id: "Bilangan", idAbbr: "Bil", enAbbr: "Num", aliases: ["bil", "num"] },
+    { num: 5, en: "Deuteronomy", id: "Ulangan", idAbbr: "Ul", enAbbr: "Deut", aliases: ["ul", "ula", "deut", "deu", "dt"] },
+    { num: 6, en: "Joshua", id: "Yosua", idAbbr: "Yos", enAbbr: "Josh", aliases: ["yos", "josh", "jos"] },
+    { num: 7, en: "Judges", id: "Hakim-Hakim", idAbbr: "Hak", enAbbr: "Judg", aliases: ["hak", "hakim", "hakimhakim", "judg", "jdg", "jud"] },
+    { num: 8, en: "Ruth", id: "Rut", idAbbr: "Rut", enAbbr: "Ruth", aliases: ["rut", "ruth", "rth"] },
+    { num: 9, en: "1 Samuel", id: "1 Samuel", idAbbr: "1 Sam", enAbbr: "1 Sam", aliases: ["1sam", "1sa", "1s"] },
+    { num: 10, en: "2 Samuel", id: "2 Samuel", idAbbr: "2 Sam", enAbbr: "2 Sam", aliases: ["2sam", "2sa", "2s"] },
+    { num: 11, en: "1 Kings", id: "1 Raja-Raja", idAbbr: "1 Raj", enAbbr: "1 Kgs", aliases: ["1raj", "1raja", "1rajaraja", "1rr", "1kgs", "1kg", "1ki", "1king", "1kings"] },
+    { num: 12, en: "2 Kings", id: "2 Raja-Raja", idAbbr: "2 Raj", enAbbr: "2 Kgs", aliases: ["2raj", "2raja", "2rajaraja", "2rr", "2kgs", "2kg", "2ki", "2king", "2kings"] },
+    { num: 13, en: "1 Chronicles", id: "1 Tawarikh", idAbbr: "1 Taw", enAbbr: "1 Chr", aliases: ["1taw", "1t", "1chr", "1ch"] },
+    { num: 14, en: "2 Chronicles", id: "2 Tawarikh", idAbbr: "2 Taw", enAbbr: "2 Chr", aliases: ["2taw", "2t", "2chr", "2ch"] },
+    { num: 15, en: "Ezra", id: "Ezra", idAbbr: "Ezr", enAbbr: "Ezra", aliases: ["ezr", "ezra"] },
+    { num: 16, en: "Nehemiah", id: "Nehemia", idAbbr: "Neh", enAbbr: "Neh", aliases: ["neh", "nehem"] },
+    { num: 17, en: "Esther", id: "Ester", idAbbr: "Est", enAbbr: "Esth", aliases: ["est", "esth"] },
+    { num: 18, en: "Job", id: "Ayub", idAbbr: "Ayb", enAbbr: "Job", aliases: ["ayb", "job", "ayub"] },
+    { num: 19, en: "Psalms", id: "Mazmur", idAbbr: "Mzm", enAbbr: "Ps", aliases: ["mzm", "maz", "ps", "psa", "psm", "psalm"] },
+    { num: 20, en: "Proverbs", id: "Amsal", idAbbr: "Ams", enAbbr: "Prov", aliases: ["ams", "prov", "pro"] },
+    { num: 21, en: "Ecclesiastes", id: "Pengkhotbah", idAbbr: "Pkh", enAbbr: "Eccl", aliases: ["pkh", "peng", "eccl", "ecc"] },
+    { num: 22, en: "Song of Solomon", id: "Kidung Agung", idAbbr: "Kid", enAbbr: "Song", aliases: ["kid", "ka", "song", "sol", "kidungagung", "songofsolomon"] },
+    { num: 23, en: "Isaiah", id: "Yesaya", idAbbr: "Yes", enAbbr: "Isa", aliases: ["yes", "isa"] },
+    { num: 24, en: "Jeremiah", id: "Yeremia", idAbbr: "Yer", enAbbr: "Jer", aliases: ["yer", "jer"] },
+    { num: 25, en: "Lamentations", id: "Ratapan", idAbbr: "Rat", enAbbr: "Lam", aliases: ["rat", "lam"] },
+    { num: 26, en: "Ezekiel", id: "Yehezkiel", idAbbr: "Yeh", enAbbr: "Ezek", aliases: ["yeh", "yehez", "ezek", "eze"] },
+    { num: 27, en: "Daniel", id: "Daniel", idAbbr: "Dan", enAbbr: "Dan", aliases: ["dan"] },
+    { num: 28, en: "Hosea", id: "Hosea", idAbbr: "Hos", enAbbr: "Hosea", aliases: ["hos", "hosea"] },
+    { num: 29, en: "Joel", id: "Yoel", idAbbr: "Yl", enAbbr: "Joel", aliases: ["yl", "yoe", "yoel", "joe", "joel"] },
+    { num: 30, en: "Amos", id: "Amos", idAbbr: "Am", enAbbr: "Amos", aliases: ["am", "amo"] },
+    { num: 31, en: "Obadiah", id: "Obaja", idAbbr: "Ob", enAbbr: "Obad", aliases: ["ob", "obad", "oba", "obd"] },
+    { num: 32, en: "Jonah", id: "Yunus", idAbbr: "Yun", enAbbr: "Jonah", aliases: ["yun", "jon", "jonah"] },
+    { num: 33, en: "Micah", id: "Mikha", idAbbr: "Mi", enAbbr: "Micah", aliases: ["mi", "mic", "mik"] },
+    { num: 34, en: "Nahum", id: "Nahum", idAbbr: "Nah", enAbbr: "Nahum", aliases: ["nah"] },
+    { num: 35, en: "Habakkuk", id: "Habakuk", idAbbr: "Hab", enAbbr: "Hab", aliases: ["hab"] },
+    { num: 36, en: "Zephaniah", id: "Zefanya", idAbbr: "Zef", enAbbr: "Zeph", aliases: ["zef", "zeph", "zep"] },
+    { num: 37, en: "Haggai", id: "Hagai", idAbbr: "Hag", enAbbr: "Hag", aliases: ["hag"] },
+    { num: 38, en: "Zechariah", id: "Zakharia", idAbbr: "Za", enAbbr: "Zech", aliases: ["za", "zech", "zec", "zak"] },
+    { num: 39, en: "Malachi", id: "Maleakhi", idAbbr: "Mal", enAbbr: "Mal", aliases: ["mal"] },
+
+    // Perjanjian Baru (New Testament)
+    { num: 40, en: "Matthew", id: "Matius", idAbbr: "Mat", enAbbr: "Matt", aliases: ["mat", "matt"] },
+    { num: 41, en: "Mark", id: "Markus", idAbbr: "Mrk", enAbbr: "Mark", aliases: ["mrk", "mar", "mk", "mark"] },
+    { num: 42, en: "Luke", id: "Lukas", idAbbr: "Luk", enAbbr: "Luke", aliases: ["luk", "luke", "lk"] },
+    { num: 43, en: "John", id: "Yohanes", idAbbr: "Yoh", enAbbr: "John", aliases: ["yoh", "joh", "john", "jn"] },
+    { num: 44, en: "Acts", id: "Kisah Para Rasul", idAbbr: "Kis", enAbbr: "Acts", aliases: ["kis", "act", "acts", "kisah", "kisahpararasul"] },
+    { num: 45, en: "Romans", id: "Roma", idAbbr: "Rm", enAbbr: "Rom", aliases: ["rm", "rom"] },
+    { num: 46, en: "1 Corinthians", id: "1 Korintus", idAbbr: "1 Kor", enAbbr: "1 Cor", aliases: ["1kor", "1cor", "1co", "1k"] },
+    { num: 47, en: "2 Corinthians", id: "2 Korintus", idAbbr: "2 Kor", enAbbr: "2 Cor", aliases: ["2kor", "2cor", "2co", "2k"] },
+    { num: 48, en: "Galatians", id: "Galatia", idAbbr: "Gal", enAbbr: "Gal", aliases: ["gal"] },
+    { num: 49, en: "Ephesians", id: "Efesus", idAbbr: "Ef", enAbbr: "Eph", aliases: ["ef", "efe", "eph"] },
+    { num: 50, en: "Philippians", id: "Filipi", idAbbr: "Flp", enAbbr: "Philip", aliases: ["flp", "fil", "phil", "phi", "php", "philip"] },
+    { num: 51, en: "Colossians", id: "Kolose", idAbbr: "Kol", enAbbr: "Col", aliases: ["kol", "col"] },
+    { num: 52, en: "1 Thessalonians", id: "1 Tesalonika", idAbbr: "1 Tes", enAbbr: "1 Thes", aliases: ["1tes", "1thes", "1the", "1th", "1tess"] },
+    { num: 53, en: "2 Thessalonians", id: "2 Tesalonika", idAbbr: "2 Tes", enAbbr: "2 Thes", aliases: ["2tes", "2thes", "2the", "2th", "2tess"] },
+    { num: 54, en: "1 Timothy", id: "1 Timotius", idAbbr: "1 Tim", enAbbr: "1 Tim", aliases: ["1tim", "1ti"] },
+    { num: 55, en: "2 Timothy", id: "2 Timotius", idAbbr: "2 Tim", enAbbr: "2 Tim", aliases: ["2tim", "2ti"] },
+    { num: 56, en: "Titus", id: "Titus", idAbbr: "Tit", enAbbr: "Titus", aliases: ["tit"] },
+    { num: 57, en: "Philemon", id: "Filemon", idAbbr: "Flm", enAbbr: "Philem", aliases: ["flm", "phm", "filem", "philem"] },
+    { num: 58, en: "Hebrews", id: "Ibrani", idAbbr: "Ibr", enAbbr: "Heb", aliases: ["ibr", "ib", "ibra", "ibrani", "heb", "hebrews"] },
+    { num: 59, en: "James", id: "Yakobus", idAbbr: "Yak", enAbbr: "James", aliases: ["yak", "yk", "jas", "jam"] },
+    { num: 60, en: "1 Peter", id: "1 Petrus", idAbbr: "1 Ptr", enAbbr: "1 Pet", aliases: ["1ptr", "1pet", "1pe", "1petr"] },
+    { num: 61, en: "2 Peter", id: "2 Petrus", idAbbr: "2 Ptr", enAbbr: "2 Pet", aliases: ["2ptr", "2pet", "2pe", "2petr"] },
+    { num: 62, en: "1 John", id: "1 Yohanes", idAbbr: "1 Yoh", enAbbr: "1 Jn", aliases: ["1yoh", "1joh", "1jo", "1jn"] },
+    { num: 63, en: "2 John", id: "2 Yohanes", idAbbr: "2 Yoh", enAbbr: "2 Jn", aliases: ["2yoh", "2joh", "2jo", "2jn"] },
+    { num: 64, en: "3 John", id: "3 Yohanes", idAbbr: "3 Yoh", enAbbr: "3 Jn", aliases: ["3yoh", "3joh", "3jo", "3jn"] },
+    { num: 65, en: "Jude", id: "Yudas", idAbbr: "Yud", enAbbr: "Jude", aliases: ["yud", "jud"] },
+    { num: 66, en: "Revelation", id: "Wahyu", idAbbr: "Why", enAbbr: "Rev", aliases: ["why", "rev", "wah"] }
+];
+
+function normalizeBookKey(s) {
+    if (!s) return "";
+    let str = String(s).toLowerCase();
+    str = str.replace(/[\s\.\,\-\_\:\/]/g, "");
+    return str;
+}
+
+function resolveBibleBook(rawBookName) {
+    if (!rawBookName) return null;
+    const norm = normalizeBookKey(rawBookName);
+    if (!norm) return null;
+
+    // Prioritas 1: Singkatan resmi persis (idAbbr & enAbbr)
+    for (const b of BIBLE_BOOKS_MASTER) {
+        if (normalizeBookKey(b.idAbbr) === norm || normalizeBookKey(b.enAbbr) === norm) {
+            return b;
+        }
+    }
+
+    // Prioritas 2: Nama lengkap / alias persis
+    for (const b of BIBLE_BOOKS_MASTER) {
+        if (normalizeBookKey(b.en) === norm || normalizeBookKey(b.id) === norm) {
+            return b;
+        }
+        for (const a of b.aliases) {
+            if (normalizeBookKey(a) === norm) {
+                return b;
+            }
+        }
+    }
+
+    // Prioritas 3: Awalan (prefix) berdasarkan urutan kanonikal (1 - 66)
+    for (const b of BIBLE_BOOKS_MASTER) {
+        if (normalizeBookKey(b.en).startsWith(norm) || normalizeBookKey(b.id).startsWith(norm)) {
+            return b;
+        }
+        if (normalizeBookKey(b.idAbbr).startsWith(norm) || normalizeBookKey(b.enAbbr).startsWith(norm)) {
+            return b;
+        }
+        for (const a of b.aliases) {
+            if (normalizeBookKey(a).startsWith(norm)) {
+                return b;
+            }
+        }
+    }
+
+    return null;
+}
+
+function parseScriptureReference(inputStr) {
+    if (!inputStr || typeof inputStr !== 'string') {
+        return { valid: false };
+    }
+    let s = inputStr.trim();
+    if (!s) return { valid: false };
+
+    // 1. Ekstrak bookPrefix jika ada digit 1, 2, atau 3 (cth: "1 Samuel", "1Sam")
+    let leadingNum = "";
+    let afterPrefix = s;
+
+    const mDigit = s.match(/^([123])\s*/);
+    if (mDigit) {
+        leadingNum = mDigit[1];
+        afterPrefix = s.slice(mDigit[0].length);
+    }
+
+    // 2. Cari di mana angka pasal dimulai
+    let digitIdx = afterPrefix.search(/\d/);
+    let rawBookStr = "";
+    let numPart = "";
+
+    if (digitIdx === -1) {
+        rawBookStr = (leadingNum ? leadingNum + " " : "") + afterPrefix.trim();
+        numPart = "";
+    } else {
+        let bookLetters = afterPrefix.slice(0, digitIdx).trim();
+        numPart = afterPrefix.slice(digitIdx).trim();
+        rawBookStr = (leadingNum ? leadingNum + " " : "") + bookLetters;
+    }
+
+    const resolved = resolveBibleBook(rawBookStr);
+    if (!resolved) {
+        return { valid: false, rawBook: rawBookStr };
+    }
+
+    let chapter = "1";
+    let verse = "1";
+    let isSingleVerse = false;
+
+    if (!numPart) {
+        chapter = "1";
+        verse = "1";
+        isSingleVerse = false;
+    } else {
+        let mChap = numPart.match(/^(\d+)(.*)$/);
+        if (mChap) {
+            chapter = mChap[1];
+            let restNum = mChap[2] || "";
+            let mVerse = restNum.match(/^[\s:.\-\/,]+(\d+)(.*)$/);
+            if (mVerse) {
+                verse = mVerse[1];
+                let remainder = mVerse[2] ? mVerse[2].trim() : "";
+                if (/\d/.test(remainder)) {
+                    isSingleVerse = false;
+                } else {
+                    isSingleVerse = true;
+                }
+            } else {
+                verse = "1";
+                isSingleVerse = false;
+            }
+        }
+    }
+
     return {
-        "Genesis": "Kejadian", "Exodus": "Keluaran", "Leviticus": "Imamat", "Numbers": "Bilangan", "Deuteronomy": "Ulangan", "Joshua": "Yosua", "Judges": "Hakim-hakim", "Ruth": "Rut", "1 Samuel": "1 Samuel", "2 Samuel": "2 Samuel", "1 Kings": "1 Raja-raja", "2 Kings": "2 Raja-raja", "1 Chronicles": "1 Tawarikh", "2 Chronicles": "2 Tawarikh", "Ezra": "Ezra", "Nehemiah": "Nehemia", "Esther": "Ester", "Job": "Ayub", "Psalms": "Mazmur", "Proverbs": "Amsal", "Ecclesiastes": "Pengkhotbah", "Song of Solomon": "Kidung Agung", "Isaiah": "Yesaya", "Jeremiah": "Yeremia", "Lamentations": "Ratapan", "Ezekiel": "Yehezkiel", "Daniel": "Daniel", "Hosea": "Hosea", "Joel": "Yoel", "Amos": "Amos", "Obadiah": "Obaja", "Jonah": "Yunus", "Micah": "Mikha", "Nahum": "Nahum", "Habakkuk": "Habakuk", "Zephaniah": "Zefanya", "Haggai": "Hagai", "Zechariah": "Zakharia", "Malachi": "Maleakhi", "Matthew": "Matius", "Mark": "Markus", "Luke": "Lukas", "John": "Yohanes", "Acts": "Kisah Para Rasul", "Romans": "Roma", "1 Corinthians": "1 Korintus", "2 Corinthians": "2 Korintus", "Galatians": "Galatia", "Ephesians": "Efesus", "Philippians": "Filipi", "Colossians": "Kolose", "1 Thessalonians": "1 Tesalonika", "2 Thessalonians": "2 Tesalonika", "1 Timothy": "1 Timotius", "2 Timothy": "2 Timotius", "Titus": "Titus", "Philemon": "Filemon", "Hebrews": "Ibrani", "James": "Yakobus", "1 Peter": "1 Petrus", "2 Peter": "2 Petrus", "1 John": "1 Yohanes", "2 John": "2 Yohanes", "3 John": "3 Yohanes", "Jude": "Yudas", "Revelation": "Wahyu"
+        valid: true,
+        bookNum: resolved.num,
+        bookEng: resolved.en,
+        bookId: resolved.id,
+        chapter: String(parseInt(chapter, 10) || 1),
+        verse: String(parseInt(verse, 10) || 1),
+        isSingleVerse: isSingleVerse
     };
 }
 
+function getBibleBooksMap() {
+    const map = {};
+    for (const b of BIBLE_BOOKS_MASTER) {
+        map[b.en] = b.id;
+    }
+    return map;
+}
+
 function translateBookName(bookName, targetLang) {
-    const map = getBibleBooksMap(); // Panggil dengan aman
+    if (!bookName) return "";
+    const resolved = resolveBibleBook(bookName);
+    if (resolved) {
+        return targetLang === 'en' ? resolved.en : resolved.id;
+    }
+    const map = getBibleBooksMap();
     let engName = bookName;
     for (const [en, id] of Object.entries(map)) {
         if (bookName.toLowerCase() === id.toLowerCase() || bookName.toLowerCase() === en.toLowerCase()) {
@@ -9148,48 +11766,6 @@ function translateBookName(bookName, targetLang) {
     return targetLang === 'en' ? engName : (map[engName] || bookName);
 }
 
-// 🎯 FIX BUG 4: Pastikan HTML mu memanggil dengan onchange="handleTranslationCheck(event)"
-window.handleTranslationCheck = function (e) {
-    const checkboxes = document.querySelectorAll(".bible-version-cb");
-    let checked = document.querySelectorAll(".bible-version-cb:checked");
-
-    // Tolak jika VJ mencoba mengosongkan semua centang
-    if (checked.length === 0 && e && e.target) {
-        showToast("At least 1 translation must be active!", "warning");
-        e.target.checked = true; // Paksa centang kembali
-        checked = document.querySelectorAll(".bible-version-cb:checked"); // Refresh data
-    }
-
-    // 🎯 FIX BUG 2: Bebaskan pilihan 2 terjemahan untuk SEMUA mode (Overlay / Fullscreen)
-    const maxAllowed = 2;
-
-    // Tolak jika melebihi batas 2
-    if (checked.length > maxAllowed && e && e.target) {
-        showToast(`Maximum ${maxAllowed} translations!`, "warning");
-        e.target.checked = false; // Batal centang
-        checked = document.querySelectorAll(".bible-version-cb:checked"); // Refresh data
-    }
-
-    // Kunci checkbox sisa jika sudah 2 yang dicentang
-    checkboxes.forEach(cb => {
-        if (!cb.checked && checked.length >= maxAllowed) {
-            cb.disabled = true;
-            cb.parentElement.style.opacity = "0.4";
-        } else {
-            cb.disabled = false;
-            cb.parentElement.style.opacity = "1";
-        }
-    });
-
-    if (checked.length > 0) loadBibleBooks(checked[0].value);
-
-    // Auto-update layar jika Kitab & Pasal sudah terisi
-    const book = document.getElementById("bible-book").value;
-    const chap = document.getElementById("bible-chapter").value;
-    if (book && chap && currentActiveTab === 'scripture') {
-        searchScripture(true);
-    }
-};
 
 function handleScrFollowDisplay() {
     const isFollow = document.getElementById('scr-lt-follow').checked;
@@ -9342,18 +11918,29 @@ function updateScrLayoutUI() {
     ['disp', 'lt'].forEach(pfx => {
         const modeEl = document.getElementById(`scr-${pfx}-mode`);
         const opacityInput = document.getElementById(`scr-${pfx}-bg-opacity`);
+        const overlayPosEl = document.getElementById(`scr-${pfx}-overlay-pos`);
+        const overlayHeightEl = document.getElementById(`scr-${pfx}-overlay-height`);
+        const overlayPosRow = document.getElementById(`scr-${pfx}-overlay-pos-row`);
+        const fsPosRow = document.getElementById(`scr-${pfx}-fs-pos-row`);
         const bodyAutoChk = document.getElementById(`scr-${pfx}-body-auto`);
         const bodySizeInput = document.getElementById(`scr-${pfx}-body-size`);
 
-        // Handle Background Opacity based on Mode
-        if (modeEl && opacityInput) {
-            if (modeEl.value === 'fullscreen') {
-                opacityInput.disabled = true;
-                opacityInput.style.opacity = '0.4';
-            } else {
-                opacityInput.disabled = false;
-                opacityInput.style.opacity = '1';
+        // Handle Background Opacity & Position controls based on Mode
+        if (modeEl) {
+            const isFullscreen = modeEl.value === 'fullscreen';
+            if (opacityInput) {
+                opacityInput.disabled = isFullscreen;
+                opacityInput.style.opacity = isFullscreen ? '0.4' : '1';
             }
+            if (overlayPosEl) overlayPosEl.disabled = isFullscreen;
+            if (overlayHeightEl) overlayHeightEl.disabled = isFullscreen;
+            if (overlayPosRow) overlayPosRow.classList.toggle('scr-row-disabled', isFullscreen);
+
+            if (fsPosRow) fsPosRow.classList.toggle('scr-row-disabled', !isFullscreen);
+            ['top', 'center', 'bottom'].forEach(p => {
+                const btn = document.getElementById(`scr-${pfx}-fs-pos-${p}`);
+                if (btn) btn.disabled = !isFullscreen;
+            });
         }
 
         // 🎯 Handle Body Size Grid state based on AUTO toggle
@@ -9369,10 +11956,14 @@ function updateScrLayoutUI() {
 function getFallbackScrConfig(pfx) {
     return {
         mode: pfx === 'disp' ? 'fullscreen' : 'overlay', bg_type: 'transparent', bg_color: '#000000', bg_opacity: 0.8, bg_blur: 0,
+        fullscreen_pos: 'top',
         overlay_height: 35, overlay_pos: 'bottom', overlay_radius: 15,
+        title_pos: 'top',
         title_font: 'Montserrat', title_size: 28, title_color: '#00e5ff', title_align: 'left',
+        title_bold: false, title_italic: false, title_underline: false,
         title_pad_t: 15, title_pad_b: 15, title_pad_l: 20, title_pad_r: 20,
         body_font: 'Montserrat', body_size: 45, body_auto: true, body_color: '#ffffff', body_align: 'left',
+        body_bold: false, body_italic: false, body_underline: false,
         body_pad_t: 20, body_pad_b: 20, body_pad_l: 30, body_pad_r: 30
     };
 }
@@ -9759,9 +12350,9 @@ function recordShortcutKey(action) {
         e.preventDefault();
         e.stopPropagation();
 
-        // Count modifier keys
+        // Count modifier keys (treat Cmd/metaKey equivalently to Ctrl on macOS)
         let modifiers = 0;
-        const ctrl = !!e.ctrlKey;
+        const ctrl = !!(e.ctrlKey || e.metaKey);
         const shift = !!e.shiftKey;
         const alt = !!e.altKey;
         if (ctrl) modifiers++;
@@ -10178,48 +12769,48 @@ document.addEventListener("DOMContentLoaded", function () {
 // ==========================================
 let selectedTranslationCtx = null;
 
-window.showTranslationContextMenu = function(e, dbName) {
+window.showTranslationContextMenu = function (e, dbName) {
     e.preventDefault();
     selectedTranslationCtx = dbName;
-    
+
     const menu = document.getElementById("scr-translation-ctx-menu");
     if (!menu) return;
-    
+
     menu.style.display = "flex";
-    
+
     // Position logic to avoid clipping
     let x = e.clientX;
     let y = e.clientY;
-    
+
     // Fallback if width/height is not computed correctly because display:none before flex
     const menuWidth = menu.offsetWidth || 150;
     const menuHeight = menu.offsetHeight || 80;
     const windowWidth = window.innerWidth;
     const windowHeight = window.innerHeight;
-    
+
     if (x + menuWidth > windowWidth) {
         x = windowWidth - menuWidth - 5;
     }
-    
+
     if (y + menuHeight > windowHeight) {
         y = windowHeight - menuHeight - 5;
     }
-    
+
     menu.style.left = x + "px";
     menu.style.top = y + "px";
 };
 
-document.addEventListener("click", function(e) {
+document.addEventListener("click", function (e) {
     const menu = document.getElementById("scr-translation-ctx-menu");
     if (menu && menu.style.display !== "none") {
         menu.style.display = "none";
     }
 });
 
-window.renameTranslationAction = async function() {
+window.renameTranslationAction = async function () {
     if (!selectedTranslationCtx) return;
     const dbName = selectedTranslationCtx;
-    
+
     const newName = await showCustomDialog("prompt", `Rename Translation '<b>${dbName}</b>' to:`, dbName);
     if (newName !== null && newName !== false) {
         const trimmedName = newName.trim();
@@ -10232,23 +12823,23 @@ window.renameTranslationAction = async function() {
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    showToast(data.message, 'success');
+                    showToast(data.message, 'success', 1000);
                     loadBibleTranslations(); // Refresh list
                 } else {
-                    showToast(data.message, 'error');
+                    showToast(data.message, 'error', 1300);
                 }
             } catch (err) {
                 console.error(err);
-                showToast('Failed to rename', 'error');
+                showToast('Failed to rename', 'error', 1300);
             }
         }
     }
 };
 
-window.deleteTranslationAction = async function() {
+window.deleteTranslationAction = async function () {
     if (!selectedTranslationCtx) return;
     const dbName = selectedTranslationCtx;
-    
+
     const confirmed = await showCustomDialog("confirm", `Are you sure you want to delete the '<b>${dbName}</b>' translation?`);
     if (confirmed) {
         try {
@@ -10257,14 +12848,14 @@ window.deleteTranslationAction = async function() {
             });
             const data = await res.json();
             if (data.status === 'success') {
-                showToast(data.message, 'success');
+                showToast(data.message, 'success', 1000);
                 loadBibleTranslations(); // Refresh list
             } else {
-                showToast(data.message, 'error');
+                showToast(data.message, 'error', 1300);
             }
         } catch (err) {
             console.error(err);
-            showToast('Failed to delete', 'error');
+            showToast('Failed to delete', 'error', 1300);
         }
     }
 };
@@ -10274,28 +12865,28 @@ window.deleteTranslationAction = async function() {
 // ------------------------------------------------------------------
 window.pendingImportFile = null;
 
-window.exportShowLyricsData = function() {
+window.exportShowLyricsData = function () {
     window.location.href = '/api/backup/export';
 };
 
-window.importShowLyricsData = function(event) {
+window.importShowLyricsData = function (event) {
     const file = event.target.files[0];
     if (!file) return;
     window.pendingImportFile = file;
     document.getElementById('import-confirm-modal').style.display = 'flex';
 };
 
-window.closeImportConfirmModal = function() {
+window.closeImportConfirmModal = function () {
     window.pendingImportFile = null;
     document.getElementById('import-confirm-modal').style.display = 'none';
 };
 
-window.closeReplaceConfirmModal = function() {
+window.closeReplaceConfirmModal = function () {
     document.getElementById('import-replace-confirm-input').value = '';
     document.getElementById('import-replace-confirm-modal').style.display = 'none';
 };
 
-window.executeImport = async function(mode) {
+window.executeImport = async function (mode) {
     if (mode === 'replace') {
         // Close the first confirm modal
         document.getElementById('import-confirm-modal').style.display = 'none';
@@ -10304,48 +12895,48 @@ window.executeImport = async function(mode) {
         document.getElementById('import-replace-confirm-modal').style.display = 'flex';
         return;
     }
-    
+
     // Normal append mode execution
     const file = window.pendingImportFile;
     if (!file) return;
-    
+
     // Close modal
     window.closeImportConfirmModal();
-    
+
     // Start import process
     await performImportAPI(file, 'append');
 };
 
-window.executeReplaceImport = async function() {
+window.executeReplaceImport = async function () {
     const confirmVal = document.getElementById('import-replace-confirm-input').value;
     if (confirmVal !== 'REPLACE') {
         showToast("Please type REPLACE to confirm!", "error", 2000);
         return;
     }
-    
+
     const file = window.pendingImportFile;
     if (!file) return;
-    
+
     // Close safety replace modal
     window.closeReplaceConfirmModal();
     window.pendingImportFile = null;
-    
+
     // Start import process
     await performImportAPI(file, 'replace');
 };
 
 async function performImportAPI(file, mode) {
     showToast("Importing backup...", "loading");
-    
+
     const formData = new FormData();
     formData.append("file", file);
-    
+
     try {
         const response = await fetch(`/api/backup/import?mode=${mode}`, {
             method: 'POST',
             body: formData
         });
-        
+
         const result = await response.json();
         if (result.status === 'success') {
             showToast("Backup imported successfully! Reloading...", "success", 2000);
@@ -10376,12 +12967,12 @@ async function performImportAPI(file, mode) {
  *   { level, max, dismissible, block_app, title, message, internet_score }
  */
 function _handleNetworkStrike(data) {
-    const level      = data.level || 1;
-    const max        = data.max   || 3;
+    const level = data.level || 1;
+    const max = data.max || 3;
     const dismissible = data.dismissible !== false;
-    const title      = data.title   || "⚠️ Server Tidak Terjangkau";
-    const message    = data.message || "";
-    const inetScore  = data.internet_score || "?/4";
+    const title = data.title || "⚠️ Server Tidak Terjangkau";
+    const message = data.message || "";
+    const inetScore = data.internet_score || "?/4";
 
     // Hapus modal lama jika ada
     const old = document.getElementById("modal-net-strike");
@@ -10394,9 +12985,9 @@ function _handleNetworkStrike(data) {
     }
 
     // Strike 2 & 3: Modal
-    const isBlocking  = level >= 3;
+    const isBlocking = level >= 3;
     const accentColor = isBlocking ? "#ef4444" : "#f59e0b";
-    const glowColor   = isBlocking ? "#ef444420" : "#f59e0b15";
+    const glowColor = isBlocking ? "#ef444420" : "#f59e0b15";
     const borderColor = isBlocking ? "#ef444440" : "#f59e0b40";
 
     // Inject CSS animation sekali saja
@@ -10421,9 +13012,9 @@ function _handleNetworkStrike(data) {
     modal.id = "modal-net-strike";
     modal.style.cssText = [
         "position:fixed;inset:0;z-index:99999;",
-        "background:rgba(0,0,0,0.88);",
+        "background:rgba(0,0,0,0.93);",  // Sedikit lebih opaque sebagai kompensasi tanpa blur
         "display:flex;align-items:center;justify-content:center;",
-        "backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);",
+        // backdrop-filter removed: GPU-heavy, not needed for security modal clarity
     ].join("");
 
     modal.innerHTML = `
@@ -10549,11 +13140,11 @@ function _showNetworkToast(msg, type) {
     if (old) old.remove();
 
     const colorMap = { warning: "#f59e0b", error: "#ef4444", success: "#22c55e" };
-    const iconMap  = { warning: "⚠️",      error: "❌",       success: "✅"      };
+    const iconMap = { warning: "⚠️", error: "❌", success: "✅" };
     const labelMap = { warning: "Peringatan Jaringan", error: "Gagal Terhubung", success: "Koneksi Pulih" };
 
     const color = colorMap[type] || colorMap.warning;
-    const icon  = iconMap[type]  || iconMap.warning;
+    const icon = iconMap[type] || iconMap.warning;
     const label = labelMap[type] || labelMap.warning;
 
     const toast = document.createElement("div");
@@ -10593,3 +13184,385 @@ function _dismissNetworkModals() {
         if (el) el.remove();
     });
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// UI SCALE SYSTEM
+// ═════════════════════════════════════════════════════════════════════════════
+
+const _UI_SCALE_KEY = 'ui_scale';
+const _UI_SCALE_DEFAULT = 1.0;
+let _currentUIScale = _UI_SCALE_DEFAULT;
+let _uiScaleSaveTimer = null;
+
+/**
+ * Terapkan scale ke controller window.
+ *
+ * Di Electron: gunakan IPC -> main process -> webContents.setZoomFactor().
+ * Di browser biasa (fallback): CSS transform pada <html> root.
+ */
+function applyUIScale(scale) {
+    scale = parseFloat(scale) || _UI_SCALE_DEFAULT;
+    scale = Math.min(Math.max(scale, 0.60), 1.50);
+    _currentUIScale = scale;
+
+    if (window.electronAPI && typeof window.electronAPI.setControllerZoom === 'function') {
+        window.electronAPI.setControllerZoom(scale);
+    } else {
+        var html = document.documentElement;
+        if (Math.abs(scale - 1.0) < 0.001) {
+            html.style.transform = '';
+            html.style.width = '';
+            html.style.height = '';
+        } else {
+            var pct = (100 / scale).toFixed(4) + '%';
+            html.style.transformOrigin = 'top left';
+            html.style.transform = 'scale(' + scale + ')';
+            html.style.width = pct;
+            html.style.height = pct;
+        }
+    }
+
+    var sel = document.getElementById('ui-scale-select');
+    if (sel) { sel.value = Math.round(scale * 100) / 100; }
+}
+
+/**
+ * Muat UI scale dari app_settings.json saat startup.
+ */
+async function loadAndApplyUIScale() {
+    try {
+        var res = await fetch('/api/settings');
+        if (!res.ok) return;
+        var data = await res.json();
+        var saved = parseFloat(data[_UI_SCALE_KEY]);
+        if (!isNaN(saved) && saved >= 0.60 && saved <= 1.50) {
+            applyUIScale(saved);
+        }
+    } catch (_) { }
+}
+
+/**
+ * Simpan scale ke app_settings.json.
+ */
+function saveUIScale(scale) {
+    clearTimeout(_uiScaleSaveTimer);
+    _uiScaleSaveTimer = setTimeout(function () {
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [_UI_SCALE_KEY]: scale })
+        }).catch(function () { });
+    }, 500);
+}
+
+function onUIScaleChange(val) {
+    var scale = parseFloat(val);
+    if (isNaN(scale)) return;
+    applyUIScale(scale);
+    saveUIScale(scale);
+}
+
+function resetUIScale() {
+    applyUIScale(_UI_SCALE_DEFAULT);
+    saveUIScale(_UI_SCALE_DEFAULT);
+}
+
+// requestIdleCallback = tidak mengganggu startup rendering.
+(function _initSettings() {
+    function _run() {
+        if (window.requestIdleCallback) {
+            requestIdleCallback(loadAndApplyUIScale, { timeout: 2000 });
+            requestIdleCallback(loadAndApplyWindowBgColor, { timeout: 2000 });
+        } else {
+            setTimeout(loadAndApplyUIScale, 150);
+            setTimeout(loadAndApplyWindowBgColor, 150);
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _run);
+    } else {
+        _run();
+    }
+})();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OUTPUT BACKGROUND COLOR MANAGEMENT (Main Display & Lower Third)
+// ─────────────────────────────────────────────────────────────────────────────
+var _WIN_BG_COLOR_KEY = 'window_bg_color';
+var _WIN_BG_COLOR_DEFAULT = '#000000';
+
+// Store state on window so obfuscator cannot rename these variables
+window._outputBgColors = window._outputBgColors || { main: '#000000', lt: '#000000' };
+window._currentBgTarget = window._currentBgTarget || 'main';
+window._outputBgColorSaveTimers = window._outputBgColorSaveTimers || {};
+
+function onBgTargetChange(target) {
+    if (!target || (target !== 'main' && target !== 'lt')) target = 'main';
+    if (!window._outputBgColors) window._outputBgColors = { main: '#000000', lt: '#000000' };
+    window._currentBgTarget = target;
+
+    var selectEl = document.getElementById('bg-target-select');
+    if (selectEl && selectEl.value !== target) selectEl.value = target;
+
+    var badgeEl = document.getElementById('bg-target-badge');
+    if (badgeEl) badgeEl.textContent = (target === 'lt') ? '📺 LOWER THIRD' : '🖥️ MAIN DISPLAY';
+
+    var targetColor = (window._outputBgColors[target]) || _WIN_BG_COLOR_DEFAULT;
+
+    var activePicker = document.getElementById('active-bg-color-picker');
+    var activeHex = document.getElementById('active-bg-color-hex');
+    var hexBadge = document.getElementById('bg-current-hex-badge');
+
+    if (activePicker) activePicker.value = targetColor;
+    if (activeHex) activeHex.value = targetColor;
+    if (hexBadge) hexBadge.textContent = targetColor;
+
+    triggerOutputBgColorIPC(target, targetColor);
+}
+
+function onActiveBgColorInput(val, immediate) {
+    if (!val || typeof val !== 'string') return;
+    var color = val.trim().toUpperCase();
+    if (!color.startsWith('#')) color = '#' + color;
+    if (!/^#([0-9A-Fa-f]{3}){1,2}$/.test(color)) return;
+    if (!window._outputBgColors) window._outputBgColors = { main: '#000000', lt: '#000000' };
+    var target = window._currentBgTarget || 'main';
+    if (target !== 'main' && target !== 'lt') target = 'main';
+    window._outputBgColors[target] = color;
+
+    var activePicker = document.getElementById('active-bg-color-picker');
+    var activeHex = document.getElementById('active-bg-color-hex');
+    var hexBadge = document.getElementById('bg-current-hex-badge');
+
+    if (activePicker) activePicker.value = color;
+    if (activeHex && document.activeElement !== activeHex) activeHex.value = color;
+    if (hexBadge) hexBadge.textContent = color;
+
+    var hiddenPicker = document.getElementById(target + '-bg-color-picker');
+    var hiddenHex = document.getElementById(target + '-bg-color-hex');
+    if (hiddenPicker) hiddenPicker.value = color;
+    if (hiddenHex) hiddenHex.value = color;
+
+    triggerOutputBgColorIPC(target, color);
+    saveOutputBgColor(target, color);
+}
+
+function triggerOutputBgColorIPC(target, color) {
+    if (!color || typeof color !== 'string') return;
+    color = color.trim().toUpperCase();
+    if (!/^#([0-9A-F]{3}){1,2}$/i.test(color)) return;
+
+    if (window.electronAPI) {
+        try {
+            if (typeof window.electronAPI.setOutputBackgroundColor === 'function') {
+                window.electronAPI.setOutputBackgroundColor({ target: target, color: color });
+            } else if (typeof window.electronAPI.setWindowBackgroundColor === 'function') {
+                window.electronAPI.setWindowBackgroundColor({ target: target, color: color });
+            }
+        } catch (e) {
+            console.error('[OUTPUT BG COLOR] IPC error:', e);
+        }
+    }
+}
+
+function saveOutputBgColor(target, color) {
+    if (!window._outputBgColorSaveTimers) window._outputBgColorSaveTimers = {};
+    var timerKey = target + '_save';
+    clearTimeout(window._outputBgColorSaveTimers[timerKey]);
+    window._outputBgColorSaveTimers[timerKey] = setTimeout(function () {
+        var payload = {};
+        if (target === 'lt') {
+            payload['lt_bg_color'] = color;
+        } else {
+            payload['main_bg_color'] = color;
+            payload[_WIN_BG_COLOR_KEY] = color;
+        }
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).catch(function () { });
+    }, 400);
+}
+
+function onOutputBgColorInput(target, val, immediate) {
+    if (!target || (target !== 'main' && target !== 'lt')) target = 'main';
+    if (!val || typeof val !== 'string') return;
+    var color = val.trim().toUpperCase();
+    if (!color.startsWith('#')) color = '#' + color;
+    if (!/^#([0-9A-Fa-f]{3}){1,2}$/.test(color)) return;
+    if (!window._outputBgColors) window._outputBgColors = { main: '#000000', lt: '#000000' };
+    window._outputBgColors[target] = color;
+    if (target === (window._currentBgTarget || 'main')) {
+        onActiveBgColorInput(color, immediate);
+    } else {
+        triggerOutputBgColorIPC(target, color);
+        saveOutputBgColor(target, color);
+    }
+}
+
+function onWindowBgColorInput(val, immediate) {
+    onActiveBgColorInput(val, immediate);
+}
+
+function resetOutputBgColor(target) {
+    target = target || window._currentBgTarget || 'main';
+    onOutputBgColorInput(target, _WIN_BG_COLOR_DEFAULT, true);
+}
+
+function resetWindowBgColor(e) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    onOutputBgColorInput('main', _WIN_BG_COLOR_DEFAULT, true);
+    onOutputBgColorInput('lt', _WIN_BG_COLOR_DEFAULT, true);
+}
+
+function applyOutputBgColorUI(target, color) {
+    if (!color || typeof color !== 'string') return;
+    color = color.trim().toUpperCase();
+    if (!color.startsWith('#')) color = '#' + color;
+    if (!/^#([0-9A-Fa-f]{3}){1,2}$/.test(color)) return;
+    if (!window._outputBgColors) window._outputBgColors = { main: '#000000', lt: '#000000' };
+    if (target === 'main' || target === 'all' || !target) window._outputBgColors.main = color;
+    if (target === 'lt' || target === 'all' || !target) window._outputBgColors.lt = color;
+    onBgTargetChange(window._currentBgTarget || 'main');
+}
+
+async function loadAndApplyOutputBgColor() {
+    try {
+        var res = await fetch('/api/settings');
+        if (!res.ok) return;
+        var data = await res.json();
+        if (!window._outputBgColors) window._outputBgColors = { main: '#000000', lt: '#000000' };
+        var mainColor = data.main_bg_color || data[_WIN_BG_COLOR_KEY] || _WIN_BG_COLOR_DEFAULT;
+        var ltColor = data.lt_bg_color || _WIN_BG_COLOR_DEFAULT;
+        if (mainColor && /^#([0-9A-Fa-f]{3}){1,2}$/.test(mainColor)) {
+            window._outputBgColors.main = mainColor.trim().toUpperCase();
+            triggerOutputBgColorIPC('main', window._outputBgColors.main);
+        }
+        if (ltColor && /^#([0-9A-Fa-f]{3}){1,2}$/.test(ltColor)) {
+            window._outputBgColors.lt = ltColor.trim().toUpperCase();
+            triggerOutputBgColorIPC('lt', window._outputBgColors.lt);
+        }
+        onBgTargetChange(window._currentBgTarget || 'main');
+    } catch (e) {
+        console.error('[OUTPUT BG COLOR] Load error:', e);
+    }
+}
+
+async function loadAndApplyWindowBgColor() {
+    await loadAndApplyOutputBgColor();
+}
+
+// Expose functions globally for HTML inline event handlers
+window.onBgTargetChange = onBgTargetChange;
+window.onActiveBgColorInput = onActiveBgColorInput;
+window.resetOutputBgColor = resetOutputBgColor;
+window.onOutputBgColorInput = onOutputBgColorInput;
+window.loadAndApplyOutputBgColor = loadAndApplyOutputBgColor;
+window.applyOutputBgColorUI = applyOutputBgColorUI;
+window.triggerOutputBgColorIPC = triggerOutputBgColorIPC;
+window.saveOutputBgColor = saveOutputBgColor;
+
+window.resetWindowBgColor = resetWindowBgColor;
+window.onWindowBgColorInput = onWindowBgColorInput;
+window.loadAndApplyWindowBgColor = loadAndApplyWindowBgColor;
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERFORMANCE & COMPATIBILITY — V.1.35.4
+// GPU Compatibility Mode + Force GPU Compositing Layer toggles
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function loadCompatibilitySettings() {
+    try {
+        var res = await fetch('/api/settings');
+        if (!res.ok) return;
+        var data = await res.json();
+        var gpuToggle = document.getElementById('toggle-gpu-compat-mode');
+        var isGpuOn = data.gpu_compatibility_mode === true;
+        if (gpuToggle) {
+            gpuToggle.checked = isGpuOn;
+            var warn = document.getElementById('compat-restart-warn');
+            if (warn) warn.style.display = isGpuOn ? 'flex' : 'none';
+        }
+        var compToggle = document.getElementById('toggle-force-compositing');
+        if (compToggle) {
+            compToggle.checked = data.force_gpu_compositing_layer === true;
+        }
+    } catch (_) { }
+}
+
+async function onGpuCompatModeChange(checked) {
+    try {
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gpu_compatibility_mode: checked })
+        });
+        var warn = document.getElementById('compat-restart-warn');
+        if (warn) warn.style.display = checked ? 'flex' : 'none';
+        await fetch('/api/settings/apply-gpu-mode', { method: 'POST' });
+        if (typeof showToast === 'function') {
+            showToast(
+                checked ? '⚡ GPU Compatibility Mode enabled — restart required'
+                    : '⚡ GPU Compatibility Mode disabled — restart required',
+                'warning', 3500
+            );
+        }
+    } catch (e) { console.error('[COMPAT] onGpuCompatModeChange error:', e); }
+}
+
+async function onForceCompositingChange(checked) {
+    try {
+        await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force_gpu_compositing_layer: checked })
+        });
+        if (window.electronAPI && typeof window.electronAPI.applyCompositingCSS === 'function') {
+            await window.electronAPI.applyCompositingCSS(checked);
+        }
+        if (typeof showToast === 'function') {
+            showToast(
+                checked ? '🔳 Force GPU Compositing Layer enabled — active live'
+                    : '🔳 Force GPU Compositing Layer disabled',
+                'success', 2500
+            );
+        }
+    } catch (e) { console.error('[COMPAT] onForceCompositingChange error:', e); }
+}
+
+function doCompatRestart() {
+    if (window.electronAPI && typeof window.electronAPI.restartApp === 'function') {
+        window.electronAPI.restartApp();
+    } else {
+        alert('Please restart ShowLyrics to apply GPU changes.');
+    }
+}
+
+(function _initCompatSettings() {
+    function _run() {
+        if (window.requestIdleCallback) {
+            requestIdleCallback(function () {
+                loadCompatibilitySettings();
+                loadAndApplyOutputBgColor();
+            }, { timeout: 3000 });
+        } else {
+            setTimeout(function () {
+                loadCompatibilitySettings();
+                loadAndApplyOutputBgColor();
+            }, 300);
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _run);
+    } else {
+        _run();
+    }
+})();
+
+window.onGpuCompatModeChange = onGpuCompatModeChange;
+window.onForceCompositingChange = onForceCompositingChange;
+window.doCompatRestart = doCompatRestart;
+window.loadCompatibilitySettings = loadCompatibilitySettings;

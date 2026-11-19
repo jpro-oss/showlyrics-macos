@@ -55,6 +55,7 @@ class ConnectionManager:
         # Load layer config dari app_settings
         app_settings = load_json(APP_SETTINGS_FILE)
         _default_layers = [
+            {"id": "plugin",     "visible": True},
             {"id": "lyrics",     "visible": True},
             {"id": "ppt",        "visible": True},
             {"id": "photo",      "visible": True},
@@ -65,7 +66,16 @@ class ConnectionManager:
         self.layer_config_main = app_settings.get("layers_main", _default_layers)
         self.layer_config_lt   = app_settings.get("layers_lt",   _default_layers)
 
+        # Pastikan layer plugin selalu ada jika config sebelumnya belum memilikinya
+        if not any(l.get("id") == "plugin" for l in self.layer_config_main):
+            self.layer_config_main.insert(0, {"id": "plugin", "visible": True})
+        if not any(l.get("id") == "plugin" for l in self.layer_config_lt):
+            self.layer_config_lt.insert(0, {"id": "plugin", "visible": True})
+
+        self.active_plugins: dict = {}
+
         self.bg_config         = {"transition": 0.5, "fit": "cover"}
+        self.ftb_active        = False
         self.scripture_state: dict = {}
         self.scripture_config: dict = {}
         self.scripture_lt_config: dict = {}
@@ -158,6 +168,8 @@ class ConnectionManager:
                 self.video_timeline["behavior"] = state.get("behavior", "loop")
         except Exception as e:
             print(f"[GO BRIDGE] Error sending command {action} to Go: {e}")
+            val = (payload or {}).get("value")
+            self.update_video_timeline(action, val)
 
     async def send_go_command_async(self, action: str, payload: dict = None):
         """Async wrapper untuk send_go_command — jalankan di executor agar tidak memblokir event loop."""
@@ -291,6 +303,10 @@ class ConnectionManager:
             if def_name and def_name in lt_data.get("presets", {}):
                 print(f" -> LT Default Loaded: {def_name}")
                 self.lt_state = lt_data["presets"][def_name]
+                if "text_transform" not in self.lt_state:
+                    self.lt_state["text_transform"] = "none"
+                if "line_height" not in self.lt_state:
+                    self.lt_state["line_height"] = 1.2
         except Exception as e:
             print(f"Error loading LT default: {e}")
 
@@ -338,6 +354,10 @@ class ConnectionManager:
             self.send_go_command_async("update_bg_config", {"payload": self.bg_config})
         )
 
+        if getattr(self, "ftb_active", False):
+            source = (self.bg_state or {}).get("source", "remote_sender")
+            await websocket.send_json(self._sign({"type": "ftb", "payload": {"value": True, "active": True, "source": source}}))
+
         if self.lt_state:
             await websocket.send_json(self._sign({"type": "update_lt_config", "config": self.lt_state}))
         if self.fb_state:
@@ -381,6 +401,12 @@ class ConnectionManager:
             "type": "update_layers",
             "layers_main": self.layer_config_main,
             "layers_lt":   self.layer_config_lt,
+        }))
+
+        # Kirim active plugins ke client baru
+        await websocket.send_json(self._sign({
+            "type": "update_plugin_state",
+            "active_plugins": self.active_plugins
         }))
 
         # Kirim alert_state ke client baru
@@ -469,3 +495,30 @@ class ConnectionManager:
                     pass
 
         await asyncio.gather(*[send_to_one(c) for c in sockets], return_exceptions=True)
+
+    async def broadcast_plugin_state(self):
+        await self.broadcast({
+            "type": "update_plugin_state",
+            "active_plugins": self.active_plugins
+        })
+
+    async def terminate_all_connections(self, code: int = 4003, reason: str = ""):
+        """Broadcast force_watermark to all active WebSocket clients and close them."""
+        sockets = list(self.active_connections)
+        if not sockets:
+            return
+
+        payload = self._sign({"action": "force_watermark", "reason": reason})
+
+        async def close_one(conn):
+            try:
+                await asyncio.wait_for(conn.send_json(payload), timeout=1.5)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(conn.close(code=code, reason=reason[:120]), timeout=1.5)
+            except Exception:
+                pass
+
+        await asyncio.gather(*[close_one(c) for c in sockets], return_exceptions=True)
+        self.active_connections.clear()

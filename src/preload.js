@@ -64,4 +64,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Expose webUtils to get real file paths from File objects in drag-and-drop
   getFilePath: (file) => webUtils ? webUtils.getPathForFile(file) : '',
+
+  // 🎨 WINDOW & OUTPUT BACKGROUND COLOR
+  setWindowBackgroundColor: (color) => ipcRenderer.send('set-window-background-color', color),
+  setOutputBackgroundColor: (data) => ipcRenderer.send('set-output-background-color', data),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 🔧 PERFORMANCE & COMPATIBILITY CONTROLS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Restart app setelah GPU Compatibility Mode diubah
+  restartApp: () => ipcRenderer.invoke('restart-app'),
+
+  // Inject/hapus CSS Force GPU Compositing Layer ke semua window aktif
+  applyCompositingCSS: (enable) => ipcRenderer.invoke('apply-compositing-css', enable),
 });

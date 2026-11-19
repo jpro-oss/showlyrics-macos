@@ -19,7 +19,7 @@ def get_allowed_extensions(category: str) -> tuple:
         return (".jpg", ".jpeg", ".png", ".gif", ".webp")
     if category == "presentation":
         return (".pdf", ".pptx")
-    return (".mp4",)  # default: video (restricted to .mp4 only)
+    return (".mp4", ".webm", ".mov", ".m4v")  # default: video (macOS-compatible formats)
 
 
 _manager = None

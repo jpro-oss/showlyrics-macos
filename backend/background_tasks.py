@@ -7,7 +7,7 @@ import asyncio
 import subprocess
 import hashlib
 import fitz  # PyMuPDF
-from config import load_json, save_json
+from config import load_json, save_json, get_binary_path
 
 # ---- Helper untuk ekstrak dimensi foto (module-level, bukan closure per loop) ----
 def _get_photo_dims(fpath: str) -> dict:
@@ -28,18 +28,8 @@ def get_ffmpeg_path():
     Binary bernama 'ffmpeg' (tanpa ekstensi) — sesuai macOS convention.
     Setelah PyInstaller extraction, pastikan executable permission di-set.
     """
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-
-    ffmpeg_path = os.path.join(base_path, "ffmpeg")
-    if os.path.exists(ffmpeg_path):
-        # Pastikan executable permission ter-set (kritis setelah PyInstaller extract)
-        try:
-            os.chmod(ffmpeg_path, 0o755)
-        except Exception:
-            pass
+    ffmpeg_path = get_binary_path("ffmpeg")
+    if ffmpeg_path:
         return ffmpeg_path
     # Fallback: gunakan ffmpeg dari PATH sistem (jika user install via Homebrew)
     return "ffmpeg"
@@ -502,7 +492,7 @@ async def process_media_metadata_task(category: str, item_id: str, file_path: st
         except Exception as e:
             print(f"[METADATA_TASK] PIL error for {file_path}: {e}")
             
-    from config import load_json, save_json
+    from config import load_json, save_json, get_binary_path
     db_path = get_media_db_path(category)
     db = load_json(db_path)
     

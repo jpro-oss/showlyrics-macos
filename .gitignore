@@ -6,7 +6,8 @@ backend/__pycache__/
 backend/dist/
 sender/
 sender-1.1.1/
-tools/
+admin-panel/
+START_ADMIN_PANEL.bat
 __pycache__/
 .env
 *.log
@@ -15,9 +16,14 @@ __pycache__/
 backend/playback-engine
 backend/playback-engine-amd64
 backend/playback-engine-arm64
+backend/camera-service
+backend/camera-service-amd64
+backend/camera-service-arm64
 backend/ffmpeg
 backend/playback-engine.exe
 playback-engine.exe
+*.exe
+*.pyd
 *.dll
 
 # PyArmor runtime
@@ -35,9 +41,11 @@ backend/nuitka-crash-report.xml
 
 # Secrets
 .session_token
+*firebase-adminsdk*.json
 *.pem
 *.p12
 *.key
 
 # Go binaries
 playback-engine/playback-engine
+camera-service/camera-service

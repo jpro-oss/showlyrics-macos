@@ -3,7 +3,7 @@ file_integrity.py — ShowLyrics File Integrity Guardian v4
 
 Tiga lapis keamanan:
   Tier 1 (Online)  : Server JSON (GitHub Pages CDN) — Kebenaran mutlak
-  Tier 2 (Offline) : macOS App Support Storage (storage_backend.py, terenkripsi HWID-based) — Cache fallback
+  Tier 2 (Offline) : macOS Storage Backend (terenkripsi HWID-based) — Cache fallback
   Tier 3 (Last)    : _BUILTIN_HASHES di dalam binary ini (PyArmor protected)
 
 Strategi performa (LOW-END DEVICE SAFE):
@@ -24,33 +24,23 @@ import base64
 from datetime import datetime, timezone
 from storage_backend import get_store
 
-# macOS: storage untuk cache integrity hash baseline
-_integrity_store = get_store('integrity')
+APP_VERSION     = "1.3.5-4"
+SERVER_HASH_URL = "https://showlyrics.github.io/file/v135-4.json"
 
-# ─── KONSTANTA — UPDATE SETIAP RILIS ──────────────────────────────────────────
-APP_VERSION     = "1.3.5-2"
-SERVER_HASH_URL = "https://showlyrics.github.io/file/v135-2.json"
-
-# ─── TIER 3: BUILTIN HASHES ───────────────────────────────────────────────────
-# AUTO-GENERATED oleh tools/generate_hashes.py — JANGAN edit manual!
-# Nilai ini dikompilasi ke dalam binary (PyArmor/Nuitka protected).
-# Digunakan sebagai last-resort jika offline + registry tidak ada.
 _BUILTIN_HASHES = {
-    "version":               "1.3.5-2",
-    "static_fingerprint":    "d8f114e198b66127b6e4b9c024c7e9aaf1741734a9501175e8b3dbdec272efc7",
-    "templates_fingerprint": "6c960da2772ef46819f17db03b69c57ce68ede99697afbefb7848fa339ecf8af",
-    "folder_fingerprint":    "0adae8e34382eb41c3ed91393f9234f24eb3762902cb358ff6cf44783a6cdc4d",
-    "manifest_sig":          "749ecc408f99203baf8d48ff0c48b14bfa123d14cd2df31bd9e841cab1be6af1"
+    "version":               "1.3.5-4",
+    "static_fingerprint":    "c7a094a6407d19377290dae86d13c82a219be5ace9d5ef279313c4b996dca20d",
+    "templates_fingerprint": "244a675c16a3395f1a3bd9cc14baa202fc09d11ab005b2195da501b634ac1932",
+    "folder_fingerprint":    "f63b7f274104b1d990bf36e91f38fb2284c64dd722edafab14c396cb9ade7755",
+    "manifest_sig":          "cdbe86fa80dad38b62913d70d3d19eb9d26de0caa0b73647883919a6ef149dc5"
 }
-# ─────────────────────────────────────────────────────────────────────────────
 
-# 10 menit — aman untuk low-end device (mtime pre-check hampir gratis)
-CHECK_INTERVAL  = 600   # detik
-FETCH_TIMEOUT   = 8     # timeout fetch server JSON
+CHECK_INTERVAL     = 600 
+WM_CHECK_INTERVAL  = 90   
+FETCH_TIMEOUT      = 8    
 
-# macOS: storage key untuk cache integrity hash baseline
-# Disimpan di ~/Library/Application Support/ShowLyrics/.integrity.dat
-INTEGRITY_STORAGE_KEY = "SysIntegrityData"
+INTEGRITY_REG_KEY = "SysIntegrityData"
+_integrity_store = get_store('integrity')
 
 # Folder yang dipantau (relatif terhadap base dir) — hanya flat files, tidak rekursif
 MONITORED_FOLDERS = ["static", "templates"]
@@ -58,6 +48,8 @@ MONITORED_FOLDERS = ["static", "templates"]
 # ─── GLOBAL STATE ─────────────────────────────────────────────────────────────
 _wm_js_bytes: bytes = None
 _wm_js_hash: str   = None
+_wm_mtime: float   = 0.0   # mtime wm.js saat startup — baseline os.stat()
+_wm_size: int      = 0     # file size wm.js saat startup — baseline os.stat()
 _mtime_cache: dict = {}     # {"static": float, "templates": float}
 _baseline_fp: str  = None   # folder_fingerprint baseline
 _manager_ref       = None
@@ -120,11 +112,11 @@ def _base_dir() -> str:
 
     Struktur dist ShowLyrics (dari ShowLyrics.spec dengan contents_directory='internal'):
       dist/ShowLyrics/
-        ShowLyrics               ← binary macOS (tanpa ekstensi)
+        ShowLyrics.exe
         internal/            ← sys._MEIPASS mengarah ke sini
           static/            ← ADA DI SINI (di dalam internal/)
           templates/         ← ADA DI SINI (di dalam internal/)
-          [dylibs, .so, ...]
+          [DLLs, .pyd, ...]
 
     Strategi: cek secara dinamis di mana 'static/' berada, mulai dari _MEIPASS,
     lalu parent-nya. Dengan ini kode aman untuk:
@@ -256,10 +248,6 @@ def _decrypt(enc: str) -> str | None:
 
 
 def _save_registry(version: str, fp_static: str, fp_templates: str, fp_combined: str) -> bool:
-    """
-    Simpan baseline fingerprint ke storage macOS.
-    Disimpan di ~/Library/Application Support/ShowLyrics/.integrity.dat
-    """
     payload = json.dumps({
         "version":               version,
         "saved_at":              datetime.now(timezone.utc).isoformat(),
@@ -269,7 +257,7 @@ def _save_registry(version: str, fp_static: str, fp_templates: str, fp_combined:
     })
     try:
         enc = _encrypt(payload)
-        _integrity_store.write(INTEGRITY_STORAGE_KEY, enc)
+        _integrity_store.write(INTEGRITY_REG_KEY, enc)
         print("[INTEGRITY] Storage baseline saved.")
         return True
     except Exception as e:
@@ -278,12 +266,8 @@ def _save_registry(version: str, fp_static: str, fp_templates: str, fp_combined:
 
 
 def _load_registry() -> dict | None:
-    """
-    Baca baseline fingerprint dari storage macOS.
-    Return None jika belum ada atau gagal dekripsi.
-    """
     try:
-        enc = _integrity_store.read(INTEGRITY_STORAGE_KEY)
+        enc = _integrity_store.read(INTEGRITY_REG_KEY)
         if not enc:
             return None
         raw = _decrypt(enc)
@@ -351,41 +335,29 @@ def _validate_server_data(data: dict) -> dict | None:
 
 def _force_watermark(reason: str):
     """
-    Aktifkan watermark paksa — dipanggil saat tampering terdeteksi.
-
-    Broadcast dikirim ke semua client yang terhubung secara REALTIME menggunakan
-    asyncio.run_coroutine_threadsafe() dengan loop reference yang disimpan saat startup.
-
-    FIX: asyncio.get_event_loop() tidak reliabel dari background thread — bisa
-    mengembalikan loop yang berbeda atau sudah closed. Gunakan _event_loop yang
-    di-inject dari main thread via inject_loop() untuk memastikan broadcast berhasil.
+    Aktifkan watermark paksa & TUTUP SEMUA WEBSOCKET — dipanggil saat tampering / file wm.js hilang terdeteksi.
     """
     global _integrity_ok
     _integrity_ok = False
-    print(f"[INTEGRITY] ⚠️  TAMPERING DETECTED: {reason}")
+    print(f"[INTEGRITY] ⚠️  TAMPERING / DISK MODIFICATION DETECTED: {reason}")
 
     # Set license invalid agar setiap client baru yang connect juga dapat status invalid
     if _license_ref:
         _license_ref.LICENSE_VALID = False
 
-    # Broadcast ke semua client yang sedang terhubung — REALTIME, tanpa perlu refresh
+    # TUTUP SEMUA WEBSOCKET REALTIME (Output mati total: background, audio, text, dll.)
     if _manager_ref and _event_loop and not _event_loop.is_closed():
         try:
             future = asyncio.run_coroutine_threadsafe(
-                _manager_ref.broadcast({
-                    "action": "force_watermark",
-                    "reason": "integrity_violation"
-                }),
+                _manager_ref.terminate_all_connections(code=4003, reason=f"integrity_violation:{reason}"),
                 _event_loop
             )
-            # Tunggu broadcast selesai max 3 detik (non-blocking dari perspektif caller)
             future.result(timeout=3)
-            print("[INTEGRITY] ✅ force_watermark broadcast sent to all clients.")
+            print("[INTEGRITY] 🚨 All websockets terminated & output killed due to tampering!")
         except Exception as e:
-            print(f"[INTEGRITY] Broadcast error: {e}")
+            print(f"[INTEGRITY] Termination error: {e}")
     elif _manager_ref and not _event_loop:
-        print("[INTEGRITY] WARNING: event loop belum di-inject — watermark tidak bisa realtime. "
-              "Pastikan inject_loop() dipanggil sebelum file_integrity.initialize().")
+        print("[INTEGRITY] WARNING: event loop belum di-inject — watermark tidak bisa realtime.")
 
 
 # ─── INITIALIZATION ───────────────────────────────────────────────────────────
@@ -393,23 +365,8 @@ def _force_watermark(reason: str):
 def initialize():
     """
     Dipanggil saat startup (di thread terpisah, delay 2 detik setelah license check).
-    
-    Urutan Prioritas Pengecekan Hash (mengutamakan online CDN):
-      1. TIER 1: ONLINE (CDN / Server) — Jika online, bandingkan local vs server.
-         - Jika cocok: set OK. Jika registry kosong atau berbeda dengan server, replace registry dengan server.
-         - Jika tidak cocok: tampering detected → force watermark.
-      2. TIER 2: OFFLINE (Windows Registry) — Jika offline atau fetch server gagal.
-         - Jika versi di registry berbeda dengan versi aplikasi saat ini:
-           Asumsikan ini update aplikasi offline yang legitimate. Baseline diperbarui
-           dengan local file saat ini, dan disimpan ke registry.
-         - Jika versi registry sama: bandingkan local vs registry.
-           Jika berbeda: tunggu 3 detik dan re-verify. Jika masih berbeda → force watermark.
-      3. TIER 3: BUILTIN HASHES (_BUILTIN_HASHES) — Jika registry kosong/tidak ada.
-         - Bandingkan local vs builtin hash.
-         - Jika cocok (atau dev mode): set OK & simpan baseline baru ke registry.
-         - Jika berbeda: tampering detected → force watermark.
     """
-    global _wm_js_bytes, _wm_js_hash, _baseline_fp, _integrity_ok
+    global _wm_js_bytes, _wm_js_hash, _wm_mtime, _wm_size, _baseline_fp, _integrity_ok
 
     base = _base_dir()
 
@@ -418,10 +375,14 @@ def initialize():
     try:
         with open(wm_path, 'rb') as f:
             _wm_js_bytes = f.read()
-        _wm_js_hash = _sha256_bytes(_wm_js_bytes)
-        print(f"[INTEGRITY] wm.js cached in RAM ({len(_wm_js_bytes)} bytes)")
+        _wm_js_hash  = _sha256_bytes(_wm_js_bytes)
+        _wm_mtime    = os.path.getmtime(wm_path)   # baseline mtime
+        _wm_size     = os.path.getsize(wm_path)    # baseline size
+        print(f"[INTEGRITY] wm.js cached in RAM ({len(_wm_js_bytes)} bytes, mtime={_wm_mtime:.0f})")
     except Exception as e:
-        print(f"[INTEGRITY] WARNING: wm.js RAM cache failed: {e}")
+        print(f"[INTEGRITY] ERROR loading wm.js: {e}")
+        _force_watermark("wm_js_missing_on_startup")
+        return
 
     # Hitung fingerprint lokal saat startup
     fp_s, fp_t, fp_combined = _combined_fingerprint()
@@ -432,27 +393,37 @@ def initialize():
         server = _fetch_server()
         if server:
             server_fp = server.get("folder_fingerprint", "")
+            builtin_fp = _BUILTIN_HASHES.get("folder_fingerprint", "")
             if server_fp:
-                if fp_combined == server_fp:
-                    print("[INTEGRITY] [TIER 1] ✅ Verification successful. Local files match server CDN.")
+                matches_server = (fp_combined == server_fp)
+                matches_builtin = bool(
+                    builtin_fp
+                    and builtin_fp != "PLACEHOLDER_COMBINED_FP"
+                    and fp_combined == builtin_fp
+                )
+                if matches_server or matches_builtin:
+                    if matches_server:
+                        print("[INTEGRITY] [TIER 1] ✅ Verification successful. Local files match server CDN.")
+                    else:
+                        print("[INTEGRITY] [TIER 1] ✅ Local files match builtin baseline.")
                     _integrity_ok = True
-                    _baseline_fp = server_fp
-                    
-                    # Jika registry kosong, berbeda baseline, atau versinya lama, replace registry dengan server data
+                    _baseline_fp = fp_combined
+
+                    # Jika storage kosong, berbeda baseline, atau versinya lama, sinkronkan
                     reg = _load_registry()
-                    if reg is None or reg.get("folder_fingerprint") != server_fp or reg.get("version") != APP_VERSION:
-                        print("[INTEGRITY] [TIER 1] Registry baseline out of sync with CDN — synchronizing registry baseline.")
-                        _save_registry(APP_VERSION, fp_s, fp_t, server_fp)
+                    if reg is None or reg.get("folder_fingerprint") != fp_combined or reg.get("version") != APP_VERSION:
+                        print("[INTEGRITY] [TIER 1] Storage baseline out of sync — synchronizing baseline.")
+                        _save_registry(APP_VERSION, fp_s, fp_t, fp_combined)
                 else:
-                    print("[INTEGRITY] [TIER 1] ⚠️ Critical: Local files do not match CDN server!")
+                    print("[INTEGRITY] [TIER 1] ⚠️ Critical: Local files do not match CDN server or builtin baseline!")
                     _baseline_fp = server_fp
-                    _force_watermark("Local files differ from CDN server baseline (startup)")
-                
+                    _force_watermark("Local files differ from CDN server and builtin baseline (startup)")
+
                 _update_mtime_cache()
                 return
 
-    # TIER 2: OFFLINE (Local Storage)
-    print("[INTEGRITY] [TIER 2] Offline or CDN server unavailable. Falling back to local storage baseline...")
+    # TIER 2: OFFLINE (Registry)
+    print("[INTEGRITY] [TIER 2] Offline or CDN server unavailable. Falling back to local Windows Registry baseline...")
     reg = _load_registry()
     if reg is not None:
         reg_version = reg.get("version", "")
@@ -532,17 +503,24 @@ def _check_cycle():
         server = _fetch_server()
         if server:
             server_fp = server.get("folder_fingerprint", "")
-            if server_fp and fp_combined == server_fp:
-                # File lokal = server → rewrite registry (refresh baseline)
-                print("[INTEGRITY] ✅ Files match server. Refreshing registry.")
-                reg_fp_s = server.get("static_fingerprint", fp_s)
-                reg_fp_t = server.get("templates_fingerprint", fp_t)
-                _save_registry(APP_VERSION, reg_fp_s, reg_fp_t, server_fp)
+            builtin_fp = _BUILTIN_HASHES.get("folder_fingerprint", "")
+            matches_server = bool(server_fp and fp_combined == server_fp)
+            matches_builtin = bool(
+                builtin_fp
+                and builtin_fp != "PLACEHOLDER_COMBINED_FP"
+                and fp_combined == builtin_fp
+            )
+            if matches_server or matches_builtin:
+                # File lokal = server atau builtin → refresh baseline
+                print("[INTEGRITY] ✅ Files match server/builtin. Refreshing baseline.")
+                reg_fp_s = server.get("static_fingerprint", fp_s) if matches_server else fp_s
+                reg_fp_t = server.get("templates_fingerprint", fp_t) if matches_server else fp_t
+                _save_registry(APP_VERSION, reg_fp_s, reg_fp_t, fp_combined)
                 _integrity_ok = True
                 _update_mtime_cache()
             else:
-                # File lokal ≠ server → tampering!
-                _force_watermark("Files differ from server (background check)")
+                # File lokal ≠ server dan ≠ builtin → tampering!
+                _force_watermark("Files differ from server and builtin (background check)")
         else:
             # Tidak bisa kontak server → fallback ke registry
             _check_vs_registry(fp_combined)
@@ -611,14 +589,62 @@ def _check_vs_registry(local_fp: str):
 
 def _monitor_loop():
     """
-    Background thread — jalankan check_cycle setiap 10 menit.
-    Pada sistem bersih tanpa tampering, overhead CPU = hampir nol
-    (hanya mtime check 0.004ms per 10 menit).
+    Background monitor — strategi hybrid optimal (PyInstaller onedir safe):
+
+      Setiap 90 detik:
+        1. os.stat(wm.js) — hanya 1 syscall, 0.001ms, tanpa disk read/hash
+        2. Jika mtime ATAU size berubah → baru baca & hash file (verifikasi)
+        3. Jika stat sama → aman, skip seluruhnya (0 disk I/O)
+
+      Setiap 10 menit atau jika folder mtime berubah:
+        → _check_cycle() — full fingerprint validation
+
+    Kompatibel onedir: static/wm.js ada di _internal/static/, mtime stabil
+    selama tidak ada tampering → tidak pernah false trigger.
     """
-    while not _stop_event.wait(CHECK_INTERVAL):
-        print("[INTEGRITY] Running periodic integrity check...")
+    global _wm_mtime, _wm_size
+    last_full_check = 0
+
+    while not _stop_event.wait(WM_CHECK_INTERVAL):
         try:
-            _check_cycle()
+            base       = _base_dir()
+            wm_on_disk = os.path.join(base, "static", "wm.js")
+
+            # ── Step 1: Fast stat — tidak ada disk read (0.001ms) ────────────
+            try:
+                st            = os.stat(wm_on_disk)
+                current_mtime = st.st_mtime
+                current_size  = st.st_size
+            except FileNotFoundError:
+                print("[INTEGRITY] ⚠️ wm.js deleted from disk!")
+                _force_watermark("wm_js_deleted_from_disk")
+                continue
+
+            # ── Step 2: Hash hanya jika stat berubah ─────────────────────────
+            if _wm_js_hash and (current_mtime != _wm_mtime or current_size != _wm_size):
+                print("[INTEGRITY] wm.js stat changed — verifying hash...")
+                try:
+                    with open(wm_on_disk, 'rb') as f:
+                        disk_hash = _sha256_bytes(f.read())
+                    if disk_hash != _wm_js_hash:
+                        print("[INTEGRITY] ⚠️ wm.js hash mismatch — file modified!")
+                        _force_watermark("wm_js_modified_on_disk")
+                    else:
+                        # mtime berubah tapi isi sama (touch/backup/AV scan) — update baseline
+                        print("[INTEGRITY] wm.js stat changed but hash OK (touch/backup?) — baseline updated.")
+                        _wm_mtime = current_mtime
+                        _wm_size  = current_size
+                except Exception as read_err:
+                    _force_watermark(f"wm_js_read_error:{read_err}")
+                continue
+
+            # ── Step 3: Full folder check (periodik atau jika mtime folder berubah) ──
+            now = time.time()
+            if now - last_full_check > CHECK_INTERVAL or _mtime_changed():
+                last_full_check = now
+                print("[INTEGRITY] Running periodic full integrity check...")
+                _check_cycle()
+
         except Exception as e:
             print(f"[INTEGRITY] Monitor error: {e}")
 
@@ -629,7 +655,10 @@ def start_monitor():
     _stop_event.clear()
     t = threading.Thread(target=_monitor_loop, name="IntegrityMonitor", daemon=True)
     t.start()
-    print(f"[INTEGRITY] Background monitor started (interval={CHECK_INTERVAL}s / {CHECK_INTERVAL//60} menit)")
+    print(
+        f"[INTEGRITY] Background monitor started "
+        f"(wm.js stat check: {WM_CHECK_INTERVAL}s, full folder: {CHECK_INTERVAL}s)"
+    )
 
 
 def stop_monitor():
@@ -646,20 +675,27 @@ def get_wm_js() -> bytes | None:
     Immune terhadap serangan penggantian file wm.js.
     """
     if _wm_js_bytes:
-        # Verifikasi silent: apakah wm.js di disk masih sama?
+        # Verifikasi: apakah wm.js di disk masih sama?
         base        = _base_dir()
         wm_on_disk  = os.path.join(base, "static", "wm.js")
         try:
             with open(wm_on_disk, 'rb') as f:
                 disk_hash = _sha256_bytes(f.read())
             if disk_hash != _wm_js_hash:
-                print("[INTEGRITY] wm.js on disk MODIFIED — serving RAM copy!")
+                print("[INTEGRITY] ⚠️ wm.js on disk MODIFIED — triggering output shutdown!")
+                _force_watermark("wm_js_modified_on_disk")
+                return None
         except Exception:
-            print("[INTEGRITY] wm.js on disk MISSING — serving RAM copy!")
+            print("[INTEGRITY] ⚠️ wm.js on disk MISSING — triggering output shutdown!")
+            _force_watermark("wm_js_deleted_from_disk")
+            return None
         return _wm_js_bytes
     return None
 
 
 def is_ok() -> bool:
     """Return True jika integritas sistem aman."""
+    from config import DEV
+    if DEV:
+        return True
     return _integrity_ok

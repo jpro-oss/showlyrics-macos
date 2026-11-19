@@ -6,9 +6,10 @@ import secrets
 import threading
 import tempfile
 import time
+import platform
 
 # --- FIX PATH & DEV CONFIG ---
-DEV = True  # Set to True for development browser testing, False for secure production Electron lock
+DEV = not getattr(sys, "frozen", False)  # Dev mode in source runs, locked production when frozen by PyInstaller
 
 env_dev = os.environ.get("SHOWLYRICS_DEV")
 if env_dev is not None:
@@ -68,6 +69,41 @@ def get_resource_path(relative_path):
     except Exception:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+
+def get_binary_path(binary_name: str) -> str:
+    """
+    Resolve macOS helper binary path (playback-engine, camera-service, ffmpeg)
+    supporting both Apple Silicon (arm64) and Intel (amd64), in dev and frozen modes.
+    """
+    machine = platform.machine().lower()
+    arch_suffix = "arm64" if machine in ("arm64", "aarch64") else "amd64"
+    candidate_names = [f"{binary_name}-{arch_suffix}", binary_name]
+
+    search_dirs = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            search_dirs.append(meipass)
+            search_dirs.append(os.path.dirname(meipass))
+        search_dirs.append(os.path.dirname(sys.executable))
+    search_dirs.append(os.path.dirname(os.path.abspath(__file__)))
+
+    seen = set()
+    for base_dir in search_dirs:
+        if not base_dir or base_dir in seen:
+            continue
+        seen.add(base_dir)
+        for cname in candidate_names:
+            candidate = os.path.join(base_dir, cname)
+            if os.path.isfile(candidate):
+                try:
+                    os.chmod(candidate, 0o755)
+                except Exception:
+                    pass
+                return candidate
+
+    return ""
 
 
 def get_user_data_path(filename):
@@ -160,6 +196,8 @@ PRESENTATIONS_FILE = get_user_data_path("presentations.json")
 BIBLE_DIR = get_user_data_path("bibles")
 os.makedirs(BIBLE_DIR, exist_ok=True)
 SCRIPTURE_PRESETS_FILE = get_user_data_path("scripture_presets.json")
+SCRIPTURE_HISTORY_FILE = get_user_data_path("scripture_history.json")
+SCRIPTURE_SETTINGS_FILE = get_user_data_path("scripture_settings.json")
 CAMERA_SETTINGS_FILE = get_user_data_path("camera_settings.json")
 
 # Ensure files exist with standard structure

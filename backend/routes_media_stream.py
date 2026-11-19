@@ -1,10 +1,11 @@
 import os
 import asyncio
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from config import load_json, BACKGROUNDS_FILE, AUDIOS_FILE, PHOTOS_FILE, PRESENTATION_DIR
 
 router = APIRouter()
+REMOTE_SENDER_CACHE = {}
 
 # ------------------------------------------------------------------
 # PRESENTATION: SLIDE COUNT & SINGLE SLIDE
@@ -91,6 +92,9 @@ def stream_photo(item_id: str):
 @router.get("/api/stream_video/{item_id}")
 def stream_video(item_id: str):
     """Serve a video file from the backgrounds database with range request support."""
+    if item_id.startswith("sender_") and item_id in REMOTE_SENDER_CACHE:
+        return RedirectResponse(url=REMOTE_SENDER_CACHE[item_id], status_code=307)
+
     db = load_json(BACKGROUNDS_FILE)
     items = db.get("videos", {}) if "videos" in db else db.get("items", {})
     item = items.get(item_id)

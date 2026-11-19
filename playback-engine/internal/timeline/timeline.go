@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,6 +74,13 @@ func (e *Engine) calculatePositionAt(nowMs int64) float64 {
 	if !e.state.Playing {
 		return math.Round(e.state.PausedPosition*1000) / 1000.0
 	}
+
+	// [REMOTE-SYNC] Untuk remote media tanpa durasi valid (duration <= 0),
+	// ikuti PausedPosition dari master sender secara langsung tanpa ekstrapolasi tak terbatas.
+	if e.state.IsRemote && e.state.Duration <= 0 {
+		return math.Round(e.state.PausedPosition*1000) / 1000.0
+	}
+
 	elapsedSec := float64(nowMs-e.state.StartedAt) / 1000.0
 	pos := e.state.PausedPosition + elapsedSec*e.state.PlaybackRate
 	if e.state.Duration > 0 {
@@ -132,12 +140,24 @@ func (e *Engine) LoadMedia(mediaID, path string, duration float64, hash, behavio
 	if behavior == "" {
 		e.state.Behavior = "loop"
 	}
+	e.state.IsRemote = strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") || strings.HasPrefix(mediaID, "sender_")
 	e.state.Playing = true
 	e.state.StartedAt = now
 	e.state.PausedPosition = 0.0
 	e.state.PlaybackRate = 1.0
 	e.state.SessionID = generateSessionID()
 
+	return e.state
+}
+
+// UpdateDuration updates media duration dynamically if discovered after load
+func (e *Engine) UpdateDuration(duration float64) models.TimelineState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if duration > 0 {
+		e.state.Duration = duration
+	}
 	return e.state
 }
 

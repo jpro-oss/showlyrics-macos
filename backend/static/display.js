@@ -1,28 +1,36 @@
 // === UNIFIED MOTION LOOP HANDOFF ENGINE ===
 // === GLOBAL CONSTANTS (konsolidasi untuk performa & maintenance) ===
 
-// Gradient Theme Map - Single source of truth untuk semua gradient themes
+// Gradient Theme Map - Single source of truth untuk semua gradient themes (21 themes)
 const GRADIENT_THEME_MAP = {
-    // Original
-    'gold': 'linear-gradient(135deg, #f6d365, #fda085)',
-    'sunset': 'linear-gradient(135deg, #f093fb, #f5576c)',
-    'nature': 'linear-gradient(135deg, #43e97b, #38f9d7)',
-    'metal': 'linear-gradient(135deg, #868f96, #596164)',
-    'goldleaf': 'linear-gradient(135deg, #f7971e, #ffd200)',
-    // New Worship
+    // Worship Atmosphere
+    'gold': 'linear-gradient(to bottom, #fbf5b7 0%, #bf953f 50%, #b38728 51%, #fbf5b7 100%)',
+    'sunset': 'linear-gradient(180deg, #ffcc00 0%, #ff6666 100%)',
+    'nature': 'linear-gradient(180deg, #a8ff78 0%, #78ffd6 100%)',
     'covenant': 'linear-gradient(135deg, #7c3aed 0%, #9f1239 50%, #d97706 100%)',
-    // New Praise
+    // Praise & High Energy
+    'hologram': 'linear-gradient(135deg, #8EC5FC 0%, #E0C3FC 50%, #ff9a9e 100%)',
+    'retro': 'linear-gradient(180deg, #ff00cc, #333399)',
+    'firework': 'linear-gradient(90deg, #ff9900, #ff0055, #cc00ff)',
+    'spirit': 'linear-gradient(180deg, #00ffff, #0055ff)',
+    'rainbow': 'linear-gradient(90deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3)',
     'wildfire': 'linear-gradient(180deg, #fff 0%, #ffdb4a 20%, #ff8c00 55%, #ff2200 80%, #8b0000 100%)',
     'celebration': 'linear-gradient(90deg, #ff0080, #ff6600, #ffdd00, #00ff88, #00d4ff, #8000ff)',
-    // New Creative Art
+    // Luxury & Texture
+    'metal': 'linear-gradient(to bottom, #e0e0e0 0%, #5d5d5d 50%, #333333 51%, #e0e0e0 100%)',
+    'goldleaf': 'linear-gradient(45deg, #FFDF00, #D4AF37, #FFDF00)',
+    // Creative & Artistic
+    'blueprint': 'repeating-linear-gradient(45deg, #0055ff, #0055ff 2px, #0044cc 2px, #0044cc 4px)',
     'duotone': 'linear-gradient(135deg, #ff6b35 0%, #f7b267 40%, #c71585 65%, #4b0082 100%)',
     'aurora-art': 'linear-gradient(90deg, #00ff88, #00e5ff, #8000ff, #ff0088, #ff8800, #00ff88)',
     'solarpunk': 'linear-gradient(135deg, #22c55e, #84cc16, #eab308, #f59e0b)',
+    // Advanced Scenic Presets
     'neo-prism': 'linear-gradient(110deg, #ffffff 0%, #8ff7ff 22%, #ff7ad9 50%, #ffe66d 76%, #ffffff 100%)',
     'liquid-gold-box': 'linear-gradient(135deg, #fff7bd 0%, #f7c948 38%, #b7791f 72%, #fff0a3 100%)',
     'aurora-glass-box': 'linear-gradient(120deg, #dffcff 0%, #8dd8ff 35%, #d0a2ff 70%, #ffffff 100%)',
     'modern-kinetic': 'linear-gradient(90deg, #ffffff 0%, #00e5ff 40%, #ff2d75 68%, #ffffff 100%)',
 };
+const GRADIENT_THEMES = new Set(Object.keys(GRADIENT_THEME_MAP));
 
 // Fixed Themes Set - O(1) lookup performance
 const FIXED_THEMES = new Set([
@@ -109,11 +117,19 @@ function getZoomStartScale(zoomMode) {
     return 1.0;                             // stay: no scale change
 }
 
+// [PERF] Cache --loop-handoff-ms agar tidak re-read getComputedStyle setiap transisi.
+// CSS variable ini tidak berubah saat runtime, cukup baca sekali lalu cache 2s.
+let _cachedHandoffMs = null;
+let _lastHandoffReadAt = 0;
+
 function getHandoffDurationMs() {
+    const now = performance.now();
+    if (_cachedHandoffMs !== null && now - _lastHandoffReadAt < 2000) return _cachedHandoffMs;
     const raw = getComputedStyle(document.documentElement).getPropertyValue('--loop-handoff-ms').trim();
-    if (raw.endsWith('ms')) return parseFloat(raw) || 800;
-    if (raw.endsWith('s')) return (parseFloat(raw) || 0.8) * 1000;
-    return 800;
+    _cachedHandoffMs = raw.endsWith('ms') ? (parseFloat(raw) || 800) :
+                       raw.endsWith('s')  ? ((parseFloat(raw) || 0.8) * 1000) : 800;
+    _lastHandoffReadAt = now;
+    return _cachedHandoffMs;
 }
 
 function getLoopHandoffTargets(layer, wrapper, txt, motionLoop) {
@@ -315,7 +331,8 @@ function deactivateLyricLayer(layer) {
     const wrapper = layer.querySelector('.lyric-wrapper');
     const txt = layer.querySelector('.lyric-text');
     clearLoopHandoffClasses(layer);
-    layer.classList.remove('loop-ready', 'compositing-active');
+    layer.classList.remove('loop-ready', 'compositing-active', 'fx-split-active');
+    if (txt) txt.classList.remove('fx-split-active');
     clearFxClasses(layer);
     if (wrapper) clearFxClasses(wrapper);
     if (txt) clearFxClasses(txt);
@@ -326,6 +343,9 @@ function deactivateLyricLayer(layer) {
     layer.classList.remove('active', 'lyric-exiting');
     layer.style.removeProperty('--lyric-exit-ms');
     layer.classList.add('lyric-dormant');
+    // [PERF] Hapus zoom-active saat layer dormant — GPU promotion tidak diperlukan saat idle
+    const zoomCont = layer.querySelector('.lyric-zoom-container');
+    if (zoomCont) zoomCont.classList.remove('zoom-active');
     resetAnimatedTextParts(layer);
 }
 
@@ -340,12 +360,17 @@ function beginLayerExit(layer, fadeMs, maxStaggerDelay) {
     if (!layer) return;
     if (layer === outgoingLayer) cancelOutgoingLayer();
 
+    // JOB 1: CUT — instant deactivation, no CSS transition needed
+    if (fadeMs <= 0) {
+        deactivateLyricLayer(layer);
+        return;
+    }
+
     const exitMs = Math.max(220, fadeMs);
     layer.style.setProperty('--lyric-exit-ms', `${exitMs}ms`);
 
-    // Commit the current visible state before switching to the exit state.
-    // This keeps the browser from coalescing class changes into an instant hide.
-    void layer.offsetWidth;
+    // [PERF] Tidak pakai void offsetWidth di sini — browser sudah committed style dari
+    // nextLayer.classList.add('active') sebelumnya. Membuang forced reflow ganda di hot path.
     layer.classList.add('lyric-exiting');
     layer.classList.remove('active');
 
@@ -441,6 +466,8 @@ function finishTransition(layer, wrapper, nextTxt, gstEl, motionLoop, zoomMode, 
             wrapper.style.transform = ''; // Bersihkan sisa inline transform jika ada
         }
     }
+    layer.classList.remove('fx-split-active');
+    if (nextTxt) nextTxt.classList.remove('fx-split-active');
 }
 
 function calculateStaggerDelayBase(fadeMs, fxClass, textEl) {
@@ -576,17 +603,46 @@ function scheduleTransitionComplete(layer, wrapper, nextTxt, gstEl, motionLoop, 
 
 let globalSubColor = "#ffc107";
 let globalSubSize = 0.6;
+let globalSubBold = false;
+let globalSubItalic = true;
+let globalSubUnderline = false;
+let globalSubFont = '';
 
 fetch('/api/global_sub_settings')
     .then(res => res.json())
     .then(data => {
         if (data.color) globalSubColor = data.color;
-        if (data.size) globalSubSize = data.size;
+        if (data.size !== undefined) globalSubSize = data.size;
+        if (data.bold !== undefined) globalSubBold = data.bold;
+        if (data.italic !== undefined) globalSubItalic = data.italic;
+        if (data.underline !== undefined) globalSubUnderline = data.underline;
+        if (data.font) globalSubFont = data.font;
     }).catch(e => console.log("Gagal load global sub settings"));
+
+// JOB FIX: Realtime update .sub-lang styles langsung di active layer (tanpa perlu next slide)
+function applySubLangStylesLive() {
+    if (!activeLayer) return;
+    if (globalSubFont && globalSubFont !== 'follow') injectFont(globalSubFont);
+    const subLangs = document.querySelectorAll('.sub-lang');
+    if (!subLangs.length) return;
+    const subFontStack = (globalSubFont && globalSubFont !== 'follow')
+        ? `'${globalSubFont.replace(/'/g, "\\'")}', sans-serif`
+        : 'inherit';
+    subLangs.forEach(el => {
+        el.style.setProperty('color', globalSubColor, 'important');
+        el.style.setProperty('-webkit-text-fill-color', globalSubColor, 'important');
+        el.style.fontSize = globalSubSize + 'em';
+        el.style.fontStyle = globalSubItalic ? 'italic' : 'normal';
+        el.style.fontWeight = globalSubBold ? 'bold' : 'normal';
+        el.style.textDecoration = globalSubUnderline ? 'underline' : 'none';
+        el.style.fontFamily = subFontStack;
+    });
+}
 
 function updateLayers(layers) {
     if (!layers) return;
     const layerMap = {
+        'plugin': 'plugin-main-frame',
         'camera': 'main-cam-iframe',
         'background': 'frame-video',
         'photo': 'frame-photo',
@@ -683,6 +739,7 @@ function resetAnimatedTextParts(root) {
         el.style.textShadow = '';
         el.style.animation = '';
         el.style.transition = '';
+        el.style.color = '';
         delete el.dataset.loopHandoffAnimation;
         delete el.dataset.loopHandoffTransition;
     });
@@ -775,8 +832,8 @@ function processBilingual(rawText, splitCharFx = false) {
 
     const splitToChars = (text) => {
         return text.split(' ').map(word => {
-            let chars = word.split('').map(c => `<span class="char" style="display:inline-block;vertical-align:baseline;font-size:1em;line-height:1;">${c}</span>`).join('');
-            return `<span class="word" style="white-space:nowrap;display:inline-block;vertical-align:baseline;font-size:1em;line-height:1;">${chars}</span>`;
+            let chars = word.split('').map(c => `<span class="char" style="display:inline-block;vertical-align:baseline;font-size:1em;line-height:inherit;">${c}</span>`).join('');
+            return `<span class="word" style="white-space:nowrap;display:inline-block;vertical-align:baseline;font-size:1em;line-height:inherit;">${chars}</span>`;
         }).join(' ');
     };
 
@@ -821,12 +878,29 @@ function processBilingual(rawText, splitCharFx = false) {
             let mainHtml = splitCharFx ? splitToChars(mainText) : mainText;
             let subHtml = splitCharFx ? splitToChars(subText) : subText;
 
+            // JOB 3: Build dynamic sub-lang style from global state (no hardcoded italic)
+            const subFontStack = (globalSubFont && globalSubFont !== 'follow')
+                ? `'${globalSubFont.replace(/'/g, "\\'")}', sans-serif`
+                : 'inherit';
+            const subStyleParts = [
+                `color:${globalSubColor} !important`,
+                `-webkit-text-fill-color:${globalSubColor} !important`,
+                `font-size:${globalSubSize}em`,
+                `font-style:${globalSubItalic ? 'italic' : 'normal'}`,
+                `font-weight:${globalSubBold ? 'bold' : 'normal'}`,
+                `text-decoration:${globalSubUnderline ? 'underline' : 'none'}`,
+                `font-family:${subFontStack}`,
+                'opacity:0.9'
+            ];
+            const subStyleTop = subStyleParts.join(';') + ';margin-bottom:0.1em';
+            const subStyleBot = subStyleParts.join(';');
+
             // RENDER: sub-lang di atas jika bracket di awal baris, jika tidak di bawah
             let innerHtml = "";
             if (bracketAtStart) {
-                innerHtml = `<div class="sub-lang" style="color:${globalSubColor}; font-size:${globalSubSize}em; font-style:italic; opacity:0.9; margin-bottom:0.1em !important;">${subHtml}</div><div class="main-lang">${mainHtml}</div>`;
+                innerHtml = `<div class="sub-lang" style="${subStyleTop}">${subHtml}</div><div class="main-lang">${mainHtml}</div>`;
             } else {
-                innerHtml = `<div class="main-lang">${mainHtml}</div><div class="sub-lang" style="color:${globalSubColor}; font-size:${globalSubSize}em; font-style:italic; opacity:0.9;">${subHtml}</div>`;
+                innerHtml = `<div class="main-lang">${mainHtml}</div><div class="sub-lang" style="${subStyleBot}">${subHtml}</div>`;
             }
 
             const lineHtml = `<div class="bilingual-line" style="${gapAntarBaris}">${innerHtml}</div>`;
@@ -903,6 +977,7 @@ function connectWebSocket() {
         isWebSocketConnected = true;        // 👈 Track connection status
 
         _WEShield.onConnect();
+        if (typeof _WEShield.attachSocket === 'function') _WEShield.attachSocket(ws);
     };
 
     // 2. SENSOR MATI: Kalau server mati / kabel putus, otomatis jalanin ini
@@ -923,9 +998,11 @@ function connectWebSocket() {
 
     // 4. ENGINE UTAMA LIRIK (Pindahan dari kode lama)
     ws.onmessage = function (event) {
-        const data = JSON.parse(event.data);
-
-        if (_WEShield.handleMessage(data)) return;
+        if (!window._WEShield || typeof window._WEShield.dispatch !== 'function') {
+            console.error("[WEShield] Missing or tampered — halting display output!");
+            return;
+        }
+        window._WEShield.dispatch(event.data, function (data) {
 
         // 🎯 TANGKAP LAYER CONFIG (Dynamic Z-Index)
         if (data.type === "update_layers") {
@@ -933,6 +1010,70 @@ function connectWebSocket() {
                 updateLayers(data.layers_main);
             } else if (data.target === 'main' && data.layers) {
                 updateLayers(data.layers);
+            }
+        }
+
+        // 🎯 TANGKAP BACKGROUND CONFIG (Transition duration)
+        if (data.type === "update_bg_config" || data.action === "update_bg_config") {
+            const cfg = data.payload || {};
+            const trans = parseFloat(cfg.transition ?? 0.5);
+            document.documentElement.style.setProperty('--bg-transition-time', `${isNaN(trans) ? 0.5 : trans}s`);
+        }
+
+        // 🎯 TANGKAP BACKGROUND & PHOTO SOURCE TRACKING (Master Priority for Local Media)
+        if (data.type === "update_background" || data.action === "update_background") {
+            const vf = document.getElementById("frame-video");
+            const src = data.payload?.source || 'local';
+            if (vf) {
+                vf.setAttribute('data-media-source', src);
+                if (src !== 'remote_sender') {
+                    vf.classList.remove('ftb-hidden');
+                }
+            }
+        }
+
+        if (data.type === "update_photo" || data.action === "update_photo") {
+            const pf = document.getElementById("frame-photo");
+            const src = data.payload?.source || 'local';
+            if (pf) {
+                pf.setAttribute('data-media-source', src);
+                if (src !== 'remote_sender') {
+                    pf.classList.remove('ftb-hidden');
+                }
+            }
+        }
+
+        if (data.type === "update_presentation" || data.action === "update_presentation") {
+            const pres = document.getElementById("frame-presentation");
+            const src = data.payload?.source || 'local';
+            if (pres) {
+                pres.setAttribute('data-media-source', src);
+                if (src !== 'remote_sender') {
+                    pres.classList.remove('ftb-hidden');
+                }
+            }
+        }
+
+        // 🎯 TANGKAP FTB (Fade To Black) SYSTEM - HANYA UNTUK MEDIA SENDER
+        if (data.type === "ftb" || data.action === "ftb" || ((data.type === "bg_control" || data.action === "bg_control") && (data.payload?.command === "ftb" || data.command === "ftb"))) {
+            const isFtb = Boolean(data.payload?.value ?? data.payload?.enabled ?? data.payload?.active ?? data.value ?? data.active);
+            const target = data.payload?.target || data.target || data.media_type;
+            const vf = document.getElementById("frame-video");
+            const pf = document.getElementById("frame-photo");
+
+            if (!target || target === 'video' || target === 'all') {
+                if (vf && vf.getAttribute('data-media-source') === 'remote_sender') {
+                    vf.classList.toggle("ftb-hidden", isFtb);
+                } else if (vf && !isFtb) {
+                    vf.classList.remove("ftb-hidden");
+                }
+            }
+            if (!target || target === 'photo' || target === 'all') {
+                if (pf && pf.getAttribute('data-media-source') === 'remote_sender') {
+                    pf.classList.toggle("ftb-hidden", isFtb);
+                } else if (pf && !isFtb) {
+                    pf.classList.remove("ftb-hidden");
+                }
             }
         }
 
@@ -952,7 +1093,14 @@ function connectWebSocket() {
             // --------------------------------------------------------------
 
             if (s.sub_color) globalSubColor = s.sub_color;
-            if (s.sub_size) globalSubSize = s.sub_size;
+            if (s.sub_size !== undefined) globalSubSize = s.sub_size;
+            if (s.sub_bold !== undefined) globalSubBold = s.sub_bold;
+            if (s.sub_italic !== undefined) globalSubItalic = s.sub_italic;
+            if (s.sub_underline !== undefined) globalSubUnderline = s.sub_underline;
+            if (s.sub_font !== undefined) globalSubFont = s.sub_font;
+            if (globalSubFont && globalSubFont !== 'follow') injectFont(globalSubFont);
+            // FIX: Realtime — update .sub-lang styles langsung tanpa harus next slide
+            applySubLangStylesLive();
 
             if (s.font) injectFont(s.font);
             document.body.style.setProperty('--main-color', s.color);
@@ -962,6 +1110,12 @@ function connectWebSocket() {
                 let sizeVal = s.font_size;
                 if (sizeVal <= 15) sizeVal = sizeVal * 19.2;
                 document.body.style.setProperty('--main-font-size', sizeVal + "px");
+            }
+            if (s.line_height !== undefined && s.line_height !== null && !isNaN(s.line_height)) {
+                const lh = parseFloat(s.line_height);
+                document.body.style.setProperty('--main-line-height', String(lh));
+                // Paragraph gap = max(0, lh - 1) * 1em untuk jarak antar baris di flex container
+                document.body.style.setProperty('--main-paragraph-gap', Math.max(0, lh - 1).toFixed(3) + 'em');
             }
             if (s.speed) {
                 let speedDuration = s.speed;
@@ -1006,12 +1160,6 @@ function connectWebSocket() {
                 activeLayer.style.paddingLeft = paddingVal;
                 activeLayer.style.paddingRight = paddingVal;
 
-                if (wrapper) {
-                    const maxWVal = (textWrapPercent * 19.2) + 'px';
-                    wrapper.style.maxWidth = maxWVal;
-                    wrapper.style.width = "100%";
-                }
-
                 const alignMode = s.align || 'center';
                 let layerAlign = "center";
                 let transformOrigin = "center center";
@@ -1027,12 +1175,40 @@ function connectWebSocket() {
                 // Use alignItems for horizontal alignment in flex-direction: column
                 activeLayer.style.alignItems = layerAlign;
 
-                // Penting: Align teks di dalam blok flex text
+                if (wrapper) {
+                    const maxWVal = (textWrapPercent * 19.2) + 'px';
+                    wrapper.style.display = 'flex';
+                    wrapper.style.flexDirection = 'column';
+                    wrapper.style.boxSizing = 'border-box';
+                    wrapper.style.marginLeft = '';
+                    wrapper.style.marginRight = '';
+                    wrapper.style.paddingLeft = '';
+                    wrapper.style.paddingRight = '';
+                    wrapper.style.minWidth = 'min-content';
+                    wrapper.style.maxWidth = maxWVal;
+                    wrapper.style.width = 'fit-content';
+                    wrapper.style.transformOrigin = transformOrigin;
+                    wrapper.style.justifyContent = layerAlign;
+                    wrapper.style.alignItems = layerAlign;
+                    wrapper.style.alignSelf = layerAlign;
+                }
+
                 txt.style.alignItems = layerAlign;
                 txt.style.textAlign = alignMode;
+                txt.style.minWidth = 'min-content';
+                txt.style.maxWidth = '100%';
+                txt.style.width = 'fit-content';
+                txt.style.marginLeft = '';
+                txt.style.marginRight = '';
 
                 gstEl.style.alignItems = layerAlign;
                 gstEl.style.textAlign = alignMode;
+                gstEl.style.left = '0';
+                gstEl.style.right = '0';
+                gstEl.style.width = '100%';
+                gstEl.style.maxWidth = '';
+                gstEl.style.marginLeft = '';
+                gstEl.style.marginRight = '';
 
                 if (zoomContainer) {
                     zoomContainer.style.transformOrigin = transformOrigin;
@@ -1043,9 +1219,11 @@ function connectWebSocket() {
                         void zoomContainer.offsetWidth;
                         zoomContainer.classList.add(expectedZoomClass);
                     }
-                }
-                if (wrapper) {
-                    wrapper.style.transformOrigin = transformOrigin;
+                    if (s.zoom === 'in' || s.zoom === 'out') {
+                        zoomContainer.classList.add('zoom-active');
+                    } else {
+                        zoomContainer.classList.remove('zoom-active');
+                    }
                 }
 
                 // ==========================================
@@ -1080,6 +1258,20 @@ function connectWebSocket() {
                 txt.style.fontWeight = fWeight; gstEl.style.fontWeight = fWeight;
                 txt.style.fontStyle = fStyle; gstEl.style.fontStyle = fStyle;
                 txt.style.textDecoration = tDeco; gstEl.style.textDecoration = tDeco;
+
+                // LINE HEIGHT + PARAGRAPH GAP (sync ke ghost layer agar glow tetap presisi)
+                const lineHeightVal = (s.line_height !== undefined && !isNaN(s.line_height)) ? parseFloat(s.line_height) : 1.0;
+                const pgap = Math.max(0, lineHeightVal - 1).toFixed(3) + 'em';
+                document.body.style.setProperty('--main-line-height', String(lineHeightVal));
+                document.body.style.setProperty('--main-paragraph-gap', pgap);
+                txt.style.lineHeight = String(lineHeightVal);
+                txt.style.setProperty('--main-line-height', String(lineHeightVal));
+                txt.style.rowGap = pgap;
+                txt.style.gap = pgap;
+                gstEl.style.lineHeight = String(lineHeightVal);
+                gstEl.style.setProperty('--main-line-height', String(lineHeightVal));
+                gstEl.style.rowGap = pgap;
+                gstEl.style.gap = pgap;
 
 
                 // 1. TEXT COLOR & GRADIENT ENGINE (ANTI-BUG)
@@ -1136,19 +1328,29 @@ function connectWebSocket() {
 
                 let shadowList = [];
 
-                // 1. INTENSITY SHADOW (Directly onto text-shadow instead of container drop-shadow)
-                if (shadowIntVal > 0) {
+                // Identify if theme uses gradient text
+                const isGradient = s.color_type === 'gradient' || GRADIENT_THEMES.has(s.theme);
+                const isGhostAllowed = !['box-black', 'frosted', 'clean', 'pure', 'paper', 'plain'].includes(s.theme) && !GRADIENT_THEMES.has(s.theme);
+                const useGhostGlow = glowVal > 0 && isGradient && isGhostAllowed;
+
+                if (!isGhostAllowed || !useGhostGlow) {
+                    gstEl.innerHTML = '';
+                    gstEl.style.display = 'none';
+                    gstEl.style.opacity = '0';
+                } else {
+                    gstEl.style.display = 'flex';
+                    gstEl.style.flexDirection = 'column';
+                    gstEl.style.alignItems = layerAlign;
+                }
+
+                // 1. INTENSITY SHADOW (Directly onto text-shadow instead of container drop-shadow - ONLY for non-gradient)
+                if (!isGradient && shadowIntVal > 0) {
                     const off = shadowIntVal / 4;
                     const blur1 = Math.min(15, shadowIntVal / 2);
                     const blur2 = Math.min(30, shadowIntVal);
                     shadowList.push(`${off}px ${off}px ${blur1}px ${shadowColorVal}`);
                     shadowList.push(`${off * 1.5}px ${off * 1.5}px ${blur2}px rgba(0,0,0,0.6)`);
                 }
-
-                // Identify if theme uses gradient text
-                const isGradient = s.color_type === 'gradient' || ['gold', 'sunset', 'nature', 'hologram'].includes(s.theme);
-                const isGhostAllowed = !['box-black', 'frosted', 'clean', 'pure', 'paper', 'plain'].includes(s.theme);
-                const useGhostGlow = glowVal > 0 && isGradient && isGhostAllowed;
 
                 // 2. GLOW ENGINE
                 if (glowVal > 0) {
@@ -1164,7 +1366,9 @@ function connectWebSocket() {
                         const blurRadius = Math.min(15, glowVal / 5);
                         gstEl.style.filter = `blur(${blurRadius}px) brightness(1.3) saturate(1.4)`;
                         gstEl.style.opacity = '0.9';
-                    } else if (!isFixedTheme) {
+                    } else if (isGradient) {
+                            // Gradient themes must NOT receive solid text-shadow (prevents ghost bleeding)
+                        } else if (!isFixedTheme) {
                         // Solid Text / Custom Solid Glow -> Applied to text-shadow directly
                         let actualGlowColor = (glowType === 'solid') ? glowC1 : s.color;
                         let preserveThemeTextShadow = false;
@@ -1210,10 +1414,8 @@ function connectWebSocket() {
                     }
                 }
 
-                txt.style.textShadow = shadowList.length > 0 ? shadowList.join(', ') : '';
-
-                // FIX BUG THEME HILANG: Jangan matikan text-shadow jika ada custom shadow/glow
                 if (shadowList.length > 0) {
+                    txt.style.textShadow = shadowList.join(', ');
                     if (txt.dataset.preserveTextShadow === 'true') {
                         delete txt.dataset.preserveTextShadow;
                     }
@@ -1299,7 +1501,11 @@ function connectWebSocket() {
                 gstEl.style.color = "";
             }
 
+            // === JOB 1: CUT TRANSITION ===
+            const isCutTransition = (s.trans === 'cut');
+
             let fxClass = 'fx-fade';
+            if (isCutTransition) fxClass = 'fx-cut';
             if (s.trans === 'blur') fxClass = 'fx-blur'; if (s.trans === 'mask') fxClass = 'fx-mask'; if (s.trans === 'stagger') fxClass = 'fx-stagger';
             if (s.trans === 'track') fxClass = 'fx-track'; if (s.trans === 'burst') fxClass = 'fx-burst'; if (s.trans === 'type') fxClass = 'fx-type';
             if (s.trans === 'echo') fxClass = 'fx-echo'; if (s.trans === 'flip3d') fxClass = 'fx-flip3d'; if (s.trans === 'slide') fxClass = 'fx-slide';
@@ -1359,7 +1565,8 @@ function connectWebSocket() {
             nextLayer.classList.add(fxClass);
             setCompositingActive(nextLayer, true);
 
-            const fadeMs = (parseFloat(s.fade) || 0.8) * 1000;
+            // JOB 1: CUT uses 0ms fade — instant switch, no animation
+            const fadeMs = isCutTransition ? 0 : ((parseFloat(s.fade) || 0.8) * 1000);
 
             if (rawNewText) {
                 // Bedakan mana animasi per Kata, mana per Huruf menggunakan Set global O(1)
@@ -1374,6 +1581,10 @@ function connectWebSocket() {
                 const isReverseCharFx = REVERSE_CHAR_FX.has(fxClass);
                 const isCharFx = CHAR_FX.has(fxClass);
                 const useSplitCharFx = isWordMotionLoop || isWordFx || isCharFx || isRandomLetterFx || isDeepWordFx || isCenterWordFx || isReverseCharFx;
+                if (useSplitCharFx) {
+                    nextLayer.classList.add('fx-split-active');
+                    nextTxt.classList.add('fx-split-active');
+                }
 
                 if (s.font) {
                     nextTxt.style.fontFamily = `"${s.font}", sans-serif`;
@@ -1387,12 +1598,6 @@ function connectWebSocket() {
                 nextLayer.style.paddingLeft = paddingVal;
                 nextLayer.style.paddingRight = paddingVal;
 
-                if (wrapper) {
-                    const maxWVal = (textWrapPercent * 19.2) + 'px';
-                    wrapper.style.maxWidth = maxWVal;
-                    wrapper.style.width = "100%";
-                }
-
                 const alignMode = s.align || 'center';
                 let layerAlign = "center";
                 let transformOrigin = "center center";
@@ -1402,19 +1607,53 @@ function connectWebSocket() {
 
                 // Horizontal alignment (align-items for column)
                 nextLayer.style.alignItems = layerAlign;
+
+                if (wrapper) {
+                    const maxWVal = (textWrapPercent * 19.2) + 'px';
+                    wrapper.style.display = 'flex';
+                    wrapper.style.flexDirection = 'column';
+                    wrapper.style.boxSizing = 'border-box';
+                    wrapper.style.marginLeft = '';
+                    wrapper.style.marginRight = '';
+                    wrapper.style.paddingLeft = '';
+                    wrapper.style.paddingRight = '';
+                    wrapper.style.minWidth = 'min-content';
+                    wrapper.style.maxWidth = maxWVal;
+                    wrapper.style.width = 'fit-content';
+                    wrapper.style.transformOrigin = transformOrigin;
+                    wrapper.style.justifyContent = layerAlign;
+                    wrapper.style.alignItems = layerAlign;
+                    wrapper.style.alignSelf = layerAlign;
+                }
+
                 nextTxt.style.textAlign = alignMode;
                 nextTxt.style.alignItems = layerAlign;
+                nextTxt.style.minWidth = 'min-content';
+                nextTxt.style.maxWidth = '100%';
+                nextTxt.style.width = 'fit-content';
+                nextTxt.style.marginLeft = '';
+                nextTxt.style.marginRight = '';
+
                 gstEl.style.textAlign = alignMode;
                 gstEl.style.alignItems = layerAlign;
+                gstEl.style.left = '0';
+                gstEl.style.right = '0';
+                gstEl.style.width = '100%';
+                gstEl.style.maxWidth = '';
+                gstEl.style.marginLeft = '';
+                gstEl.style.marginRight = '';
+
                 if (zoomContainer) {
                     zoomContainer.style.transformOrigin = transformOrigin;
                     zoomContainer.style.alignItems = layerAlign;
                     // zoomContainer zoom class was already cleared before the single reflow above; just add the new one
                     const zoomClass = (s.zoom === 'in') ? 'move-in' : (s.zoom === 'out') ? 'move-out' : 'move-stay';
                     zoomContainer.classList.add(zoomClass);
-                }
-                if (wrapper) {
-                    wrapper.style.transformOrigin = transformOrigin;
+                    if (s.zoom === 'in' || s.zoom === 'out') {
+                        zoomContainer.classList.add('zoom-active');
+                    } else {
+                        zoomContainer.classList.remove('zoom-active');
+                    }
                 }
 
                 // ==========================================
@@ -1449,6 +1688,20 @@ function connectWebSocket() {
                 nextTxt.style.fontWeight = fWeight2; gstEl.style.fontWeight = fWeight2;
                 nextTxt.style.fontStyle = fStyle2; gstEl.style.fontStyle = fStyle2;
                 nextTxt.style.textDecoration = tDeco2; gstEl.style.textDecoration = tDeco2;
+
+                // LINE HEIGHT + PARAGRAPH GAP (sync ke ghost layer agar glow tetap presisi)
+                const lineHeightVal2 = (s.line_height !== undefined && !isNaN(s.line_height)) ? parseFloat(s.line_height) : 1.0;
+                const pgap2 = Math.max(0, lineHeightVal2 - 1).toFixed(3) + 'em';
+                document.body.style.setProperty('--main-line-height', String(lineHeightVal2));
+                document.body.style.setProperty('--main-paragraph-gap', pgap2);
+                nextTxt.style.lineHeight = String(lineHeightVal2);
+                nextTxt.style.setProperty('--main-line-height', String(lineHeightVal2));
+                nextTxt.style.rowGap = pgap2;
+                nextTxt.style.gap = pgap2;
+                gstEl.style.lineHeight = String(lineHeightVal2);
+                gstEl.style.setProperty('--main-line-height', String(lineHeightVal2));
+                gstEl.style.rowGap = pgap2;
+                gstEl.style.gap = pgap2;
 
                 // 1. TEXT COLOR & GRADIENT ENGINE (ANTI-BUG)
                 nextTxt.classList.remove('gradient-text');
@@ -1505,19 +1758,19 @@ function connectWebSocket() {
 
                 let shadowList2 = [];
 
-                // 1. INTENSITY SHADOW (Directly onto text-shadow instead of container drop-shadow)
-                if (shadowIntVal2 > 0) {
+                // Identify if theme uses gradient text
+                const isGradient2 = s.color_type === 'gradient' || GRADIENT_THEMES.has(s.theme);
+                const isGhostAllowed2 = !['box-black', 'frosted', 'clean', 'pure', 'paper', 'plain'].includes(s.theme) && !GRADIENT_THEMES.has(s.theme) && !useSplitCharFx;
+                const useGhostGlow2 = glowVal2 > 0 && isGradient2 && isGhostAllowed2;
+
+                // 1. INTENSITY SHADOW (Directly onto text-shadow instead of container drop-shadow - ONLY for non-gradient)
+                if (!isGradient2 && shadowIntVal2 > 0) {
                     const off2 = shadowIntVal2 / 4;
                     const blur1_2 = Math.min(15, shadowIntVal2 / 2);
                     const blur2_2 = Math.min(30, shadowIntVal2);
                     shadowList2.push(`${off2}px ${off2}px ${blur1_2}px ${shadowColorVal2}`);
                     shadowList2.push(`${off2 * 1.5}px ${off2 * 1.5}px ${blur2_2}px rgba(0,0,0,0.6)`);
                 }
-
-                // Identify if theme uses gradient text
-                const isGradient2 = s.color_type === 'gradient' || ['gold', 'sunset', 'nature', 'hologram'].includes(s.theme);
-                const isGhostAllowed2 = !['box-black', 'frosted', 'clean', 'pure', 'paper', 'plain'].includes(s.theme);
-                const useGhostGlow2 = glowVal2 > 0 && isGradient2 && isGhostAllowed2;
 
                 // 2. GLOW ENGINE
                 if (glowVal2 > 0) {
@@ -1533,7 +1786,9 @@ function connectWebSocket() {
                         const blurRadius2 = Math.min(15, glowVal2 / 5);
                         gstEl.style.filter = `blur(${blurRadius2}px) brightness(1.3) saturate(1.4)`;
                         gstEl.style.opacity = '0.9';
-                    } else if (!isFixedTheme) {
+                    } else if (isGradient2) {
+                            // Gradient themes must NOT receive solid text-shadow (prevents ghost bleeding)
+                        } else if (!isFixedTheme) {
                         // Solid Text / Custom Solid Glow -> Applied to text-shadow directly
                         let actualGlowColor2 = (glowType2 === 'solid') ? glowC1_2 : s.color;
                         let preserveThemeTextShadow2 = false;
@@ -1579,19 +1834,15 @@ function connectWebSocket() {
                     }
                 }
 
-                nextTxt.style.textShadow = shadowList2.length > 0 ? shadowList2.join(', ') : '';
-
-                // FIX BUG THEME HILANG: Jangan matikan text-shadow jika ada custom shadow/glow
-                if (shadowList2.length > 0) {
+                if (!isFixedTheme && s.color_type === 'gradient') {
+                    nextTxt.style.textShadow = 'none';
+                } else if (shadowList2.length > 0) {
+                    nextTxt.style.textShadow = shadowList2.join(', ');
                     if (nextTxt.dataset.preserveTextShadow === 'true') {
                         delete nextTxt.dataset.preserveTextShadow;
                     }
                 } else {
-                    if (!isFixedTheme && s.color_type === 'gradient') {
-                        nextTxt.style.textShadow = 'none';
-                    } else {
-                        nextTxt.style.textShadow = '';
-                    }
+                    nextTxt.style.textShadow = '';
                 }
                 // ========================================================================
 
@@ -1605,7 +1856,20 @@ function connectWebSocket() {
 
                 // Baru tembak elemen DOM yang baru
                 nextTxt.innerHTML = processed.html;
-                gstEl.innerHTML = processed.htmlGhost;  // GHOST: Hanya main-lang (no bilingual)
+                nextTxt.querySelectorAll('.sub-lang').forEach(el => {
+                    el.style.setProperty('color', globalSubColor, 'important');
+                    el.style.setProperty('-webkit-text-fill-color', globalSubColor, 'important');
+                });
+                if (!isGhostAllowed2 || !useGhostGlow2) {
+                    gstEl.innerHTML = '';
+                    gstEl.style.display = 'none';
+                    gstEl.style.opacity = '0';
+                } else {
+                    gstEl.style.display = 'flex';
+                    gstEl.style.flexDirection = 'column'; /* [FIX v1.35.4] Harus column agar layout ghost match dengan lyric-text (flex column) */
+                    gstEl.style.alignItems = layerAlign;
+                    gstEl.innerHTML = processed.htmlGhost;
+                }
 
                 // --- ENGINE PENYUNTIK DELAY (FIXED) ---
                 if (useSplitCharFx) {
@@ -1683,11 +1947,14 @@ function connectWebSocket() {
                 const previousLayer = activeLayer;
                 nextLayer.classList.add("active");
                 if (previousLayer) {
-                    beginLayerExit(previousLayer, fadeMs / 1.8, maxStaggerDelay);
+                    // JOB 1: CUT — exit layer instantly (0ms)
+                    const exitDuration = isCutTransition ? 0 : fadeMs / 1.8;
+                    beginLayerExit(previousLayer, exitDuration, isCutTransition ? 0 : maxStaggerDelay);
                 }
             } else {
                 if (activeLayer && activeLayer.classList.contains('active')) {
-                    beginLayerExit(activeLayer, fadeMs / 1.8, 0);
+                    const exitDuration2 = isCutTransition ? 0 : fadeMs / 1.8;
+                    beginLayerExit(activeLayer, exitDuration2, 0);
                 }
                 stripFxFromElements(nextLayer, wrapper, nextTxt);
                 setCompositingActive(nextLayer, false);
@@ -1754,6 +2021,7 @@ function connectWebSocket() {
         }
 
 
+        });
     };
 }
 // Jalankan koneksi pertama kali saat layar dibuka
@@ -1800,9 +2068,37 @@ try {
 
 
 // Staggered loading for sub-iframes to prevent TCP connection exhaustion / websocket lockups
-window.addEventListener('load', function () {
+// 🎥 CAMERA PRE-WARM: Menggunakan async agar camera permission tersimpan di session profile
+// SEBELUM camera iframe memanggil getUserMedia().
+// window.top === window = projector window (top-level) → pre-warm berjalan
+// window.top !== window = controller preview (display.html dimuat sebagai iframe) → SKIP pre-warm
+window.addEventListener('load', async function () {
+    // ─── CAMERA PERMISSION PRE-WARM (PROJECTOR ONLY) ───────────────────────────
+    // Masalah: persist:sl-projector session belum pernah menyimpan camera grant.
+    // setPermissionCheckHandler returning true mungkin tidak cukup untuk sub-frame context.
+    // Solusi: panggil getUserMedia() di parent frame (top-level) terlebih dahulu.
+    // Ini memicu flow lengkap: check → request → grant → simpan di session content settings.
+    // Camera iframe (dengan allow="camera") lalu mewarisi permission yang sudah tersimpan.
+    if (false && window.top === window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+            const prewarmStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            prewarmStream.getTracks().forEach(function(t) { t.stop(); });
+            console.log('[CamPrewarm] Camera permission established in projector session.');
+        } catch (prewarmErr) {
+            // Gagal pre-warm — camera iframe akan coba sendiri via retry di mcam.js
+            console.warn('[CamPrewarm] Pre-warm failed (camera may be unavailable):', prewarmErr.name);
+        }
+    }
+    // ────────────────────────────────────────────────────────────────────────────
+
     const iframes = document.querySelectorAll('iframe[data-src]');
-    iframes.forEach((iframe, index) => {
+    // Prioritize camera iframe — load first for lowest WebRTC latency
+    const sorted = Array.from(iframes).sort((a, b) => {
+        const aIsCam = a.id === 'main-cam-iframe' ? 0 : 1;
+        const bIsCam = b.id === 'main-cam-iframe' ? 0 : 1;
+        return aIsCam - bIsCam;
+    });
+    sorted.forEach((iframe, index) => {
         setTimeout(() => {
             const dataSrc = iframe.getAttribute('data-src');
             if (dataSrc) {
@@ -1812,4 +2108,3 @@ window.addEventListener('load', function () {
         }, index * 120);
     });
 });
-

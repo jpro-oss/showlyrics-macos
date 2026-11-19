@@ -8,10 +8,12 @@
     <link rel="stylesheet" href="static/styles.css?v={{ VERSION }}">
     <link rel="stylesheet" href="static/bg.css?v={{ VERSION }}">
     <link rel="stylesheet" href="static/ppt_remote.css?v={{ VERSION }}">
+    <link rel="stylesheet" href="static/plugin.css?v={{ VERSION }}">
+    <link rel="stylesheet" href="static/external.css?v={{ VERSION }}">
 
 </head>
 
-<body oncontextmenu="return false;">
+<body>
     <div class="col-playlist">
         <div class="tab-header">
             <button class="tab-btn active" onclick="switchTab('library')">SONG</button>
@@ -42,7 +44,7 @@
 
                 <div class="sched-label">SAVED SCHEDULES</div>
                 <div class="sched-row">
-                    <select id="saved-sched-select" class="sched-select">
+                    <select id="saved-sched-select" class="sched-select" onchange="handleSavedSchedChange(this)">
                         <option value="">-- Select Saved --</option>
                     </select>
                 </div>
@@ -104,7 +106,8 @@
 
         <div class="current-song-bar">
             <div class="current-song-info">
-                CURRENT SONG: <span id="now-loaded-text">- NO SONG LOADED -</span>
+                <span class="current-song-label">CURRENT SONG</span>
+                <span id="now-loaded-text">- NO SONG LOADED -</span>
             </div>
             <div class="current-song-actions">
                 <!-- Custom Grid Mode Dropdown -->
@@ -194,7 +197,8 @@
             <div id="ppt-grid-overlay" class="ppt-grid-overlay">
                 <span id="ppt-overlay-text">Opening Presentation...</span>
             </div>
-            <div id="grid-container" class="grid-container"></div>
+            <div id="grid-container" class="grid-container"
+                onclick="if(typeof setNavigationTarget==='function')setNavigationTarget('lyrics')"></div>
         </div>
 
         <div id="bg-library-wrapper" class="bg-library-wrapper">
@@ -202,20 +206,34 @@
             <div id="bg-toggle-bar" class="bg-toggle-bar">
                 <div id="bg-library-resizer" class="bg-library-resizer"></div>
                 <div class="bg-cat-group">
-                    <button class="media-cat-btn active" onclick="switchMediaCategory(event, 'video')">🎞️
-                        VIDEO</button>
-                    <button class="media-cat-btn" onclick="switchMediaCategory(event, 'audio')">🎵 AUDIO</button>
-                    <button class="media-cat-btn" onclick="switchMediaCategory(event, 'photo')">📷 PHOTO</button>
-                    <button class="media-cat-btn" onclick="switchMediaCategory(event, 'presentation')">📊
-                        PPTX/PDF</button>
+                    <button class="media-cat-btn active" id="media-cat-btn-media"
+                        onclick="switchMediaCategory(event, 'media')">🎬 MEDIA <span class="cat-chevron">▾</span></button>
                     <button class="media-cat-btn" id="media-cat-btn-scripture"
                         onclick="switchMediaCategory(event, 'scripture')">📖 SCRIPTURE</button>
                     <button class="media-cat-btn" id="media-cat-btn-camera"
                         onclick="switchMediaCategory(event, 'camera')">📹 CAMERA</button>
+                    <button class="media-cat-btn" id="media-cat-btn-plugin"
+                        onclick="switchMediaCategory(event, 'plugin')">🧩 PLUGIN</button>
+                    <button class="media-cat-btn" id="media-cat-btn-external"
+                        onclick="switchMediaCategory(event, 'external')">🌐 EXTERNAL</button>
                 </div>
 
                 <div class="bg-toggle-action" onclick="toggleBgLibrary()">
                     <span id="bg-toggle-icon" class="bg-toggle-text">▲ EXPAND</span>
+                </div>
+            </div>
+
+            <!-- SUB-TOGGLE BAR FOR MEDIA (VIDEO, AUDIO, PHOTO, PPTX/PDF) -->
+            <div id="bg-sub-toggle-bar" class="bg-sub-toggle-bar" style="display: none;">
+                <div class="bg-sub-cat-group">
+                    <button class="sub-media-btn active" id="sub-media-btn-video"
+                        onclick="switchMediaCategory(event, 'video')">🎞️ VIDEO</button>
+                    <button class="sub-media-btn" id="sub-media-btn-audio"
+                        onclick="switchMediaCategory(event, 'audio')">🎵 AUDIO</button>
+                    <button class="sub-media-btn" id="sub-media-btn-photo"
+                        onclick="switchMediaCategory(event, 'photo')">📷 PHOTO</button>
+                    <button class="sub-media-btn" id="sub-media-btn-presentation"
+                        onclick="switchMediaCategory(event, 'presentation')">📊 PPTX/PDF</button>
                 </div>
             </div>
 
@@ -233,12 +251,6 @@
                     </div>
 
                     <div class="bg-folder-sidebar">
-                        <!-- SIDEBAR TABS (Only shown for PPT) -->
-                        <div id="bg-sidebar-tabs" class="bg-sidebar-tabs" style="display: none;">
-                            <button class="bg-sb-tab active" onclick="setSidebarMode('local')">LOCAL FILE</button>
-                            <button class="bg-sb-tab" onclick="setSidebarMode('sender')">MEDIA SENDER</button>
-                        </div>
-
                         <!-- SECTION: LOCAL FILES -->
                         <div id="bg-local-section" class="bg-sidebar-section">
                             <div class="bg-sidebar-actions">
@@ -252,31 +264,6 @@
                                 </div>
                             </div>
                             <div id="bg-folder-list" class="bg-folder-list"></div>
-                        </div>
-
-                        <!-- SECTION: MEDIA SENDER -->
-                        <div id="bg-sender-section" class="bg-sidebar-section" style="display: none;">
-                            <div class="bg-sidebar-actions">
-                                <div class="bg-action-row">
-                                    <button class="btn-action-1 btn-folder-add" onclick="refreshMediaSenders()"
-                                        title="Refresh List">🔄 REFRESH SENDER</button>
-                                </div>
-                            </div>
-                            <div id="bg-sender-list" class="bg-folder-list">
-                                <div style="padding:15px; color:#666; font-size:0.75em; text-align:center;">Click
-                                    refresh to scan network...</div>
-                            </div>
-                            <div class="bg-sidebar-actions" style="margin-top: 5px; padding: 4px 10px; border-top: 1px solid rgba(255,255,255,0.05);">
-                                <div style="display: flex; background: rgba(0,0,0,0.2); border: 1px solid #333; border-radius: 4px; overflow: hidden; height: 24px; align-items: center;">
-                                    <input type="text" id="manual-sender-ip" placeholder="Manual IP (e.g. 192.168.x.x)" 
-                                        style="flex: 1; background: transparent; border: none; color: #ccc; padding: 0 8px; font-size: 0.75em; outline: none; height: 100%; min-width: 0; box-sizing: border-box;"
-                                        onkeydown="if(event.key==='Enter') connectManualSender()">
-                                    <button onclick="connectManualSender()" 
-                                        style="background: #3a3a3a; color: #00e5ff; border: none; border-left: 1px solid #333; padding: 0 8px; font-size: 0.7em; font-weight: bold; cursor: pointer; height: 100%; box-sizing: border-box; flex-shrink: 0; line-height: 22px; transition: all 0.2s;"
-                                        onmouseover="this.style.background='#555'; this.style.color='#fff';" 
-                                        onmouseout="this.style.background='#3a3a3a'; this.style.color='#00e5ff';">CONNECT</button>
-                                </div>
-                            </div>
                         </div>
                     </div>
 
@@ -306,17 +293,33 @@
 
                         <div class="scr-search-group">
                             <div class="scr-section-title">🔍 Search Scripture</div>
-                            <input type="text" id="bible-book" class="scr-input" placeholder="Book Name..."
-                                list="bible-books-list" onkeydown="if(event.key==='Enter') searchScripture()">
-                            <datalist id="bible-books-list"></datalist>
-                            <div class="scr-input-row">
-                                <input type="number" id="bible-chapter" class="scr-input" placeholder="Chapter" min="1"
-                                    oninput="if(this.value !== '' && this.value < 1) this.value = 1;"
-                                    onkeydown="if(event.key==='Enter') searchScripture()">
-                                <input type="number" id="bible-verse" class="scr-input" placeholder="Verse" min="1"
-                                    oninput="if(this.value !== '' && this.value < 1) this.value = 1;"
+                            <div class="scr-search-single-row">
+                                <input type="text" id="bible-search-input" class="scr-input"
+                                    placeholder="Cth: Mat 1:1, 1Pet 2 10..." list="bible-books-list" autocomplete="off"
                                     onkeydown="if(event.key==='Enter') searchScripture()">
                                 <button class="btn-scr-search-new" onclick="searchScripture()">SHOW</button>
+                            </div>
+                            <datalist id="bible-books-list"></datalist>
+                            <!-- Hidden inputs for backward compatibility -->
+                            <input type="hidden" id="bible-book">
+                            <input type="hidden" id="bible-chapter">
+                            <input type="hidden" id="bible-verse">
+                            <div class="scr-add-sched-row">
+                                <button class="btn-scr-add-sched" onclick="addScriptureToSchedule()">＋ ADD TO
+                                    SCHEDULE</button>
+                            </div>
+                        </div>
+
+                        <!-- 🕒 SCRIPTURE HISTORY GROUP -->
+                        <div class="scr-history-group">
+                            <div class="scr-section-title scr-history-title-row">
+                                <span>🕒 History</span>
+                                <button id="btn-clear-scr-history" class="btn-scr-clear-history"
+                                    onclick="clearScriptureHistory()" title="Clear today's history"
+                                    style="display: none;">🗑️ Clear</button>
+                            </div>
+                            <div id="scr-history-list" class="scr-history-list">
+                                <div class="scr-history-empty">Belum ada riwayat hari ini</div>
                             </div>
                         </div>
 
@@ -341,12 +344,14 @@
                     </div>
 
                     <!-- KANAN: grid container ayat -->
-                    <div class="scr-main-view">
+                    <div class="scr-main-view"
+                        onclick="if(typeof setNavigationTarget==='function')setNavigationTarget('scripture')">
                         <div class="bg-view-header">
                             <span class="bg-active-name text-accent">📋 Verse List</span>
-                            <div class="bg-view-hint">Click verse to show on screen</div>
+                            <div class="bg-view-hint">Click verse or use Left/Right/Up/Down to show on screen</div>
                         </div>
-                        <div id="scripture-grid-container" class="scripture-grid-container scr-grid"></div>
+                        <div id="scripture-grid-container" class="scripture-grid-container scr-grid"
+                            onclick="if(typeof setNavigationTarget==='function')setNavigationTarget('scripture')"></div>
                     </div>
 
                 </div>
@@ -945,6 +950,111 @@
                     </div>
                 </div>
 
+                <!-- PANEL PLUGIN -->
+                <div id="plugin-lib-panel" class="plugin-lib-panel" style="display: none;">
+                    <!-- KIRI: Folder Sidebar -->
+                    <div class="plugin-folder-sidebar">
+                        <div class="plugin-sidebar-actions">
+                            <button class="btn-new-plugin" onclick="openNewPluginModal()">
+                                <span>＋</span> CREATE PLUGIN
+                            </button>
+                            <button class="btn-new-folder" onclick="createPluginFolderUI()">
+                                <span>📁</span> NEW FOLDER
+                            </button>
+                        </div>
+                        <div id="plugin-folder-list" class="plugin-folder-list"></div>
+                    </div>
+
+                    <!-- KANAN: Presets Grid -->
+                    <div class="plugin-main-view">
+                        <div class="plugin-view-header">
+                            <div class="plugin-header-title">
+                                <span>🧩</span>
+                                <span>PLUGINS &amp; OVERLAYS</span>
+                            </div>
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <div class="plugin-header-search">
+                                    <input type="text" id="plugin-search-input" placeholder="🔍 Cari plugin..." oninput="filterPluginPresets(this.value)">
+                                </div>
+                                <button class="btn-tb btn-new-plugin-header" onclick="openNewPluginModal()" title="Create New Preset">
+                                    ＋ NEW PRESET
+                                </button>
+                                <button class="btn-tb btn-tb-danger" onclick="clearAllActivePlugins()" title="Clear all active plugins on all screens">
+                                    ⏹ CLEAR ALL LIVE
+                                </button>
+                            </div>
+                        </div>
+                        <div id="plugin-grid-container" class="plugin-grid-container"></div>
+                    </div>
+                </div>
+
+                <!-- PANEL EXTERNAL: ShowLyrics Media Sender & PPT Remote -->
+                <div id="ext-lib-panel" class="ext-lib-panel" style="display: none;">
+                    <!-- LEFT SIDEBAR: Sources List -->
+                    <div class="ext-sources-sidebar">
+                        <div class="ext-sidebar-header">EXTERNAL SOURCES</div>
+                        <div class="ext-source-item active" id="ext-source-media-sender" onclick="selectExternalSource('media-sender')">
+                            <span class="ext-source-icon">📡</span>
+                            <div class="ext-source-info">
+                                <div class="ext-source-title">Media Sender</div>
+                                <div class="ext-source-sub" id="ext-source-ms-sub">Video • Photo • Audio</div>
+                            </div>
+                            <span class="ext-status-dot" id="ext-ms-status-dot"></span>
+                        </div>
+                        <div class="ext-source-item" id="ext-source-ppt-remote" onclick="selectExternalSource('ppt-remote')">
+                            <span class="ext-source-icon">📊</span>
+                            <div class="ext-source-info">
+                                <div class="ext-source-title">PPT Remote</div>
+                                <div class="ext-source-sub" id="ext-source-ppt-sub">PowerPoint Presentation</div>
+                            </div>
+                            <span class="ext-status-dot" id="ext-ppt-status-dot"></span>
+                        </div>
+                    </div>
+
+                    <!-- RIGHT CONTENT VIEW -->
+                    <div class="ext-content-view">
+                        <!-- VIEW 1: MEDIA SENDER (PURE RECEIVER) -->
+                        <div id="ext-view-media-sender" class="ext-sub-view">
+                            <div class="ext-view-header">
+                                <div class="ext-header-left">
+                                    <span class="ext-header-icon">📡</span>
+                                    <div class="ext-header-title">MEDIA SENDER</div>
+                                </div>
+                                <div class="ext-header-actions">
+                                    <input type="text" id="manual-ext-sender-ip" class="ext-header-input" placeholder="IP:port or localhost" onkeydown="if(event.key==='Enter') connectManualExternalSender()">
+                                    <button class="btn-ext-connect" onclick="connectManualExternalSender()">CONNECT</button>
+                                    <button class="btn-ext-action" onclick="refreshExternalSenders()" title="Scan Local Network">🔄 SCAN</button>
+                                </div>
+                            </div>
+
+                            <!-- Sender Devices Grid -->
+                            <div id="ext-sender-device-list" class="ext-device-list">
+                                <div class="ext-empty-placeholder">No sender devices found</div>
+                            </div>
+                        </div>
+
+                        <!-- VIEW 2: PPT REMOTE (PowerPoint Controller) -->
+                        <div id="ext-view-ppt-remote" class="ext-sub-view" style="display: none;">
+                            <div class="ext-view-header">
+                                <div class="ext-header-left">
+                                    <span class="ext-header-icon">📊</span>
+                                    <div class="ext-header-title">PPT REMOTE</div>
+                                </div>
+                                <div class="ext-header-actions">
+                                    <input type="text" id="manual-ppt-sender-ip" class="ext-header-input" placeholder="IP or tunnel URL" onkeydown="if(event.key==='Enter') connectManualPPTSender()">
+                                    <button class="btn-ext-connect" onclick="connectManualPPTSender()">CONNECT</button>
+                                    <button class="btn-ext-action" onclick="refreshPPTSenders()" title="Scan for PPT Senders">🔄 SCAN</button>
+                                </div>
+                            </div>
+
+                            <!-- PPT Sender Grid -->
+                            <div id="ext-ppt-device-list" class="ext-device-list">
+                                <div class="ext-empty-placeholder">No sender devices found</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -1038,6 +1148,8 @@
                     </svg>
                     <span>PPTX</span>
                 </button>
+
+
             </div>
 
         </div>
@@ -1106,26 +1218,57 @@
             <div style="font-size: 0.65em; color: #888; margin-top: 8px;">Font, Animation, Motion, Color & Effects</div>
         </div>
 
-        <div class="control-group"
-            style="background: #111; border: 1px solid #ffc107; padding: 10px; border-radius: 6px; margin-bottom: 20px;">
-            <label style="color: #ffc107; font-weight: bold; margin-bottom: 10px; display: block;">🌍 BILINGUAL
-                FONT</label>
-            <div style="display: flex; gap: 15px; align-items: center;">
-                <div style="flex: 1;">
-                    <label style="color: #aaa; font-size: 0.7em; margin-bottom: 5px;">Sub-Text Size: <span
-                            id="val-sub-size" style="color:#fff;">0.6em</span></label>
+        <div class="control-group bilingual-font-panel">
+            <label class="bilingual-font-label">&#127757; BILINGUAL FONT</label>
+
+            <div class="bilingual-font-row">
+                <div class="bilingual-font-col">
+                    <label class="bilingual-font-sublabel">Sub-Text Size: <span id="val-sub-size">0.6em</span></label>
                     <input type="range" id="sub-size-input" min="0.3" max="1.0" step="0.05" value="0.6"
-                        oninput="document.getElementById('val-sub-size').innerText=this.value+'em'; updateSettings()">
+                        oninput="onSubSizeInput(this)">
                 </div>
-                <div style="flex: 0 0 60px;">
-                    <label style="color: #aaa; font-size: 0.7em; margin-bottom: 5px;">Color</label>
-                    <input type="color" id="sub-color-input" value="#ffc107"
-                        style="height: 30px; width: 100%; padding: 0; cursor: pointer;" onchange="updateSettings()">
+                <div class="bilingual-font-color-col">
+                    <label class="bilingual-font-sublabel">Color</label>
+                    <input type="color" id="sub-color-input" value="#ffc107" class="bilingual-color-picker"
+                        onchange="updateSettings()">
                 </div>
             </div>
-            <small style="color: #888; font-size: 0.65em; display: block; margin-top: 8px;">*Use brackets <b>()</b> to
-                separate languages. (Example: Father You Are Good)</small>
+
+            <div class="bilingual-font-row bilingual-style-row">
+                <label class="bilingual-font-sublabel">Sub-Text Style</label>
+                <div class="bilingual-style-controls">
+                    <button id="sub-btn-bold" class="te-btn bilingual-style-btn"
+                        onclick="toggleSubFormat('bold')">B</button>
+                    <button id="sub-btn-italic" class="te-btn bilingual-style-btn bilingual-btn-italic"
+                        onclick="toggleSubFormat('italic')">I</button>
+                    <button id="sub-btn-underline" class="te-btn bilingual-style-btn bilingual-btn-underline"
+                        onclick="toggleSubFormat('underline')">U</button>
+                </div>
+            </div>
+
+            <div class="bilingual-font-row bilingual-font-sec-row">
+                <div class="bilingual-font-col">
+                    <div class="bilingual-font-header">
+                        <label class="bilingual-font-sublabel">Sub-Text Font</label>
+                        <label class="bilingual-follow-label">
+                            <input type="checkbox" id="sub-font-follow" class="bilingual-follow-check"
+                                onchange="handleSubFontFollowChange()" checked>
+                            Follow Main Font
+                        </label>
+                    </div>
+                    <div class="bilingual-font-picker-wrap">
+                        <input type="text" id="sub-font-input" class="te-input bilingual-font-input"
+                            list="sub-font-datalist" placeholder="Type font name..." oninput="updateSettings()"
+                            disabled>
+                        <datalist id="sub-font-datalist"></datalist>
+                    </div>
+                </div>
+            </div>
+
+            <small class="bilingual-hint">*Use brackets <b>()</b> to separate languages. (Example: Father You Are
+                Good)</small>
         </div>
+
 
 
     </div>
@@ -1340,63 +1483,102 @@
                         <label
                             style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">📍
                             POSITION & ALIGNMENT</label>
-                        <div style="display: flex; gap: 10px; align-items: center;">
-                            <div
-                                style="display: flex; background: #111; border: 1px solid #444; border-radius: 6px; overflow: hidden; flex: 1;">
-                                <button id="btn-lt-top" class="preset-btn"
-                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0;"
-                                    onclick="setLTPresetUI('top')">TOP</button>
-                                <button id="btn-lt-center" class="preset-btn"
-                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0;"
-                                    onclick="setLTPresetUI('center')">CENTER</button>
-                                <button id="btn-lt-bottom" class="preset-btn"
-                                    style="border: none; border-radius: 0; margin: 0; background: #007bff; color: white; padding: 8px 0;"
-                                    onclick="setLTPresetUI('bottom')">BOTTOM</button>
+                        <div style="display: flex; gap: 8px; align-items: flex-start;">
+                            <div style="flex: 1.1;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">POSITION</label>
+                                <div
+                                    style="display: flex; background: #111; border: 1px solid #444; border-radius: 4px; overflow: hidden; height: 35px;">
+                                    <button id="btn-lt-top" class="preset-btn"
+                                        style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 0; flex: 1; height: 100%; font-size: 0.75em;"
+                                        onclick="setLTPresetUI('top')">TOP</button>
+                                    <button id="btn-lt-center" class="preset-btn"
+                                        style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 0; flex: 1; height: 100%; font-size: 0.75em;"
+                                        onclick="setLTPresetUI('center')">CENTER</button>
+                                    <button id="btn-lt-bottom" class="preset-btn"
+                                        style="border: none; border-radius: 0; margin: 0; background: #007bff; color: white; padding: 0; flex: 1; height: 100%; font-size: 0.75em;"
+                                        onclick="setLTPresetUI('bottom')">BOTTOM</button>
+                                </div>
                             </div>
 
-                            <div
-                                style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 6px; overflow: hidden;">
-                                <button class="lt-btn-adjust"
-                                    style="border: none; background: #333; width: 32px; height: 35px; border-radius: 0;"
-                                    onclick="nudgeLT(10)">▲</button>
-                                <input type="number" id="lt-margin"
-                                    style="width: 50px; height: 35px; padding: 0; text-align: center; background: transparent; border: none; color: white; font-weight: bold;"
-                                    value="50" onchange="markLtCustom(); sendLTConfig()">
-                                <button class="lt-btn-adjust"
-                                    style="border: none; background: #333; width: 32px; height: 35px; border-left: 1px solid #444; border-radius: 0;"
-                                    onclick="nudgeLT(-10)">▼</button>
+                            <div style="flex: none;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold; text-align: center;">MARGIN</label>
+                                <div
+                                    style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; overflow: hidden; height: 35px;">
+                                    <button class="lt-btn-adjust"
+                                        style="border: none; background: #333; width: 32px; height: 35px; border-radius: 0;"
+                                        onclick="nudgeLT(10)">▲</button>
+                                    <input type="number" id="lt-margin"
+                                        style="width: 50px; height: 35px; padding: 0; text-align: center; background: transparent; border: none; color: white; font-weight: bold;"
+                                        value="50" onchange="markLtCustom(); sendLTConfig()">
+                                    <button class="lt-btn-adjust"
+                                        style="border: none; background: #333; width: 32px; height: 35px; border-left: 1px solid #444; border-radius: 0;"
+                                        onclick="nudgeLT(-10)">▼</button>
+                                </div>
+                            </div>
+
+                            <div style="flex: 1.2;">
+                                <div
+                                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <label style="color: #888; font-size: 0.7em; font-weight: bold; margin: 0;">LINE
+                                        HEIGHT</label>
+                                    <span id="lt-line-height-val"
+                                        style="color: #00e5ff; font-size: 0.75em; font-weight: bold; font-family: monospace;">1.20</span>
+                                </div>
+                                <div
+                                    style="display: flex; align-items: center; height: 35px; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 8px; box-sizing: border-box;">
+                                    <input type="range" id="lt-line-height" min="0.5" max="2.0" step="0.05" value="1.2"
+                                        class="te-slider" style="width: 100%; margin: 0; cursor: pointer;"
+                                        oninput="handleLTLineHeightInput(this.value)"
+                                        onchange="handleLTLineHeightChange(this.value)">
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <hr style="border: none; border-top: 1px dashed #333; margin: 0;">
-
-                    <div>
-                        <label
-                            style="color: #aaa; font-size: 0.75em; margin-bottom: 8px; display: block; font-weight: bold;">🔤
-                            TEXT ALIGN & H-PADDING (Left/Right Align)</label>
-                        <div style="display: flex; gap: 10px; align-items: center;">
-                            <div
-                                style="display: flex; background: #111; border: 1px solid #444; border-radius: 6px; overflow: hidden; flex: 1;">
-                                <button id="btn-lt-align-left" class="preset-btn"
-                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0;"
-                                    onclick="setLTAlign('left')">LEFT</button>
-                                <button id="btn-lt-align-center" class="preset-btn"
-                                    style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 8px 0; background: #007bff; color: white;"
-                                    onclick="setLTAlign('center')">CENTER</button>
-                                <button id="btn-lt-align-right" class="preset-btn"
-                                    style="border: none; border-radius: 0; margin: 0; padding: 8px 0;"
-                                    onclick="setLTAlign('right')">RIGHT</button>
+                        <div style="display: flex; gap: 8px; align-items: flex-start; margin-top: 10px;">
+                            <div style="flex: 1.3;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">TEXT
+                                    ALIGN</label>
+                                <div id="lt-align-container"
+                                    style="display: flex; background: #111; border: 1px solid #444; border-radius: 4px; overflow: hidden; height: 35px;">
+                                    <button id="btn-lt-align-left" class="preset-btn"
+                                        style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 0; flex: 1; height: 100%; font-size: 0.75em;"
+                                        onclick="setLTAlign('left')">LEFT</button>
+                                    <button id="btn-lt-align-center" class="preset-btn"
+                                        style="border: none; border-radius: 0; border-right: 1px solid #444; margin: 0; padding: 0; flex: 1; height: 100%; background: #007bff; color: white; font-size: 0.75em;"
+                                        onclick="setLTAlign('center')">CENTER</button>
+                                    <button id="btn-lt-align-right" class="preset-btn"
+                                        style="border: none; border-radius: 0; margin: 0; padding: 0; flex: 1; height: 100%; font-size: 0.75em;"
+                                        onclick="setLTAlign('right')">RIGHT</button>
+                                </div>
                             </div>
 
-                            <div
-                                style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 6px; overflow: hidden; height: 35px;">
-                                <span
-                                    style="font-size: 0.75em; color: #666; padding: 0 5px 0 10px; font-weight: bold;">PAD:</span>
-                                <input type="number" id="lt-pad-x"
-                                    style="width: 50px; height: 100%; padding: 0; text-align: center; background: transparent; border: none; color: white; font-weight: bold; outline: none;"
-                                    value="50" onchange="markLtCustom(); sendLTConfig()">
-                                <span style="font-size: 0.75em; color: #666; padding-right: 10px;">px</span>
+                            <div style="flex: 0.85;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">TEXT
+                                    CASE</label>
+                                <select id="lt-text-transform" class="compact-input"
+                                    style="font-size: 0.85em; padding: 0 4px; border: 1px solid #444; width: 100%; height: 35px; background: #222; color: #fff; outline: none; cursor: pointer; border-radius: 4px;"
+                                    onchange="markLtCustom(); sendLTConfig()">
+                                    <option value="none">None</option>
+                                    <option value="capitalize">Aa</option>
+                                    <option value="uppercase">AA</option>
+                                    <option value="lowercase">aa</option>
+                                </select>
+                            </div>
+
+                            <div style="flex: 0.85;">
+                                <label
+                                    style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">H-PAD</label>
+                                <div id="lt-pad-x-container"
+                                    style="display: flex; align-items: center; background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 4px; height: 35px;">
+                                    <input type="number" id="lt-pad-x" class="compact-input"
+                                        style="border: none; padding: 0; background: transparent; text-align: center; font-size: 0.85em; width: 100%; outline: none; color: white; font-weight: bold;"
+                                        value="50" onchange="markLtCustom(); sendLTConfig()">
+                                    <span style="font-size: 0.7em; color: #666; padding-right: 2px;">px</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1492,14 +1674,14 @@
                                     <span style="color: #666; font-size: 0.8em; margin-left: 3px;">%</span>
                                 </div>
                             </div>
-                            <div style="flex: 1;">
+                            <div id="lt-banner-color-container" style="flex: 1;">
                                 <label
                                     style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold; text-align: center;">COLOR</label>
                                 <input type="color" id="lt-banner-color" value="#000000" title="Banner Color"
                                     style="width: 100%; height: 33px; padding: 0; border: 1px solid #444; border-radius: 4px; cursor: pointer;"
                                     onchange="markLtCustom(); sendLTConfig()">
                             </div>
-                            <div style="flex: 1.5;">
+                            <div id="lt-banner-opacity-container" style="flex: 1.5;">
                                 <label
                                     style="color: #888; font-size: 0.7em; margin-bottom: 4px; display: block; font-weight: bold;">OPACITY</label>
                                 <div
@@ -1607,12 +1789,15 @@
                     <div style="flex:1">
                         <label>Max Text Size</label>
                         <div style="display:flex; gap:5px; align-items:center;">
-                            <input type="number" id="fb-curr-size" value="250" onchange="markFbCustom(); sendFBConfig()"
-                                style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            <div id="fb-curr-size-container" style="display:inline-block;">
+                                <input type="number" id="fb-curr-size" value="250"
+                                    onchange="markFbCustom(); sendFBConfig()"
+                                    style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            </div>
                             <label
                                 style="font-size: 0.8em; color: #fff; display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; user-select: none;">
-                                <input type="checkbox" id="fb-curr-auto" onchange="markFbCustom(); sendFBConfig()"
-                                    checked> AUTO
+                                <input type="checkbox" id="fb-curr-auto"
+                                    onchange="toggleFBAutoUI(); markFbCustom(); sendFBConfig()" checked> AUTO
                             </label>
                         </div>
                     </div>
@@ -1623,21 +1808,39 @@
                     <div style="flex:1">
                         <label>Max Next Size (px)</label>
                         <div style="display:flex; gap:5px; align-items:center;">
-                            <input type="number" id="fb-next-size" value="100" onchange="markFbCustom(); sendFBConfig()"
-                                style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            <div id="fb-next-size-container" style="display:inline-block;">
+                                <input type="number" id="fb-next-size" value="100"
+                                    onchange="markFbCustom(); sendFBConfig()"
+                                    style="background: #222; color: #fff; border: 1px solid #444; padding: 5px; border-radius: 4px; width: 70px;">
+                            </div>
                             <label
                                 style="font-size: 0.8em; color: #fff; display: flex; align-items: center; gap: 3px; cursor: pointer; margin: 0; user-select: none;">
-                                <input type="checkbox" id="fb-next-auto" onchange="markFbCustom(); sendFBConfig()"
-                                    checked> AUTO
+                                <input type="checkbox" id="fb-next-auto"
+                                    onchange="toggleFBAutoUI(); markFbCustom(); sendFBConfig()" checked> AUTO
                             </label>
                         </div>
                     </div>
                     <div style="flex:1"><label>Color</label><input type="color" id="fb-next-color" value="#888888"
                             style="height:30px; width:100%" onchange="markFbCustom(); sendFBConfig()"></div>
                 </div>
-                <label>Background Color</label>
-                <input type="color" id="fb-bg-color" value="#000000" style="width:100%; height:30px;"
-                    onchange="markFbCustom(); sendFBConfig()">
+                <div class="lt-control-row">
+                    <div style="flex:1">
+                        <label>Background Color</label>
+                        <input type="color" id="fb-bg-color" value="#000000" style="width:100%; height:30px;"
+                            onchange="markFbCustom(); sendFBConfig()">
+                    </div>
+                    <div style="flex:1">
+                        <label>Text Case</label>
+                        <select id="fb-text-transform"
+                            style="width:100%; height:30px; background:#222; color:#fff; border:1px solid #444; border-radius:4px; padding:0 5px; font-size:0.85em; outline:none; cursor:pointer;"
+                            onchange="markFbCustom(); sendFBConfig()">
+                            <option value="none">None</option>
+                            <option value="capitalize">Aa</option>
+                            <option value="uppercase">AA</option>
+                            <option value="lowercase">aa</option>
+                        </select>
+                    </div>
+                </div>
 
                 <hr style="border-color: #333; margin: 15px 0;">
 
@@ -1712,7 +1915,8 @@
                                     <label
                                         style="font-size: 0.65em; color: #888; display: block; margin-bottom: 2px; font-weight: bold;">TITLE
                                         (PX)</label>
-                                    <div style="display: flex; gap: 4px; align-items: center;">
+                                    <div id="rundown-mini-title-container"
+                                        style="display: flex; gap: 4px; align-items: center;">
                                         <input type="number" id="rundown-mini-title-size" value="80" min="10" max="300"
                                             class="compact-input"
                                             style="width: 55px; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
@@ -1747,7 +1951,8 @@
                                     <label
                                         style="font-size: 0.65em; color: #888; display: block; margin-bottom: 2px; font-weight: bold;">TITLE
                                         (PX)</label>
-                                    <div style="display: flex; gap: 4px; align-items: center;">
+                                    <div id="rundown-full-title-container"
+                                        style="display: flex; gap: 4px; align-items: center;">
                                         <input type="number" id="rundown-full-title-size" value="190" min="10" max="300"
                                             class="compact-input"
                                             style="width: 55px; font-size: 0.85em; padding: 6px; border: 1px solid #444; background: #222; color: #fff;"
@@ -1930,7 +2135,7 @@
         </div>
     </div>
 
-    <div id="dialog-overlay" class="modal-overlay" style="z-index: 10005; display: none;">
+    <div id="dialog-overlay" class="modal-overlay" style="z-index: 200000; display: none;">
         <div class="modal-box" style="width: 400px; border: 2px solid #00e5ff; background: #1a1a1a;">
             <div class="modal-header">
                 <span class="modal-title" id="dialog-title" style="color: #00e5ff;">INFO</span>
@@ -2177,8 +2382,10 @@
                             </div>
                             <div class="te-control">
                                 <label class="te-label">TRANSITION ANIMATION</label>
-                                <select id="trans-input" class="te-select" onchange="updateTextPreview()">
+                                <select id="trans-input" class="te-select"
+                                    onchange="updateTextPreview(); handleTransitionChange()">
                                     <optgroup label="Standard">
+                                        <option value="cut">&#9889; CUT (Instant)</option>
                                         <option value="fade">Fade (Standard)</option>
                                         <option value="blur" selected>Cinematic Blur (Smooth)</option>
                                         <option value="mask">Mask Rise (Clean)</option>
@@ -2236,15 +2443,10 @@
                                         <option value="slash">Ninja Slash</option>
                                         <option value="terminal">Terminal Typewriter</option>
                                         <option value="shockwave">Shockwave Snap</option>
-
                                         <option value="overdrive">Overdrive Slam</option>
-
                                         <option value="nuke">Nuke Implode</option>
-
                                         <option value="voltage">Voltage Strike</option>
-
                                         <option value="riot">Riot Spin</option>
-
                                     </optgroup>
 
                                     <optgroup label="Praise Random Letter Pro">
@@ -2371,6 +2573,12 @@
                                         id="val-font-size">96px</span></label>
                                 <input type="range" id="font-size-input" class="te-slider" min="30" max="250" step="2"
                                     value="96" oninput="updateTextPreview()">
+                            </div>
+                            <div class="te-control">
+                                <label class="te-label">LINE HEIGHT <span class="te-val"
+                                        id="val-line-height">1.0</span></label>
+                                <input type="range" id="line-height-input" class="te-slider" min="0.8" max="3.0"
+                                    step="0.05" value="1.0" oninput="updateTextPreview()">
                             </div>
                             <div class="te-control">
                                 <label class="te-label">TEXT WRAP <span class="te-val"
@@ -2538,6 +2746,83 @@
                 <button class="close-btn" onclick="safeCloseModal('settings-modal')">✖</button>
             </div>
 
+
+            <div class="control-group" style="margin-top: 15px;">
+                <label
+                    style="color: #aaa; font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🔊 AUDIO ROUTING</span>
+                    <small style="color:#555; font-size:0.65em; font-weight:normal;">Routes audio output &amp;
+                        monitor</small>
+                </label>
+
+                <!-- OUTPUT AUDIO -->
+                <div style="margin-bottom: 10px;">
+                    <label
+                        style="color:#888; font-size:0.7em; display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">🎤
+                        Output Audio (Jemaat)</label>
+                    <select id="audio-output-select" class="compact-input"
+                        style="width:100%; font-size:0.9em; padding:8px; background:#1e1e24; color:#fff; border:1px solid rgba(255,255,255,0.12); border-radius:6px; cursor:pointer;"
+                        onchange="saveAudioSettings()">
+                        <option value="default">🔊 Default System Audio</option>
+                    </select>
+                    <small style="color:#555; font-size:0.65em; display:block; margin-top:3px;">Audio yang didengar
+                        jemaat saat live output aktif.</small>
+                </div>
+
+                <!-- MONITOR AUDIO TOGGLE -->
+                <div
+                    style="display:flex; align-items:center; gap:8px; margin-bottom:6px; padding:8px 10px; background:rgba(255,255,255,0.03); border-radius:6px; border:1px solid rgba(255,255,255,0.06);">
+                    <input type="checkbox" id="audio-monitor-toggle"
+                        style="width:16px; height:16px; cursor:pointer; accent-color:#00e5ff;"
+                        onchange="onAudioMonitorToggle()">
+                    <div>
+                        <label for="audio-monitor-toggle"
+                            style="color:#ccc; font-size:0.8em; font-weight:bold; cursor:pointer; display:block;">🎧
+                            Monitor Audio (Operator Preview)</label>
+                        <small style="color:#555; font-size:0.65em;">Preview audio untuk operator — termasuk preview
+                            library &amp; live output.</small>
+                    </div>
+                </div>
+
+                <!-- MONITOR DEVICE (shown only when toggle is ON) -->
+                <div id="audio-monitor-device-row" style="display:none; margin-bottom:4px;">
+                    <label
+                        style="color:#888; font-size:0.7em; display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Monitor
+                        Device</label>
+                    <select id="audio-monitor-select" class="compact-input"
+                        style="width:100%; font-size:0.9em; padding:8px; background:#1e1e24; color:#fff; border:1px solid rgba(0,229,255,0.2); border-radius:6px; cursor:pointer;"
+                        onchange="saveAudioSettings()">
+                        <option value="default">🔊 Default System Audio</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-group" style="margin-top: 15px;">
+                <label
+                    style="color: #aaa; font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🔍 UI ZOOM MODE</span>
+                    <button onclick="resetUIScale()" title="Reset to 100%"
+                        style="background: transparent; border: 1px solid #444; color: #888; padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 0.7em; line-height: 1.6;">RESET
+                        100%</button>
+                </label>
+
+                <select id="ui-scale-select" class="compact-input"
+                    style="width: 100%; font-size: 0.9em; padding: 8px; background: #1e1e24; color: #fff; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; cursor: pointer;"
+                    onchange="onUIScaleChange(this.value)">
+                    <option value="0.6">60%</option>
+                    <option value="0.75">75%</option>
+                    <option value="0.9">90%</option>
+                    <option value="1" selected>100% — Default</option>
+                    <option value="1.1">110%</option>
+                    <option value="1.25">125%</option>
+                    <option value="1.5">150%</option>
+                </select>
+                <small style="color: #888; font-size: 0.65em; display: block; margin-top: 5px;">
+                    Scale the Controller UI. Saved automatically — applied on next launch. Does not affect Projector
+                    Output.
+                </small>
+            </div>
+
             <div class="control-group" style="margin-top: 15px;">
                 <label style="color: #aaa; font-weight: bold;">Video Crossfade Transition <span id="val-bg-trans"
                         style="color: #00e5ff; margin-left: 5px;">0.5s</span></label>
@@ -2567,6 +2852,127 @@
                     <option value="cover">FILL (Fill screen, auto-crop)</option>
                     <option value="fill">STRETCH (Force full, stretch ratio)</option>
                 </select>
+            </div>
+
+            <div class="control-group win-bg-color-group">
+                <label>🎨 BACKGROUND COLOR</label>
+
+                <!-- Output Display Selector -->
+                <div style="margin-bottom: 8px;">
+                    <span
+                        style="font-size: 0.72em; color: #888; display: block; margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Select
+                        Output:</span>
+                    <select id="bg-target-select" class="compact-input" style="width: 100%;"
+                        onchange="onBgTargetChange(this.value)">
+                        <option value="main" selected>🖥️ Main Display (Projector / Screen 1)</option>
+                        <option value="lt">📺 Lower Third Output (Overlay / Screen 2)</option>
+                    </select>
+                </div>
+
+                <!-- Active target label + hex badge -->
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                    <span id="bg-target-badge"
+                        style="font-size: 0.72em; font-weight: bold; color: #00e5ff; text-transform: uppercase; letter-spacing: 0.5px;">🖥️
+                        MAIN DISPLAY</span>
+                    <small id="bg-current-hex-badge"
+                        style="font-size: 0.72em; color: #aaa; font-family: monospace; background: #1a1a1a; padding: 2px 6px; border-radius: 3px;">#000000</small>
+                </div>
+
+                <!-- Color picker + hex input row -->
+                <div class="win-bg-color-inputs">
+                    <input type="color" id="active-bg-color-picker" value="#000000" class="win-bg-color-picker"
+                        oninput="onActiveBgColorInput(this.value, false)"
+                        onchange="onActiveBgColorInput(this.value, true)">
+                    <input type="text" id="active-bg-color-hex" value="#000000" placeholder="#000000" maxlength="7"
+                        class="compact-input win-bg-color-hex" oninput="onActiveBgColorInput(this.value, false)"
+                        onchange="onActiveBgColorInput(this.value, true)">
+                </div>
+
+                <!-- Preset buttons -->
+                <div class="win-bg-color-presets">
+                    <button type="button" onclick="onActiveBgColorInput('#000000', true)"
+                        class="win-bg-preset-btn preset-black" title="Black (#000000)">Black</button>
+                    <button type="button" onclick="onActiveBgColorInput('#003366', true)"
+                        class="win-bg-preset-btn preset-blue" title="Navy Blue (#003366)">Navy</button>
+                    <button type="button" onclick="onActiveBgColorInput('#00FF00', true)"
+                        class="win-bg-preset-btn preset-green" title="Green Screen (#00FF00)">Green</button>
+                    <button type="button" onclick="onActiveBgColorInput('#0000FF', true)"
+                        class="win-bg-preset-btn preset-bluescreen" title="Blue Screen (#0000FF)">Blue</button>
+                    <button type="button" onclick="onActiveBgColorInput('#FF0000', true)"
+                        class="win-bg-preset-btn preset-red" title="Red (#FF0000)">Red</button>
+                    <button type="button" onclick="onActiveBgColorInput('#808080', true)"
+                        class="win-bg-preset-btn preset-gray" title="Gray (#808080)">Gray</button>
+                </div>
+
+                <!-- Hidden inputs for backward compatibility -->
+                <div style="display:none;">
+                    <input type="color" id="main-bg-color-picker">
+                    <input type="text" id="main-bg-color-hex">
+                    <input type="color" id="lt-bg-color-picker">
+                    <input type="text" id="lt-bg-color-hex">
+                </div>
+
+                <small style="color: #888; font-size: 0.65em; display: block; margin-top: 8px;">
+                    Each output stores its own color. Foldback / Stage display is not affected.
+                </small>
+            </div>
+
+            <!-- ═══════════════════════════════════════════════════════════ -->
+            <!-- PERFORMANCE & COMPATIBILITY — V.1.35.4                      -->
+            <!-- Fix pink overlay + GPU compositing layer toggle              -->
+            <!-- ═══════════════════════════════════════════════════════════ -->
+            <div class="control-group" style="margin-top: 15px;">
+                <label style="color: #aaa; font-weight: bold; margin-bottom: 8px; display: block;">⚡ PERFORMANCE &amp;
+                    COMPATIBILITY</label>
+
+                <!-- Toggle 1: GPU Compatibility Mode -->
+                <div class="compat-toggle-card" id="compat-card-gpu-mode">
+                    <div class="compat-toggle-info">
+                        <div class="compat-toggle-title">
+                            <span class="compat-toggle-icon">🎨</span>
+                            GPU Compatibility Mode
+                        </div>
+                        <div class="compat-toggle-desc">
+                            Enable if video displays a <span style="color: #ff5555; font-weight: 600;">pink
+                                overlay</span>.
+                            Disables hardware video overlay (DirectComposition).
+                        </div>
+                        <div class="compat-toggle-warn" id="compat-restart-warn" style="display:none;">
+                            <span>⚠️ This setting requires an <strong>app restart</strong> to take effect.</span>
+                            <button class="compat-restart-btn" onclick="doCompatRestart()">🔄 Restart Now</button>
+                        </div>
+                    </div>
+                    <label class="compat-switch">
+                        <input type="checkbox" id="toggle-gpu-compat-mode"
+                            onchange="onGpuCompatModeChange(this.checked)">
+                        <span class="compat-slider"></span>
+                    </label>
+                </div>
+
+                <!-- Toggle 2: Force GPU Compositing Layer -->
+                <div class="compat-toggle-card" id="compat-card-compositing">
+                    <div class="compat-toggle-info">
+                        <div class="compat-toggle-title">
+                            <span class="compat-toggle-icon">🔳</span>
+                            Force GPU Compositing Layer
+                        </div>
+                        <div class="compat-toggle-desc">
+                            Forces video rendering on a separate GPU layer.
+                            Try this <strong>first</strong> before enabling Compat Mode.
+                            Takes effect <strong>instantly</strong> without restart.
+                        </div>
+                    </div>
+                    <label class="compat-switch">
+                        <input type="checkbox" id="toggle-force-compositing"
+                            onchange="onForceCompositingChange(this.checked)">
+                        <span class="compat-slider"></span>
+                    </label>
+                </div>
+
+                <small style="color: #888; font-size: 0.65em; display: block; margin-top: 5px;">
+                    💡 Both toggles default to <strong>OFF</strong>. Enable only if experiencing video rendering issues
+                    on specific hardware.
+                </small>
             </div>
 
             <div class="control-group" style="margin-top: 15px;">
@@ -2748,9 +3154,37 @@
         </div>
     </div>
 
+    <!-- ALL SAVED SCHEDULES MODAL -->
+    <div id="all-schedules-modal" class="modal-overlay" style="z-index: 10005; display: none;">
+        <div class="modal-box"
+            style="width: min(680px, 95vw); max-height: 85vh; background: #101114; border: 1px solid #444; display: flex; flex-direction: column; padding: 0;">
+            <div class="modal-header"
+                style="padding: 12px 16px; background: #15161a; margin: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px 10px 0 0; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.25em;">📜</span>
+                    <div>
+                        <div class="modal-title" style="color: var(--accent); font-size: 0.95em; font-weight: bold; letter-spacing: 0.8px;">ALL SAVED SCHEDULES</div>
+                        <div style="font-size: 0.72em; color: #888; margin-top: 1px;">Manage and load your saved running orders</div>
+                    </div>
+                </div>
+                <button class="close-btn" onclick="closeAllSchedulesModal()">✖</button>
+            </div>
 
+            <div style="padding: 12px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: rgba(0, 0, 0, 0.2);">
+                <input type="text" id="modal-sched-search" class="sched-select" style="width: 100%; box-sizing: border-box; background: #18191e; border: 1px solid rgba(255, 255, 255, 0.12); padding: 8px 12px; font-size: 0.85em;" placeholder="🔍 Search schedules by name..." oninput="filterModalSchedules(this.value)">
+            </div>
 
+            <div id="modal-sched-list" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 220px; max-height: 52vh;">
+                <!-- Populated dynamically by JS -->
+            </div>
 
+            <div class="modal-sticky-footer"
+                style="background: #15161a; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.08); border-radius: 0 0 10px 10px; z-index: 10;">
+                <span id="modal-sched-count" style="font-size: 0.8em; color: #888;">Total: 0 schedules</span>
+                <button class="modal-footer-btn modal-footer-cancel" onclick="closeAllSchedulesModal()">CLOSE</button>
+            </div>
+        </div>
+    </div>
 
     <div id="ppt-preview-modal" class="ppt-preview-modal">
         <button class="ppt-preview-close" onclick="closePPTPreview()">✖</button>
@@ -2761,6 +3195,27 @@
             <button class="ppt-preview-btn" onclick="nextPPTPreview()">▶</button>
         </div>
         <div class="ppt-preview-counter" id="ppt-preview-counter">Slide 1 / X</div>
+    </div>
+
+    <div id="photo-preview-modal" class="photo-preview-modal" onclick="handlePhotoPreviewBackdropClick(event)">
+        <button class="photo-preview-close" onclick="closePhotoPreview()" title="Close (Esc)">✖</button>
+        <div id="photo-preview-title" class="photo-preview-header">Photo Preview</div>
+        <div class="photo-preview-content">
+            <button id="photo-preview-prev" class="photo-preview-btn" onclick="prevPhotoPreview()" title="Previous (←)">◀</button>
+            <div id="photo-preview-stage" class="photo-preview-stage">
+                <img id="photo-preview-img" class="photo-preview-img" src="" alt="Photo Preview" draggable="false">
+            </div>
+            <button id="photo-preview-next" class="photo-preview-btn" onclick="nextPhotoPreview()" title="Next (→)">▶</button>
+        </div>
+        <div class="photo-preview-footer">
+            <div class="photo-preview-counter" id="photo-preview-counter">Photo 1 / 1</div>
+            <div class="photo-zoom-controls">
+                <button type="button" class="photo-zoom-btn" onclick="zoomPhotoPreview(-0.25)" title="Zoom Out (-)">➖</button>
+                <span id="photo-zoom-label" class="photo-zoom-label">100%</span>
+                <button type="button" class="photo-zoom-btn" onclick="zoomPhotoPreview(0.25)" title="Zoom In (+)">➕</button>
+                <button type="button" class="photo-zoom-btn photo-zoom-reset" onclick="resetPhotoZoom()" title="Reset Zoom (0)">Reset</button>
+            </div>
+        </div>
     </div>
 
     <div id="preset-context-menu" class="custom-context-menu te-hidden">
@@ -2852,7 +3307,17 @@
                                         class="scr-color-picker"><input type="range" id="scr-disp-bg-opacity" min="0"
                                         max="1" step="0.1"></div>
                             </div>
-                            <div class="scr-row"><label>Box Position & Max Height (%):</label>
+                            <div class="scr-row" id="scr-disp-fs-pos-row"><label>Output Position (Fullscreen):</label>
+                                <div class="scr-style-btn-group" id="scr-disp-fs-pos-group">
+                                    <button type="button" id="scr-disp-fs-pos-top" class="scr-style-btn scr-pos-btn active"
+                                        onclick="setScrFullscreenPos('disp', 'top')" title="Top">Top</button>
+                                    <button type="button" id="scr-disp-fs-pos-center" class="scr-style-btn scr-pos-btn"
+                                        onclick="setScrFullscreenPos('disp', 'center')" title="Center">Center</button>
+                                    <button type="button" id="scr-disp-fs-pos-bottom" class="scr-style-btn scr-pos-btn"
+                                        onclick="setScrFullscreenPos('disp', 'bottom')" title="Bottom">Bottom</button>
+                                </div>
+                            </div>
+                            <div class="scr-row" id="scr-disp-overlay-pos-row"><label>Box Position & Max Height (%):</label>
                                 <div class="scr-flex-gap-5"><select id="scr-disp-overlay-pos" class="scr-input">
                                         <option value="bottom">Snap to Bottom</option>
                                         <option value="top">Snap to Top</option>
@@ -2862,6 +3327,12 @@
 
                         <div class="scr-setting-card">
                             <div class="scr-card-title">📌 Typography: Title & Verse Body</div>
+                            <div class="scr-row"><label>Title Position:</label>
+                                <select id="scr-disp-title-pos" class="scr-input">
+                                    <option value="top">Top (Above Verse)</option>
+                                    <option value="bottom">Bottom (Below Verse)</option>
+                                </select>
+                            </div>
                             <div class="scr-row"><label>Title Color & Alignment:</label>
                                 <div class="scr-flex-gap-5"><input type="color" id="scr-disp-title-color"
                                         class="scr-color-picker"><select id="scr-disp-title-align" class="scr-input">
@@ -2874,6 +3345,18 @@
                                 <div class="scr-flex-gap-5"><input type="text" id="scr-disp-title-font"
                                         list="scr-font-datalist" placeholder="Search Font..." class="scr-input"><input
                                         type="number" id="scr-disp-title-size" class="scr-input scr-input-sm"></div>
+                            </div>
+                            <div class="scr-row"><label>Title Style (B / I / U):</label>
+                                <div class="scr-style-btn-group">
+                                    <button type="button" id="scr-disp-title-bold" class="scr-style-btn"
+                                        onclick="toggleScrStyle('disp', 'title', 'bold')" title="Bold"><b>B</b></button>
+                                    <button type="button" id="scr-disp-title-italic" class="scr-style-btn"
+                                        onclick="toggleScrStyle('disp', 'title', 'italic')"
+                                        title="Italic"><i>I</i></button>
+                                    <button type="button" id="scr-disp-title-underline" class="scr-style-btn"
+                                        onclick="toggleScrStyle('disp', 'title', 'underline')"
+                                        title="Underline"><u>U</u></button>
+                                </div>
                             </div>
                             <div class="padding-explicit-grid">
                                 <div class="pad-label-group"><span class="pad-explicit-label">Title Pad Top</span><input
@@ -2897,10 +3380,29 @@
                                         class="scr-chk-wrap"><input type="checkbox" id="scr-disp-body-auto">
                                         AUTO</label></div>
                             </div>
+                            <div class="scr-row"><label>Verse Alignment:</label>
+                                <select id="scr-disp-body-align" class="scr-input">
+                                    <option value="left">Left Align</option>
+                                    <option value="center">Center Align</option>
+                                    <option value="right">Right Align</option>
+                                </select>
+                            </div>
                             <div class="scr-row"><label>Verse Font & Size (px):</label>
                                 <div class="scr-flex-gap-5"><input type="text" id="scr-disp-body-font"
                                         list="scr-font-datalist" placeholder="Search Font..." class="scr-input"><input
                                         type="number" id="scr-disp-body-size" class="scr-input scr-input-sm"></div>
+                            </div>
+                            <div class="scr-row"><label>Verse Style (B / I / U):</label>
+                                <div class="scr-style-btn-group">
+                                    <button type="button" id="scr-disp-body-bold" class="scr-style-btn"
+                                        onclick="toggleScrStyle('disp', 'body', 'bold')" title="Bold"><b>B</b></button>
+                                    <button type="button" id="scr-disp-body-italic" class="scr-style-btn"
+                                        onclick="toggleScrStyle('disp', 'body', 'italic')"
+                                        title="Italic"><i>I</i></button>
+                                    <button type="button" id="scr-disp-body-underline" class="scr-style-btn"
+                                        onclick="toggleScrStyle('disp', 'body', 'underline')"
+                                        title="Underline"><u>U</u></button>
+                                </div>
                             </div>
                             <div class="padding-explicit-grid">
                                 <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad Top</span><input
@@ -2916,8 +3418,7 @@
                                         class="scr-input scr-input-sm"></div>
                             </div>
                             <input type="hidden" id="scr-disp-bg-blur" value="0"><input type="hidden"
-                                id="scr-disp-overlay-radius" value="15"><input type="hidden" id="scr-disp-body-align"
-                                value="left">
+                                id="scr-disp-overlay-radius" value="15">
                         </div>
                     </div>
                 </div>
@@ -2976,7 +3477,17 @@
                                         class="scr-color-picker"><input type="range" id="scr-lt-bg-opacity" min="0"
                                         max="1" step="0.1"></div>
                             </div>
-                            <div class="scr-row"><label>Box Position & Max Height (%):</label>
+                            <div class="scr-row" id="scr-lt-fs-pos-row"><label>Output Position (Fullscreen):</label>
+                                <div class="scr-style-btn-group" id="scr-lt-fs-pos-group">
+                                    <button type="button" id="scr-lt-fs-pos-top" class="scr-style-btn scr-pos-btn active"
+                                        onclick="setScrFullscreenPos('lt', 'top')" title="Top">Top</button>
+                                    <button type="button" id="scr-lt-fs-pos-center" class="scr-style-btn scr-pos-btn"
+                                        onclick="setScrFullscreenPos('lt', 'center')" title="Center">Center</button>
+                                    <button type="button" id="scr-lt-fs-pos-bottom" class="scr-style-btn scr-pos-btn"
+                                        onclick="setScrFullscreenPos('lt', 'bottom')" title="Bottom">Bottom</button>
+                                </div>
+                            </div>
+                            <div class="scr-row" id="scr-lt-overlay-pos-row"><label>Box Position & Max Height (%):</label>
                                 <div class="scr-flex-gap-5"><select id="scr-lt-overlay-pos" class="scr-input">
                                         <option value="bottom">Snap to Bottom</option>
                                         <option value="top">Snap to Top</option>
@@ -2986,6 +3497,12 @@
 
                         <div class="scr-setting-card">
                             <div class="scr-card-title">📌 Typography: Title & Verse Body</div>
+                            <div class="scr-row"><label>Title Position:</label>
+                                <select id="scr-lt-title-pos" class="scr-input">
+                                    <option value="top">Top (Above Verse)</option>
+                                    <option value="bottom">Bottom (Below Verse)</option>
+                                </select>
+                            </div>
                             <div class="scr-row"><label>Title Color & Alignment:</label>
                                 <div class="scr-flex-gap-5"><input type="color" id="scr-lt-title-color"
                                         class="scr-color-picker"><select id="scr-lt-title-align" class="scr-input">
@@ -2998,6 +3515,18 @@
                                 <div class="scr-flex-gap-5"><input type="text" id="scr-lt-title-font"
                                         list="scr-font-datalist" placeholder="Search Font..." class="scr-input"><input
                                         type="number" id="scr-lt-title-size" class="scr-input scr-input-sm"></div>
+                            </div>
+                            <div class="scr-row"><label>Title Style (B / I / U):</label>
+                                <div class="scr-style-btn-group">
+                                    <button type="button" id="scr-lt-title-bold" class="scr-style-btn"
+                                        onclick="toggleScrStyle('lt', 'title', 'bold')" title="Bold"><b>B</b></button>
+                                    <button type="button" id="scr-lt-title-italic" class="scr-style-btn"
+                                        onclick="toggleScrStyle('lt', 'title', 'italic')"
+                                        title="Italic"><i>I</i></button>
+                                    <button type="button" id="scr-lt-title-underline" class="scr-style-btn"
+                                        onclick="toggleScrStyle('lt', 'title', 'underline')"
+                                        title="Underline"><u>U</u></button>
+                                </div>
                             </div>
                             <div class="padding-explicit-grid">
                                 <div class="pad-label-group"><span class="pad-explicit-label">Title Pad Top</span><input
@@ -3021,10 +3550,29 @@
                                         class="scr-chk-wrap"><input type="checkbox" id="scr-lt-body-auto"> AUTO</label>
                                 </div>
                             </div>
+                            <div class="scr-row"><label>Verse Alignment:</label>
+                                <select id="scr-lt-body-align" class="scr-input">
+                                    <option value="left">Left Align</option>
+                                    <option value="center">Center Align</option>
+                                    <option value="right">Right Align</option>
+                                </select>
+                            </div>
                             <div class="scr-row"><label>Verse Font & Size (px):</label>
                                 <div class="scr-flex-gap-5"><input type="text" id="scr-lt-body-font"
                                         list="scr-font-datalist" placeholder="Search Font..." class="scr-input"><input
                                         type="number" id="scr-lt-body-size" class="scr-input scr-input-sm"></div>
+                            </div>
+                            <div class="scr-row"><label>Verse Style (B / I / U):</label>
+                                <div class="scr-style-btn-group">
+                                    <button type="button" id="scr-lt-body-bold" class="scr-style-btn"
+                                        onclick="toggleScrStyle('lt', 'body', 'bold')" title="Bold"><b>B</b></button>
+                                    <button type="button" id="scr-lt-body-italic" class="scr-style-btn"
+                                        onclick="toggleScrStyle('lt', 'body', 'italic')"
+                                        title="Italic"><i>I</i></button>
+                                    <button type="button" id="scr-lt-body-underline" class="scr-style-btn"
+                                        onclick="toggleScrStyle('lt', 'body', 'underline')"
+                                        title="Underline"><u>U</u></button>
+                                </div>
                             </div>
                             <div class="padding-explicit-grid">
                                 <div class="pad-label-group"><span class="pad-explicit-label">Verse Pad Top</span><input
@@ -3040,8 +3588,7 @@
                                         class="scr-input scr-input-sm"></div>
                             </div>
                             <input type="hidden" id="scr-lt-bg-blur" value="0"><input type="hidden"
-                                id="scr-lt-overlay-radius" value="15"><input type="hidden" id="scr-lt-body-align"
-                                value="left">
+                                id="scr-lt-overlay-radius" value="15">
                         </div>
                     </div>
                 </div>
@@ -3077,6 +3624,8 @@
     </script>
     <script src="static/bg.js?v={{ VERSION }}"></script>
     <script src="static/script.js?v={{ VERSION }}"></script>
+    <script src="static/plugin.js?v={{ VERSION }}" defer></script>
+    <script src="static/external.js?v={{ VERSION }}" defer></script>
 
     <!-- ADVANCED OUTPUT MODAL -->
     <div id="advanced-output-modal" class="modal-overlay" style="display:none; z-index:10000;">
@@ -3228,9 +3777,220 @@
     </div>
     <!-- /ADVANCED OUTPUT MODAL -->
 
+    <!-- PLUGIN CANVAS EDITOR MODAL -->
+    <div id="plugin-editor-modal" class="plugin-modal-backdrop" style="display: none;">
+        <div class="plugin-modal-dialog">
+            <div class="plugin-modal-header">
+                <div class="plugin-modal-title">
+                    <span>🎨 PLUGIN CANVAS EDITOR</span>
+                    <span id="canvas-zoom-level" style="font-size: 0.75em; color: #9ca3af; margin-left: 8px;">(100%)</span>
+                </div>
+                <div class="plugin-modal-header-actions">
+                    <button class="btn-plugin-modal-close" onclick="closePluginEditorModal()" title="Close Editor">✕</button>
+                </div>
+            </div>
+            <div class="plugin-modal-body">
+                <!-- Left Column: Canvas Preview + Toolbar + Inspector -->
+                <div class="plugin-editor-left">
+                    <!-- Canvas Toolbar -->
+                    <div class="plugin-canvas-toolbar">
+                        <div class="plugin-tb-group">
+                            <span class="inspector-label">BG Simulation:</span>
+                            <button class="btn-tb" id="btn-bg-sim-checker" onclick="setCanvasSimulatedBg('checkerboard')" title="Checkerboard Alpha">🏁 Transparent</button>
+                            <button class="btn-tb" id="btn-bg-sim-solid" onclick="setCanvasSimulatedBg('solid')" title="Black Solid">⬛ Black</button>
+                            <button class="btn-tb" id="btn-bg-sim-stage" onclick="setCanvasSimulatedBg('stage')" title="Stage / Church Background">⛪ Stage</button>
+                        </div>
+                        <div class="plugin-tb-group">
+                            <button class="btn-tb" onclick="fitCanvasZoom()" title="Fit Canvas to Viewport">🔍 Fit Zoom</button>
+                        </div>
+                        <div class="plugin-tb-group">
+                            <button class="btn-tb" onclick="undoCanvas()" title="Undo (Ctrl+Z)">↩ Undo</button>
+                            <button class="btn-tb" onclick="redoCanvas()" title="Redo (Ctrl+Y)">↪ Redo</button>
+                        </div>
+                        <div class="plugin-tb-group plugin-align-group" title="Align Selected Elements">
+                            <button class="btn-tb btn-tb-icon" onclick="alignSelectedElements('left')" title="Align Left">⇤</button>
+                            <button class="btn-tb btn-tb-icon" onclick="alignSelectedElements('center')" title="Align Center X">⇥⇤</button>
+                            <button class="btn-tb btn-tb-icon" onclick="alignSelectedElements('right')" title="Align Right">⇥</button>
+                            <button class="btn-tb btn-tb-icon" onclick="alignSelectedElements('top')" title="Align Top">⤒</button>
+                            <button class="btn-tb btn-tb-icon" onclick="alignSelectedElements('middle')" title="Align Middle Y">⤓⤒</button>
+                            <button class="btn-tb btn-tb-icon" onclick="alignSelectedElements('bottom')" title="Align Bottom">⤓</button>
+                        </div>
+                    </div>
+
+                    <!-- Canvas Viewport -->
+                    <div id="plugin-canvas-viewport" class="plugin-canvas-viewport" onclick="deselectCanvasElement(event)">
+                        <div id="plugin-canvas-wrapper" class="plugin-canvas-wrapper plugin-canvas-checkerboard">
+                            <!-- Dynamic Elements & Guidelines rendered here by plugin.js -->
+                        </div>
+                    </div>
+
+                    <!-- Bottom Inspector Panel -->
+                    <div id="plugin-inspector-panel" class="plugin-inspector-panel">
+                        <span style="color:#6b7280; font-size:0.75em;">Pilih elemen pada kanvas untuk mengubah properti font, warna, ukuran, dan efek.</span>
+                    </div>
+                </div>
+
+                <!-- Right Column: Preset Settings & Component Palette -->
+                <div class="plugin-editor-right">
+                    <div class="plugin-preset-config-box">
+                        <div class="plugin-field-row">
+                            <label class="plugin-field-label">Preset Name</label>
+                            <input type="text" id="plugin-edit-name" class="plugin-name-input" placeholder="e.g. Offering Timer 5 Min">
+                        </div>
+                        <div class="plugin-field-row">
+                            <label class="plugin-field-label">Target Outputs</label>
+                            <div class="plugin-target-checklist">
+                                <label class="target-checkbox-label">
+                                    <input type="checkbox" id="target-cb-main" checked>
+                                    <span>🖥️ Main Display</span>
+                                </label>
+                                <label class="target-checkbox-label">
+                                    <input type="checkbox" id="target-cb-lt" checked>
+                                    <span>📺 Audience / LT</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="plugin-save-actions">
+                            <button class="btn-save-plugin" onclick="savePluginPreset()">💾 Save Preset</button>
+                            <button class="btn-save-new-plugin" onclick="savePluginPresetAsNew()" title="Save as a separate copy">📋 As New</button>
+                        </div>
+                    </div>
+
+                    <!-- Palette Tabs -->
+                    <div class="plugin-palette-tabs">
+                        <button class="palette-tab-btn active" data-tab="comp" onclick="switchPaletteTab('comp')">🧩 COMPONENTS</button>
+                        <button class="palette-tab-btn" data-tab="saved" onclick="switchPaletteTab('saved')">📦 PRESETS</button>
+                    </div>
+
+                    <!-- Palette Content -->
+                    <div class="plugin-palette-content">
+                        <!-- Tab: Basic Components -->
+                        <div id="palette-tab-comp" style="display: flex; flex-direction: column; gap: 8px;">
+                            <div class="palette-component-card" onclick="addPluginCanvasElement('text')">
+                                <div class="palette-comp-info">
+                                    <span class="palette-comp-icon">🔤</span>
+                                    <div>
+                                        <div class="palette-comp-title">Text Label</div>
+                                        <div class="palette-comp-desc">Custom typography, title, verse, or lyrics</div>
+                                    </div>
+                                </div>
+                                <button class="btn-add-comp">＋ Add</button>
+                            </div>
+
+                            <div class="palette-component-card" onclick="addPluginCanvasElement('timer')">
+                                <div class="palette-comp-info">
+                                    <span class="palette-comp-icon">⏳</span>
+                                    <div>
+                                        <div class="palette-comp-title">Countdown Timer</div>
+                                        <div class="palette-comp-desc">Offering, sermon, worship countdown with sync</div>
+                                    </div>
+                                </div>
+                                <button class="btn-add-comp">＋ Add</button>
+                            </div>
+
+                            <div class="palette-component-card" onclick="addPluginCanvasElement('stopwatch')">
+                                <div class="palette-comp-info">
+                                    <span class="palette-comp-icon">⏱️</span>
+                                    <div>
+                                        <div class="palette-comp-title">Stopwatch</div>
+                                        <div class="palette-comp-desc">Elapsed count-up timer from 00:00</div>
+                                    </div>
+                                </div>
+                                <button class="btn-add-comp">＋ Add</button>
+                            </div>
+
+                            <div class="palette-component-card" onclick="addPluginCanvasElement('clock')">
+                                <div class="palette-comp-info">
+                                    <span class="palette-comp-icon">🕒</span>
+                                    <div>
+                                        <div class="palette-comp-title">Real-Time Clock</div>
+                                        <div class="palette-comp-desc">Live 24h / 12h clock synced with system time</div>
+                                    </div>
+                                </div>
+                                <button class="btn-add-comp">＋ Add</button>
+                            </div>
+
+                            <div class="palette-component-card" onclick="addPluginCanvasElement('shape')">
+                                <div class="palette-comp-info">
+                                    <span class="palette-comp-icon">⬛</span>
+                                    <div>
+                                        <div class="palette-comp-title">Box / Shape / Bar</div>
+                                        <div class="palette-comp-desc">Background bar, overlay pill, or container box</div>
+                                    </div>
+                                </div>
+                                <button class="btn-add-comp">＋ Add</button>
+                            </div>
+
+                            <div class="palette-component-card" onclick="openPluginPhotoPickerModal()">
+                                <div class="palette-comp-info">
+                                    <span class="palette-comp-icon">🖼️</span>
+                                    <div>
+                                        <div class="palette-comp-title">Image / Logo / Icon</div>
+                                        <div class="palette-comp-desc">Pilih foto dari Database Photo ShowLyrics</div>
+                                    </div>
+                                </div>
+                                <button class="btn-add-comp">＋ Pilih</button>
+                            </div>
+                        </div>
+
+                        <!-- Tab: Saved Presets / Templates -->
+                        <div id="palette-tab-saved" style="display: none; flex-direction: column; gap: 8px;">
+                            <div id="palette-saved-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <input type="file" id="plugin-file-upload-input" accept="image/*" style="display:none;" onchange="handlePluginImageUpload(event)">
+    <datalist id="plugin-font-datalist"></datalist>
+
+    <!-- Photo Library Browser Modal for Plugin Canvas Editor -->
+    <div id="plugin-photo-picker-modal" class="plugin-modal-backdrop" style="display: none; z-index: 100050;">
+        <div class="plugin-modal-dialog plugin-photo-dialog">
+            <div class="plugin-modal-header">
+                <div class="plugin-modal-title">
+                    <span>📷 SHOWLYRICS PHOTO LIBRARY</span>
+                    <span style="font-size: 0.75em; color: #9ca3af; margin-left: 8px;">Pilih foto atau logo dari database</span>
+                </div>
+                <div class="plugin-modal-header-actions">
+                    <button class="btn-plugin-modal-close" onclick="closePluginPhotoPickerModal()">✕</button>
+                </div>
+            </div>
+            <div class="plugin-photo-modal-body">
+                <!-- Sidebar Folders -->
+                <div class="plugin-photo-sidebar">
+                    <div class="plugin-photo-sidebar-header">FOLDERS</div>
+                    <div id="plugin-photo-folder-list" class="plugin-photo-folder-list"></div>
+                </div>
+                <!-- Main Content: Search + Photo Grid -->
+                <div class="plugin-photo-main">
+                    <div class="plugin-photo-toolbar">
+                        <div class="plugin-photo-search">
+                            <span>🔍</span>
+                            <input type="text" id="plugin-photo-search-input" placeholder="Search photos..." oninput="filterPluginPhotoGrid(this.value)">
+                        </div>
+                        <button class="btn-photo-upload-new" onclick="triggerPluginPhotoUpload()">
+                            <span>＋</span> UPLOAD NEW PHOTO
+                        </button>
+                        <input type="file" id="plugin-photo-upload-input" accept="image/*" style="display:none;" onchange="uploadPhotoToLibraryFromPlugin(event)">
+                    </div>
+                    <div id="plugin-photo-grid" class="plugin-photo-grid"></div>
+                </div>
+            </div>
+            <div class="plugin-photo-modal-footer">
+                <span id="plugin-photo-selected-name" style="font-size: 0.82em; color: #9ca3af;">Belum ada foto yang dipilih</span>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-tb" onclick="closePluginPhotoPickerModal()">Batal</button>
+                    <button id="btn-plugin-photo-confirm" class="btn-save-plugin" onclick="confirmPluginPhotoSelection()" disabled>Gunakan Foto Ini</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Floating Bottom-Right Stack Container (for Toast Notifications and Floating Media Players) -->
     <div id="bottom-right-stack"
-        style="position: fixed; bottom: 20px; right: 20px; z-index: 99999; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 10px; pointer-events: none;">
+        style="position: fixed; bottom: 20px; right: 20px; z-index: 900; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 10px; pointer-events: none;">
         <!-- 1. Floating Media Player Container (bottom) -->
         <div id="multi-player-container" class="multi-player-container" style="pointer-events: auto;"></div>
         <!-- 2. Stage Rundown Toast Container (stacked above the media player if both are active) -->

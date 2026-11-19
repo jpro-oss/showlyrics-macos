@@ -111,13 +111,14 @@ db = None
 
 def _get_hwid_macos() -> str | None:
     """
-    Ambil Hardware UUID via ioreg pada macOS.
+    Ambil Hardware UUID via ioreg (atau system_profiler sebagai fallback) pada macOS.
     IOPlatformUUID adalah pengenal unik per mesin, sama stabilnya dengan
     Windows WMIC UUID — tidak berubah antar reboot atau update OS.
     """
+    ioreg_bin = '/usr/sbin/ioreg' if os.path.exists('/usr/sbin/ioreg') else 'ioreg'
     try:
         result = subprocess.run(
-            ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
+            [ioreg_bin, '-rd1', '-c', 'IOPlatformExpertDevice'],
             capture_output=True, text=True, timeout=6
         )
         match = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', result.stdout)
@@ -128,6 +129,21 @@ def _get_hwid_macos() -> str | None:
         print("[HWID] Timeout via ioreg.")
     except Exception as e:
         print(f"[HWID] ioreg error: {e}")
+
+    sys_prof_bin = '/usr/sbin/system_profiler' if os.path.exists('/usr/sbin/system_profiler') else 'system_profiler'
+    try:
+        result = subprocess.run(
+            [sys_prof_bin, 'SPHardwareDataType'],
+            capture_output=True, text=True, timeout=8
+        )
+        match = re.search(r'Hardware UUID:\s*([A-Fa-f0-9-]+)', result.stdout)
+        if match:
+            return match.group(1)
+        serial_match = re.search(r'Serial Number.*?:\s*([A-Za-z0-9]+)', result.stdout)
+        if serial_match:
+            return hashlib.sha256(f"MAC-SERIAL:{serial_match.group(1)}".encode()).hexdigest()[:32].upper()
+    except Exception as e:
+        print(f"[HWID] system_profiler fallback error: {e}")
     return None
 
 

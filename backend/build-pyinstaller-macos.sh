@@ -47,7 +47,7 @@ fi
 echo "Target architecture: $TARGET_ARCH"
 
 # Cek prasyarat binary
-for binary in ffmpeg playback-engine; do
+for binary in ffmpeg playback-engine camera-service; do
     if [ ! -f "$binary" ]; then
         echo "ERROR: '$binary' tidak ditemukan di folder ini!"
         echo "  Pastikan binary macOS sudah ada di backend/ sebelum build."
@@ -57,6 +57,12 @@ for binary in ffmpeg playback-engine; do
     echo "OK: $binary ditemukan ($(du -sh "$binary" | cut -f1))"
     file "$binary"
 done
+
+PYARMOR_FLAGS=""
+if [ -d "pyarmor_runtime_000000" ]; then
+    PYARMOR_FLAGS='--add-data=pyarmor_runtime_000000:pyarmor_runtime_000000 --hidden-import=pyarmor_runtime_000000'
+    echo "OK: PyArmor runtime ditemukan (pyarmor_runtime_000000)"
+fi
 
 # Cek icon - gunakan .icns di src/ jika ada, fallback ke .ico di backend/
 ICON_FLAG=""
@@ -86,8 +92,10 @@ python -m PyInstaller \
     \
     --add-data="ffmpeg:." \
     --add-data="playback-engine:." \
+    --add-data="camera-service:." \
     --add-data="templates:templates" \
     --add-data="static:static" \
+    $PYARMOR_FLAGS \
     \
     \
     --hidden-import="background_tasks" \
@@ -96,6 +104,8 @@ python -m PyInstaller \
     --hidden-import="license_check" \
     --hidden-import="license_core" \
     --hidden-import="middleware" \
+    --hidden-import="access_check" \
+    --hidden-import="access_core" \
     --hidden-import="presets" \
     --hidden-import="scripture" \
     --hidden-import="sender" \
@@ -105,6 +115,7 @@ python -m PyInstaller \
     --hidden-import="routes_media_stream" \
     --hidden-import="routes_media_thumb" \
     --hidden-import="routes_pages" \
+    --hidden-import="routes_plugin" \
     --hidden-import="routes_service" \
     --hidden-import="routes_settings" \
     --hidden-import="network_guard" \
@@ -117,6 +128,8 @@ python -m PyInstaller \
     --hidden-import="asyncio.selector_events" \
     --hidden-import="platform" \
     --hidden-import="urllib.parse" \
+    --hidden-import="urllib.request" \
+    --hidden-import="http.client" \
     --hidden-import="zipfile" \
     --hidden-import="io" \
     --hidden-import="json" \
@@ -124,10 +137,27 @@ python -m PyInstaller \
     --hidden-import="re" \
     --hidden-import="time" \
     --hidden-import="collections" \
+    --hidden-import="collections.abc" \
     --hidden-import="subprocess" \
     --hidden-import="tempfile" \
     --hidden-import="threading" \
     --hidden-import="multiprocessing" \
+    --hidden-import="shutil" \
+    --hidden-import="glob" \
+    --hidden-import="hashlib" \
+    --hidden-import="base64" \
+    --hidden-import="secrets" \
+    --hidden-import="socket" \
+    --hidden-import="atexit" \
+    --hidden-import="copy" \
+    --hidden-import="datetime" \
+    --hidden-import="concurrent.futures" \
+    --hidden-import="dataclasses" \
+    --hidden-import="enum" \
+    --hidden-import="xml.etree" \
+    --hidden-import="xml.etree.ElementTree" \
+    --hidden-import="email" \
+    --hidden-import="plistlib" \
     \
     \
     --hidden-import="uvicorn" \
@@ -144,6 +174,10 @@ python -m PyInstaller \
     --hidden-import="fastapi" \
     --hidden-import="fastapi.middleware" \
     --hidden-import="fastapi.middleware.cors" \
+    --hidden-import="fastapi.templating" \
+    --hidden-import="jinja2" \
+    --hidden-import="python_multipart" \
+    --hidden-import="multipart" \
     --hidden-import="starlette" \
     --hidden-import="starlette.routing" \
     --hidden-import="starlette.middleware" \
@@ -162,6 +196,8 @@ python -m PyInstaller \
     --hidden-import="PIL.Image" \
     --hidden-import="PIL.ImageDraw" \
     --hidden-import="PIL.ImageFont" \
+    --hidden-import="PIL.ImageOps" \
+    --hidden-import="PIL.ImageFilter" \
     --hidden-import="av" \
     --hidden-import="av.container" \
     --hidden-import="av.stream" \
@@ -177,6 +213,7 @@ python -m PyInstaller \
     --hidden-import="requests" \
     --hidden-import="requests.adapters" \
     --hidden-import="requests.auth" \
+    --hidden-import="httpx" \
     --hidden-import="psutil" \
     \
     \
@@ -188,6 +225,7 @@ python -m PyInstaller \
     \
     --collect-all="cryptography" \
     --collect-all="requests" \
+    --collect-all="httpx" \
     --collect-all="av" \
     --collect-all="uvicorn" \
     --collect-all="fastapi" \
@@ -195,6 +233,9 @@ python -m PyInstaller \
     --collect-all="psutil" \
     --collect-all="fitz" \
     --collect-all="pptx" \
+    --collect-all="PIL" \
+    --collect-all="jinja2" \
+    --collect-all="python_multipart" \
     \
     \
     --exclude-module="PyQt5" \
@@ -212,7 +253,6 @@ python -m PyInstaller \
     --exclude-module="unittest" \
     --exclude-module="pdb" \
     --exclude-module="doctest" \
-    --exclude-module="email" \
     --exclude-module="xmlrpc" \
     \
     main.py

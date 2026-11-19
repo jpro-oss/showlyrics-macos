@@ -888,7 +888,7 @@
                     <img src="/static/logo.png" class="brand-logo" alt="Logo">
                     <div class="brand-text">
                         <h1 class="brand-name">ShowLyrics</h1>
-                        <span class="brand-ver">Engine Build V.1.35</span>
+                        <span class="brand-ver">Engine Build V.1.35.4</span>
                     </div>
                 </div>
 
@@ -934,8 +934,8 @@
         </div>
 
         <a href="#manual" class="scroll-hint">
-            <span class="lang-id">Lihat 29 Fitur Utama</span>
-            <span class="lang-en">View 29 Core Features</span>
+            <span class="lang-id">Lihat 28 Fitur Utama</span>
+            <span class="lang-en">View 28 Core Features</span>
             <div class="bounce-arrow">▼</div>
         </a>
     </div>
@@ -944,8 +944,8 @@
         <div class="docs-header">
             <h2 class="lang-id">Dokumentasi Fitur</h2>
             <h2 class="lang-en">Feature Documentation</h2>
-            <p class="lang-id">29 Fitur utama mesin ShowLyrics untuk produksi live yang profesional.</p>
-            <p class="lang-en">29 core features of the ShowLyrics engine for professional live production.</p>
+            <p class="lang-id">28 Fitur utama mesin ShowLyrics untuk produksi live yang profesional.</p>
+            <p class="lang-en">28 core features of the ShowLyrics engine for professional live production.</p>
         </div>
 
         <div class="docs-grid">
@@ -1051,12 +1051,12 @@
                     <div class="doc-num">07</div>
                 </div>
                 <div class="doc-content lang-id">
-                    <h3>Native Windows Fonts</h3>
+                    <h3>Native System Fonts</h3>
                     <p>Cukup ketik nama font yang terinstal di komputer Anda (misal: 'Impact' atau 'Cinzel'), sistem
                         akan merendernya secara offline.</p>
                 </div>
                 <div class="doc-content lang-en">
-                    <h3>Native Windows Fonts</h3>
+                    <h3>Native System Fonts</h3>
                     <p>Simply type any font installed on your PC (e.g., 'Impact' or 'Cinzel'), and the engine will
                         render it completely offline.</p>
                 </div>
@@ -1197,12 +1197,12 @@
                 </div>
                 <div class="doc-content lang-id">
                     <h3>Per-Song DNA (Custom Edit)</h3>
-                    <p>Pengaturan warna, glow, dan layout disimpan spesifik di dalam struktur JSON tiap lagu tanpa
+                    <p>Pengaturan warna, glow, dan layout disimpan spesifik di dalam profil data tiap lagu tanpa
                         mengubah desain lagu lainnya.</p>
                 </div>
                 <div class="doc-content lang-en">
                     <h3>Per-Song DNA (Custom Edit)</h3>
-                    <p>Color, glow, and layout settings are saved specifically within each song's JSON structure without
+                    <p>Color, glow, and layout settings are saved specifically within each song's data profile without
                         affecting others.</p>
                 </div>
             </div>
@@ -1246,12 +1246,12 @@
                 <div class="doc-content lang-id">
                     <h3>Smart Save Alert</h3>
                     <p>Tombol 'Save' pada kontrol lagu akan berkedip kuning otomatis apabila mendeteksi adanya
-                        pengetikan yang belum disimpan ke JSON.</p>
+                        pengetikan yang belum disimpan ke database.</p>
                 </div>
                 <div class="doc-content lang-en">
                     <h3>Smart Save Alert</h3>
                     <p>The 'Save' button pulses yellow automatically when it detects unsaved text modifications in the
-                        JSON database.</p>
+                        database.</p>
                 </div>
             </div>
             <div class="doc-item">
@@ -1326,13 +1326,13 @@
                 </div>
                 <div class="doc-content lang-id">
                     <h3>Clear & Eject State</h3>
-                    <p>Tombol 'Clear' (atau slide kosong) akan mengirimkan perintah state 'hide' ke WebSocket tanpa
-                        merusak urutan slide saat ini.</p>
+                    <p>Tombol 'Clear' (atau slide kosong) akan mengirimkan sinyal 'hide' ke seluruh layar tayang secara
+                        real-time tanpa merusak urutan slide saat ini.</p>
                 </div>
                 <div class="doc-content lang-en">
                     <h3>Clear & Eject State</h3>
-                    <p>The 'Clear' button (or empty slide) sends a 'hide' state command to the WebSocket without losing
-                        your current slide position.</p>
+                    <p>The 'Clear' button (or empty slide) sends a real-time 'hide' command to all display screens
+                        without losing your current slide position.</p>
                 </div>
             </div>
             <div class="doc-item">
@@ -1389,30 +1389,14 @@
                     <div class="doc-num">28</div>
                 </div>
                 <div class="doc-content lang-id">
-                    <h3>Live JSON Diagnostics</h3>
-                    <p>Halaman Diagnostik internal untuk memvalidasi kesehatan (corrupt-check) pada 7 file database
-                        JSON dan performa RAM.</p>
+                    <h3>Live System Diagnostics</h3>
+                    <p>Halaman Diagnostik internal untuk memvalidasi integritas data (health-check) pada 7 modul basis
+                        data sistem dan performa memori.</p>
                 </div>
                 <div class="doc-content lang-en">
-                    <h3>Live JSON Diagnostics</h3>
-                    <p>Internal Diagnostics page to validate the health (corrupt-check) of 7 core JSON databases and RAM
-                        load.</p>
-                </div>
-            </div>
-            <div class="doc-item">
-                <div class="doc-top">
-                    <div class="doc-icon-wrap">🔐</div>
-                    <div class="doc-num">29</div>
-                </div>
-                <div class="doc-content lang-id">
-                    <h3>Chrome Permissions</h3>
-                    <p>Wajib mengizinkan akses Local Fonts dan Clipboard pada Site Settings Chrome agar engine berjalan
-                        100%.</p>
-                </div>
-                <div class="doc-content lang-en">
-                    <h3>Chrome Permissions</h3>
-                    <p>Mandatory: Allow Local Fonts and Clipboard access in Chrome Site Settings for 100% engine
-                        compatibility.</p>
+                    <h3>Live System Diagnostics</h3>
+                    <p>Internal Diagnostics page to validate data integrity (health-check) across 7 core system databases
+                        and memory load.</p>
                 </div>
             </div>
         </div>
@@ -1431,27 +1415,10 @@
             <div class="manual-body">
                 <div class="lang-id">
                     <div class="manual-highlight">
-                        <b>Informasi Penting:</b> Aplikasi ShowLyrics menggunakan teknologi Web-Hybrid. Anda dapat
-                        membuka layar proyektor dari komputer (atau HP) mana saja yang terhubung di jaringan WiFi yang
-                        sama!
+                        <b>Informasi Penting:</b> Aplikasi ShowLyrics mendukung integrasi multi-layar nirkabel. Anda dapat
+                        membuka layar proyektor, foldback, atau controller dari perangkat mana saja yang terhubung di
+                        jaringan WiFi yang sama!
                     </div>
-
-                    <h3>⚠️ PERSIAPAN WAJIB (CHROME SITE SETTINGS)</h3>
-                    <p>Agar font lokal Windows (Native Fonts) dan fitur <i>copy-paste</i> berjalan sempurna, Anda
-                        <b>WAJIB</b> memberikan izin (Permissions) pada browser Chrome Anda:
-                    </p>
-                    <ol>
-                        <li>Buka tab baru di Chrome, lalu <i>copy-paste</i> URL pengaturan khusus ini:<br><br>
-                            <kbd>chrome://settings/content/siteDetails?site=http%3A%2F%2F127.0.0.1%3A18888</kbd><br><br>
-                        </li>
-                        <li>Pada halaman yang terbuka, cari pengaturan <b>Fonts</b> (Fonta), lalu ubah dari
-                            <i>Block/Ask</i> menjadi <b>Allow</b> (Izinkan).
-                        </li>
-                        <li>Cari juga pengaturan <b>Clipboard</b> (Papan Klip), lalu ubah menjadi <b>Allow</b>
-                            (Izinkan).</li>
-                        <li>Tutup halaman pengaturan tersebut, dan tekan <kbd>F5</kbd> untuk me-<i>refresh</i> tab
-                            ShowLyrics Anda.</li>
-                    </ol>
 
                     <h3>Bab 1: Persiapan & Import Lagu</h3>
                     <ol>
@@ -1560,7 +1527,7 @@
                             animasi murni digerakkan oleh GPU Komputer, bukan RAM.</li>
                         <li><b>Global Sub Settings:</b> Buka tab Global Settings untuk mengatur warna, jarak, dan ukuran
                             font khusus untuk bahasa terjemahan (Bilingual).</li>
-                        <li><b>Font Windows Lokal:</b> Tuliskan nama font apa pun yang sudah terinstal di Windows Anda
+                        <li><b>Font Sistem Lokal:</b> Tuliskan nama font apa pun yang sudah terinstal di sistem komputer Anda
                             (Misal: 'Montserrat' atau 'Times New Roman') di kolom Font Name Editor.</li>
                     </ol>
 
@@ -1570,37 +1537,23 @@
                             kali aktivasi License Key.</li>
                         <li><b>Hardware ID Lock:</b> Lisensi Anda diikat ke Hardware PC secara mutlak (dicatat di
                             Server). Jika ingin pindah PC, Anda wajib menekan 'Release/Deactivate' saat online.</li>
-                        <li><b>Halaman Diagnostics:</b> Buka Diagnostics via Launcher untuk memeriksa 'kesehatan'
-                            file-file JSON Anda. Jika ada file JSON yang korup, statusnya akan merah.</li>
+                        <li><b>Halaman Diagnostics:</b> Buka Diagnostics via Launcher untuk memeriksa kesehatan
+                            berkas basis data sistem Anda. Jika ada berkas data yang rusak atau tidak terbaca, statusnya akan merah.</li>
                         <li><b>Pantau RAM (Memory Check):</b> Halaman Diagnostics juga menampilkan indikator persentase
                             beban CPU dan RAM komputer PC Anda untuk menghindari resiko *lag* saat acara live.</li>
                         <li><b>Virtual Chunk Limit:</b> Jangan takut memasukkan 3000 lagu ke Library! Sistem menggunakan
-                            <i>Lazy Loading Virtual Chunking</i>, sehingga RAM browser Anda akan selalu hemat dan gesit.
+                            <i>Lazy Loading Virtual Chunking</i>, sehingga penggunaan memori RAM komputer Anda akan selalu hemat dan gesit.
                         </li>
-                        <li><b>Safe Restart Server:</b> Jika Backend Python ter-close, Controller HTML tidak perlu
-                            di-refresh ulang. Cukup nyalakan server `main.py` lagi dan WebSocket akan tersambung kembali
-                            (Auto-Reconnect).</li>
+                        <li><b>Safe Auto-Reconnect:</b> Jika jaringan atau layanan sistem aplikasi sempat terputus, antarmuka
+                            Controller tidak perlu dimuat ulang. Cukup jalankan kembali aplikasi dan seluruh koneksi layar akan tersambung kembali secara otomatis (Auto-Reconnect).</li>
                     </ol>
                 </div>
 
                 <div class="lang-en">
                     <div class="manual-highlight">
-                        <b>Important Note:</b> ShowLyrics uses Web-Hybrid technology. You can open projector displays
-                        from any laptop, phone, or tablet connected to the same local WiFi!
+                        <b>Important Note:</b> ShowLyrics supports wireless multi-display integration. You can open
+                        projector, foldback, or controller displays from any device connected to the same local WiFi!
                     </div>
-
-                    <h3>⚠️ CRUCIAL SETUP (CHROME SITE SETTINGS)</h3>
-                    <p>To ensure local Windows fonts and the copy-paste clipboard functions work flawlessly, you
-                        <b>MUST</b> grant permissions in your Chrome browser:
-                    </p>
-                    <ol>
-                        <li>Open a new tab in Chrome, and copy-paste this direct settings URL:<br><br>
-                            <kbd>chrome://settings/content/siteDetails?site=http%3A%2F%2F127.0.0.1%3A18888</kbd><br><br>
-                        </li>
-                        <li>On the settings page, find the <b>Fonts</b> permission and change it to <b>Allow</b>.</li>
-                        <li>Find the <b>Clipboard</b> permission and change it to <b>Allow</b>.</li>
-                        <li>Close the settings tab and press <kbd>F5</kbd> to refresh your ShowLyrics tab.</li>
-                    </ol>
 
                     <h3>Chapter 1: Song Import & Preparation</h3>
                     <ol>
@@ -1705,7 +1658,7 @@
                             purely driven by your GPU, keeping system RAM free.</li>
                         <li><b>Global Sub Settings:</b> Open the Global Settings tab to configure specific colors,
                             padding, and sizes exclusively for translated (Bilingual) text.</li>
-                        <li><b>Local Windows Fonts:</b> Type the name of any font installed on your PC (e.g.,
+                        <li><b>Local System Fonts:</b> Type the name of any font installed on your system (e.g.,
                             'Montserrat' or 'Impact') in the Font Name field, and it will render perfectly.</li>
                     </ol>
 
@@ -1715,15 +1668,16 @@
                             initial License Key activation.</li>
                         <li><b>Hardware ID Lock:</b> Your license is strictly bound to your PC's Hardware ID via Cloud.
                             To move PCs, you must click 'Release/Deactivate' while online.</li>
-                        <li><b>Diagnostics Page:</b> Open Diagnostics from the Launcher to run a 'health check' on your
-                            JSON files. Corrupted files will flag red immediately.</li>
+                        <li><b>Diagnostics Page:</b> Open Diagnostics from the Launcher to run a health check on your
+                            system database files. Corrupted files will flag red immediately.</li>
                         <li><b>RAM Monitoring:</b> The Diagnostics page also displays live CPU load and RAM percentage
                             to prevent live-event stutters.</li>
                         <li><b>Virtual Chunk Limit:</b> Don't worry about loading 3000 songs! The system uses <i>Lazy
-                                Loading Virtual Chunking</i>, keeping your browser RAM incredibly low and responsive.
+                                Loading Virtual Chunking</i>, keeping system RAM usage incredibly low and responsive.
                         </li>
-                        <li><b>Safe Server Restart:</b> If the Python backend closes, you don't need to refresh the HTML
-                            Controller. Just restart `main.py` and the WebSocket auto-reconnects seamlessly.</li>
+                        <li><b>Safe Auto-Reconnect:</b> If the network or application system service temporarily
+                            disconnects, you do not need to reload the Controller interface. Simply relaunch the application
+                            and all screen connections will restore automatically (Auto-Reconnect).</li>
                     </ol>
                 </div>
 
@@ -1793,7 +1747,7 @@
     </script>
     <script>
         const LOCAL_CONFIG = {
-            version: "1.35",
+            version: "1.35.4",
             check_beta: true,
             api_url: "https://showlyrics.github.io/version.json"
         };
@@ -1853,13 +1807,11 @@
             }
         }
 
-        // Buka link download di sistem browser (Chrome/Edge), bukan sub-window Electron
+        // Buka tautan pembaruan di browser sistem
         function openDownloadLink(url) {
             if (window.electronAPI && window.electronAPI.openExternal) {
-                // Mode Electron: kirim ke main process → shell.openExternal()
                 window.electronAPI.openExternal(url);
             } else {
-                // Mode Browser biasa (Chrome langsung): buka tab baru
                 window.open(url, '_blank', 'noopener,noreferrer');
             }
         }

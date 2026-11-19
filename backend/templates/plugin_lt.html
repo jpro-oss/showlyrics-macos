@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link id="google-font-link" rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700;900&family=Cinzel:wght@700&family=Playfair+Display:wght@700&family=Courier+Prime:wght@700&family=Poppins:wght@400;600;700;900&display=swap">
+    <script src="/static/wm.js?v={{ VERSION }}"></script>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: transparent !important;
+            pointer-events: none;
+            user-select: none;
+        }
+        #plugin-viewport {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            transform-origin: 0 0;
+            pointer-events: none;
+            will-change: transform, opacity;
+        }
+        .plugin-instance {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1920px;
+            height: 1080px;
+            pointer-events: none;
+            will-change: transform, opacity;
+        }
+        .plugin-instance.anim-fade-in {
+            animation: pluginFadeIn var(--anim-dur, 0.4s) ease forwards;
+        }
+        .plugin-instance.anim-fade-out {
+            animation: pluginFadeOut var(--anim-dur, 0.4s) ease forwards;
+        }
+        .plugin-instance.anim-slide-up-in {
+            animation: pluginSlideUpIn var(--anim-dur, 0.4s) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .plugin-instance.anim-slide-up-out {
+            animation: pluginSlideUpOut var(--anim-dur, 0.4s) cubic-bezier(0.7, 0, 0.84, 0) forwards;
+        }
+        .plugin-instance.anim-slide-in-in {
+            animation: pluginSlideInLeft var(--anim-dur, 0.4s) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .plugin-instance.anim-slide-in-out {
+            animation: pluginSlideOutLeft var(--anim-dur, 0.4s) cubic-bezier(0.7, 0, 0.84, 0) forwards;
+        }
+        @keyframes pluginFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes pluginFadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+        @keyframes pluginSlideUpIn {
+            from { opacity: 0; transform: translateY(60px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pluginSlideUpOut {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(60px); }
+        }
+        @keyframes pluginSlideInLeft {
+            from { opacity: 0; transform: translateX(-60px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes pluginSlideOutLeft {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(-60px); }
+        }
+        .plugin-el {
+            position: absolute;
+            box-sizing: border-box;
+            display: flex;
+            word-break: break-word;
+            pointer-events: none;
+        }
+        .timer-blink {
+            animation: timerBlinkAnim 0.9s infinite alternate !important;
+        }
+        @keyframes timerBlinkAnim {
+            0% { opacity: 1; color: #ff3333 !important; }
+            100% { opacity: 0.15; color: #ff3333 !important; }
+        }
+    </style>
+</head>
+<body>
+    <div id="plugin-viewport" data-target="lt"></div>
+    <script src="/static/plugin_render.js?v={{ VERSION }}" defer></script>
+</body>
+</html>

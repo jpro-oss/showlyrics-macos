@@ -17,6 +17,23 @@
             -webkit-backface-visibility: hidden;
         }
 
+        /* --- PLUGIN IFRAME DI DISPLAY.HTML --- */
+        .plugin-iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100% !important;
+            height: 100% !important;
+            border: none;
+            z-index: 10000;
+            pointer-events: none;
+            background: transparent !important;
+            will-change: transform, opacity;
+            transform: translate3d(0, 0, 0);
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+
         .cam-output-iframe {
             position: absolute;
             top: 0;
@@ -37,11 +54,13 @@
             --glow-color: rgba(255, 255, 255, 0.8);
             --main-color: #ffffff;
             --fade-speed: 0.8s;
-            --loop-handoff-ms: 800ms;
+            --loop-handoff-ms: 350ms;
             --loop-handoff-ease: cubic-bezier(0.16, 1, 0.3, 1);
             --main-font: 'Montserrat', sans-serif;
             --main-font-size: 96px; /* 5vw fallback on 1920px canvas */
             --motion-drift-speed: 30s;
+            --main-line-height: 1.0; /* Custom line height — dikontrol via Text Editor Modal */
+            --main-paragraph-gap: 0.0em; /* Jarak antar baris paragraf = dikontrol bersamaan dengan line_height */
             /* <--- INI TAMBAHANNYA */
         }
 
@@ -140,11 +159,18 @@
             pointer-events: none;
             transition: opacity var(--fade-speed, 0.5s) ease;
             box-sizing: border-box;
-            contain: layout style;
+            contain: layout style; /* [FIX v1.35.4] Restore layout isolation — mencegah width:100% wrapper merembet keluar container & menjaga text wrap alignment tetap akurat */
         }
 
         .lyric-group.active {
             opacity: 1;
+            transition: none !important;
+        }
+
+        /* JOB 1: CUT transition — layer appears instantly, no CSS fade at all */
+        .lyric-group.fx-cut {
+            opacity: 1 !important;
+            animation: none !important;
             transition: none !important;
         }
 
@@ -197,6 +223,13 @@
             overflow: visible;
             min-height: 0;
             transform-origin: center center;
+            /* [PERF] will-change dihapus dari sini — dikontrol via .zoom-active hanya saat animasi aktif.
+               Permanent will-change = GPU VRAM waste + compositor overhead saat idle. */
+        }
+
+        /* [PERF] Aktifkan GPU promotion HANYA saat zoom animation berjalan (move-in / move-out).
+           Class ini ditambahkan JS saat transisi dimulai dan dihapus saat layer deactivated. */
+        .lyric-zoom-container.zoom-active {
             will-change: transform;
         }
 
@@ -211,25 +244,14 @@
         .lyric-wrapper {
             position: relative;
             display: flex;
-            /* Bikin ngepres dengan text */
+            flex-direction: column;
             align-items: center;
             overflow: visible;
             min-height: 0;
-        }
-
-        .lyric-text,
-        .lyric-ghost {
-            font-family: var(--main-font);
-            font-size: var(--main-font-size);
-            line-height: 1;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
-            width: 100%;
             box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            word-break: normal;
+            width: fit-content;
+            min-width: min-content;
+            max-width: 100%;
         }
 
         .lyric-layer {
@@ -242,18 +264,42 @@
             justify-content: center;
         }
 
+        .lyric-text,
+        .lyric-ghost {
+            font-family: var(--main-font);
+            font-size: var(--main-font-size);
+            line-height: var(--main-line-height, 1.0);
+            white-space: pre-wrap;
+            word-wrap: normal !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
+            width: fit-content;
+            min-width: min-content;
+            max-width: 100%;
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         .lyric-text {
             position: relative;
             z-index: 2;
             margin: 0;
-            line-height: 1;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
+            line-height: var(--main-line-height, 1.0);
+            word-wrap: normal !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            gap: 0;
+            align-items: center;   /* JS will set txt.style.alignItems = layerAlign (flex-start, center, flex-end) */
+            gap: var(--main-paragraph-gap, 0.0em);
+            row-gap: var(--main-paragraph-gap, 0.0em);
             padding: 0;
+            transition: filter 0.35s ease-out, text-shadow 0.35s ease-out;
+            width: fit-content;
+            min-width: min-content;
+            max-width: 100%;
+            box-sizing: border-box;
         }
 
         .lyric-ghost {
@@ -264,6 +310,44 @@
             height: 100%;
             z-index: 1;
             pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;   /* JS will set gstEl.style.alignItems = layerAlign */
+            box-sizing: border-box;
+        }
+
+        .main-lang,
+        .sub-lang {
+            display: block;
+            line-height: var(--main-line-height, 1.0);
+            margin: 0 !important;
+            padding: 0 !important;
+            min-height: 0;
+            overflow: visible;
+            text-align: inherit;
+            text-decoration: inherit;
+            width: fit-content;
+            max-width: 100%;
+            box-sizing: border-box;
+            word-wrap: normal !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
+        }
+
+        .bilingual-line {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: inherit;
+            justify-content: center;
+            gap: 0.1em;
+            min-height: 0;
+            overflow: visible;
+            width: auto;
+            max-width: 100%;
+            margin: 0;
+            position: relative;
+            text-align: inherit;
+            box-sizing: border-box;
         }
 
         /* ============================== */
@@ -275,31 +359,36 @@
         }
 
         .theme-box-black {
+            line-height: var(--main-line-height, 1.0);
             background-color: rgba(0, 0, 0, 0.75);
             backdrop-filter: blur(2px);
-            contain: layout style;
+            -webkit-backdrop-filter: blur(2px);
             isolation: isolate;
             color: #fff;
             text-shadow: 0 0 20px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 255, 255, 0.6);
-            padding: 25px 60px;
+            padding: 28px 60px 34px 60px;
             border-radius: 15px;
             display: inline-block;
             width: auto;
+            max-width: 100%;
+            box-sizing: border-box;
             box-shadow: 0 15px 50px rgba(0, 0, 0, 0.5), 0 0 30px rgba(255, 255, 255, 0.2);
         }
 
         .theme-frosted {
+            line-height: var(--main-line-height, 1.0);
             background: rgba(255, 255, 255, 0.2);
             backdrop-filter: blur(4px);
             -webkit-backdrop-filter: blur(4px);
-            contain: layout style;
             isolation: isolate;
             border: 2px solid rgba(255, 255, 255, 0.4);
             color: #fff;
             border-radius: 15px;
             display: inline-block;
             width: auto;
-            padding: 25px 60px;
+            max-width: 100%;
+            box-sizing: border-box;
+            padding: 28px 60px 34px 60px;
             text-shadow: 0 0 25px rgba(255, 255, 255, 0.9), 0 0 50px rgba(255, 255, 255, 0.7);
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3), 0 0 40px rgba(255, 255, 255, 0.3);
         }
@@ -421,7 +510,7 @@
         }
 
         .theme-retro {
-            background: -webkit-linear-gradient(#ff00cc, #333399);
+            background: linear-gradient(180deg, #ff00cc, #333399);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent !important;
             -webkit-text-stroke: 1px #fff;
@@ -500,14 +589,37 @@
             border-radius: 4px;
         }
 
-        /* HIDE GHOST FOR CLEAN STYLES */
-        .theme-box-black .lyric-ghost,
-        .theme-frosted .lyric-ghost,
-        .theme-clean .lyric-ghost,
-        .theme-pure .lyric-ghost,
-        .theme-paper .lyric-ghost,
-        .theme-plain .lyric-ghost {
+        /* HIDE GHOST FOR CLEAN, BOX & ALL 21 FIXED GRADIENT STYLES */
+        .lyric-ghost:is(
+            .theme-box-black, .theme-frosted, .theme-clean, .theme-pure, .theme-paper, .theme-plain,
+            .theme-gold, .theme-sunset, .theme-nature, .theme-covenant, .theme-hologram,
+            .theme-retro, .theme-firework, .theme-spirit, .theme-rainbow, .theme-wildfire,
+            .theme-celebration, .theme-metal, .theme-goldleaf, .theme-blueprint, .theme-duotone,
+            .theme-aurora-art, .theme-solarpunk, .theme-neo-prism, .theme-liquid-gold-box,
+            .theme-aurora-glass-box, .theme-modern-kinetic
+        ),
+        :is(
+            .theme-box-black, .theme-frosted, .theme-clean, .theme-pure, .theme-paper, .theme-plain,
+            .theme-gold, .theme-sunset, .theme-nature, .theme-covenant, .theme-hologram,
+            .theme-retro, .theme-firework, .theme-spirit, .theme-rainbow, .theme-wildfire,
+            .theme-celebration, .theme-metal, .theme-goldleaf, .theme-blueprint, .theme-duotone,
+            .theme-aurora-art, .theme-solarpunk, .theme-neo-prism, .theme-liquid-gold-box,
+            .theme-aurora-glass-box, .theme-modern-kinetic
+        ).lyric-ghost {
             display: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+        }
+
+
+        /* Ensure ghost layer never renders box backgrounds or borders */
+        .lyric-ghost {
+            background: none !important;
+            background-color: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
         }
 
         /* ============================== */
@@ -518,10 +630,8 @@
             .fx-punch, .fx-elastic, .fx-flashpop, .fx-whip, .fx-gdrop,
             .fx-dust, .fx-lens, .fx-wipe, .fx-abyss, .fx-aurora,
             .fx-rgb, .fx-shake, .fx-smash, .fx-slash, .fx-terminal)
-        :is(.lyric-wrapper, .bilingual-line) {
-            line-height: 1 !important;
+        .lyric-wrapper {
             overflow: visible !important;
-            align-items: center !important;
         }
 
         /* ============================== */
@@ -2306,7 +2416,7 @@
         .word,
         .char {
             vertical-align: baseline !important;
-            line-height: 1 !important;
+            line-height: inherit !important;
             display: inline-block;
             margin: 0 !important;
             padding: 0 !important;
@@ -2317,47 +2427,162 @@
         .main-lang,
         .sub-lang {
             display: block;
-            line-height: 1 !important;
+            /* FIX: Gunakan --main-line-height agar wrapped text mengikuti line height user. */
+            line-height: var(--main-line-height);
             margin: 0 !important;
             padding: 0 !important;
             min-height: 0;
             overflow: visible;
             text-align: inherit;
             text-decoration: inherit;
-            width: auto;
+            width: fit-content;
+            max-width: 100%;
+            box-sizing: border-box;
+            word-wrap: normal !important;
+            overflow-wrap: normal !important;
+            word-break: normal !important;
         }
 
         .main-lang {
             font-size: var(--main-font-size);
-            transform: translateY(0);
         }
 
         .sub-lang {
             font-size: calc(var(--main-font-size) * 0.6);
             pointer-events: none;
-            transform: translateY(0);
             margin-top: 0 !important;
+            background-image: none !important;
+            -webkit-background-clip: initial !important;
+            -webkit-text-fill-color: currentColor !important;
+        }
+
+        .sub-lang .word,
+        .sub-lang .char {
+            background-image: none !important;
+            -webkit-background-clip: initial !important;
+            -webkit-text-fill-color: currentColor !important;
+            color: inherit !important;
         }
 
         /* NEW: BILINGUAL LINE WRAPPER - FLEX BASED ALIGNMENT */
         .bilingual-line {
-            display: inline-flex;
+            display: inline-flex;   /* [FIX v9] inline-flex agar width content-sized, bukan block-fill */
             flex-direction: column;
             align-items: inherit;
             justify-content: center;
             gap: 0.1em;
             min-height: 0;
             overflow: visible;
-            width: auto;
+            width: auto;            /* [FIX v9] auto — content-sized agar flex centering bekerja */
             margin: 0;
             position: relative;
             text-align: inherit;
+        }
+
+        /* =====================================================================
+         * FIX: BOX THEME FADE-IN SAAT PER-WORD / PER-CHAR FX AKTIF
+         * Mencegah box hitam / frosted muncul tiba-tiba tanpa transisi (flash kosong).
+         * Box ikut memudar halus (fade in) bersamaan dengan animasi kata/huruf.
+         * ===================================================================== */
+        :is(
+            .fx-bloom, .fx-smoke, .fx-light, .fx-softfocus, .fx-float,
+            .fx-dust, .fx-lens, .fx-wipe, .fx-abyss, .fx-aurora,
+            .fx-punch, .fx-elastic, .fx-flashpop, .fx-whip, .fx-gdrop,
+            .fx-rgb, .fx-shake, .fx-smash, .fx-slash, .fx-terminal,
+            .fx-stagger, .fx-spin, .fx-wave, .fx-gauss, .fx-glitch,
+            .fx-shockwave, .fx-overdrive, .fx-nuke, .fx-voltage, .fx-riot,
+            .fx-holy-breathe, .fx-sanctify, .fx-ascend, .fx-mist-form, .fx-rapture,
+            .fx-smoke-deep, .fx-liquid, .fx-zoom-deep, .fx-glitch-deep,
+            .fx-fisheye, .fx-radial-blur, .fx-chromatic, .fx-motion-blur,
+            .fx-veil-lift, .fx-particle,
+            .fx-praise-letter-zoom-spark, .fx-praise-letter-strobe-pop,
+            .fx-praise-letter-prism-snap, .fx-praise-letter-whip-grid,
+            .fx-praise-letter-flash-cut, .fx-praise-letter-orbit-hit,
+            .fx-praise-letter-bass-drop, .fx-praise-letter-chroma-burst,
+            .fx-praise-letter-tile-shatter, .fx-praise-letter-speed-ramp,
+            .fx-worship-letter-candle-rise, .fx-worship-letter-mist-bloom,
+            .fx-worship-letter-lens-prayer, .fx-worship-letter-silk-drift,
+            .fx-worship-letter-soft-iris, .fx-worship-letter-cloud-form,
+            .fx-worship-letter-golden-hour, .fx-worship-letter-deep-focus,
+            .fx-worship-letter-veil-cascade, .fx-worship-letter-cinematic-breathe
+        ) :is(.theme-box-black, .theme-frosted) {
+            animation: boxThemeFadeIn var(--fade-speed, 0.5s) ease-out both;
+        }
+
+        :is(
+            .fx-bloom, .fx-smoke, .fx-light, .fx-softfocus, .fx-float,
+            .fx-dust, .fx-lens, .fx-wipe, .fx-abyss, .fx-aurora,
+            .fx-punch, .fx-elastic, .fx-flashpop, .fx-whip, .fx-gdrop,
+            .fx-rgb, .fx-shake, .fx-smash, .fx-slash, .fx-terminal,
+            .fx-stagger, .fx-spin, .fx-wave, .fx-gauss, .fx-glitch,
+            .fx-shockwave, .fx-overdrive, .fx-nuke, .fx-voltage, .fx-riot,
+            .fx-holy-breathe, .fx-sanctify, .fx-ascend, .fx-mist-form, .fx-rapture,
+            .fx-smoke-deep, .fx-liquid, .fx-zoom-deep, .fx-glitch-deep,
+            .fx-fisheye, .fx-radial-blur, .fx-chromatic, .fx-motion-blur,
+            .fx-veil-lift, .fx-particle,
+            .fx-praise-letter-zoom-spark, .fx-praise-letter-strobe-pop,
+            .fx-praise-letter-prism-snap, .fx-praise-letter-whip-grid,
+            .fx-praise-letter-flash-cut, .fx-praise-letter-orbit-hit,
+            .fx-praise-letter-bass-drop, .fx-praise-letter-chroma-burst,
+            .fx-praise-letter-tile-shatter, .fx-praise-letter-speed-ramp,
+            .fx-worship-letter-candle-rise, .fx-worship-letter-mist-bloom,
+            .fx-worship-letter-lens-prayer, .fx-worship-letter-silk-drift,
+            .fx-worship-letter-soft-iris, .fx-worship-letter-cloud-form,
+            .fx-worship-letter-golden-hour, .fx-worship-letter-deep-focus,
+            .fx-worship-letter-veil-cascade, .fx-worship-letter-cinematic-breathe
+        ) :is(.theme-cloud-halo, .theme-cinematic-caption, .theme-calligraphy-gold, .theme-liquid-gold-box, .theme-aurora-glass-box, .theme-ink-sermon, .theme-velvet-marquee, .theme-modern-kinetic, .theme-sacred-parchment).lyric-text::before {
+            animation: boxThemeFadeIn var(--fade-speed, 0.5s) ease-out both;
+        }
+
+        @keyframes boxThemeFadeIn {
+            0% {
+                opacity: 0;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+
+        /* =====================================================================
+         * FIX: SHADOW SUPPRESSOR untuk GRADIENT-CLIP THEMES (dual-track)
+         * Theme gradient (menggunakan -webkit-text-fill-color: transparent)
+         * TIDAK boleh menerima text-shadow dari animasi .char/.word,
+         * karena hasilnya bayangan hantu melayang tanpa teks (shadow tanpa fill).
+         * Solid-color themes TETAP menerima shadow dari FX animasi.
+         * ===================================================================== */
+        .theme-gold .char, .theme-gold .word,
+        .theme-sunset .char, .theme-sunset .word,
+        .theme-nature .char, .theme-nature .word,
+        .theme-hologram .char, .theme-hologram .word,
+        .theme-retro .char, .theme-retro .word,
+        .theme-metal .char, .theme-metal .word,
+        .theme-firework .char, .theme-firework .word,
+        .theme-spirit .char, .theme-spirit .word,
+        .theme-rainbow .char, .theme-rainbow .word,
+        .theme-goldleaf .char, .theme-goldleaf .word,
+        .theme-covenant .char, .theme-covenant .word,
+        .theme-wildfire .char, .theme-wildfire .word,
+        .theme-celebration .char, .theme-celebration .word,
+        .theme-duotone .char, .theme-duotone .word,
+        .theme-aurora-art .char, .theme-aurora-art .word,
+        .theme-solarpunk .char, .theme-solarpunk .word,
+        .theme-neo-prism .char, .theme-neo-prism .word,
+        .theme-liquid-gold-box .char, .theme-liquid-gold-box .word,
+        .theme-aurora-glass-box .char, .theme-aurora-glass-box .word,
+        .theme-modern-kinetic .char, .theme-modern-kinetic .word,
+        .theme-blueprint .char, .theme-blueprint .word,
+        .fx-split-active.lyric-text,
+        .fx-split-active .lyric-text,
+        .fx-split-active .main-lang,
+        .fx-split-active .bilingual-line {
+            text-shadow: none !important;
         }
 
         /* ========================================= */
         /* ENHANCED ANTI-GAP: WORD/CHAR BASELINE FIX */
         /* Suppress height expansion pada bilingual */
         /* ========================================= */
+
 
         /* CINEMATIC WORSHIP: Per-Word Effects */
         .fx-bloom .word,
@@ -2366,7 +2591,7 @@
         .fx-softfocus .word,
         .fx-float .word {
             vertical-align: baseline !important;
-            line-height: 1 !important;
+            line-height: inherit !important;
             display: inline-block;
             margin: 0 !important;
             padding: 0 !important;
@@ -2384,7 +2609,7 @@
         .fx-slash .char,
         .fx-terminal .char {
             vertical-align: baseline !important;
-            line-height: 1 !important;
+            line-height: inherit !important;
             display: inline-block;
             margin: 0 !important;
             padding: 0 !important;
@@ -2397,7 +2622,7 @@
         .fx-abyss .word,
         .fx-aurora .word {
             vertical-align: baseline !important;
-            line-height: 1 !important;
+            line-height: inherit !important;
             display: inline-block;
             margin: 0 !important;
             padding: 0 !important;
@@ -2469,6 +2694,7 @@
             100% {
                 opacity: 1;
                 clip-path: circle(150% at 50% 50%);
+                filter: none;
             }
         }
 
@@ -2512,6 +2738,8 @@
                 opacity: 1;
                 transform: scale(1);
                 color: inherit;
+                text-shadow: none;
+                filter: none;
             }
         }
 
@@ -2643,6 +2871,7 @@
                 opacity: 1;
                 transform: translate3d(0, 0, 0) scale(1);
                 filter: none;
+                text-shadow: none;
             }
         }
 
@@ -2824,6 +3053,7 @@
                 opacity: 1;
                 transform: translate3d(0, 0, 0) scale(1) skewX(0);
                 filter: none;
+                text-shadow: none;
             }
         }
 
@@ -3445,7 +3675,7 @@
         .fx-rapture .word {
             display: inline-block;
             vertical-align: baseline !important;
-            line-height: 1 !important;
+            line-height: inherit !important;
             margin: 0 !important;
             padding: 0 !important;
             will-change: transform, opacity, filter;
@@ -3591,7 +3821,7 @@
         .fx-riot .char {
             display: inline-block;
             vertical-align: baseline !important;
-            line-height: 1 !important;
+            line-height: inherit !important;
             margin: 0 !important;
             padding: 0 !important;
             will-change: transform, opacity, filter;
@@ -5235,6 +5465,24 @@
             isolation: isolate;
         }
 
+        :is(
+            .theme-cloud-halo,
+            .theme-cinematic-caption,
+            .theme-calligraphy-gold,
+            .theme-liquid-gold-box,
+            .theme-aurora-glass-box,
+            .theme-ink-sermon,
+            .theme-velvet-marquee,
+            .theme-modern-kinetic,
+            .theme-sacred-parchment
+        ).lyric-text {
+            display: inline-flex;
+            flex-direction: column;
+            width: auto;
+            max-width: 100%;
+            align-items: inherit;
+        }
+
         .theme-cloud-halo.lyric-text::before,
         .theme-cinematic-caption.lyric-text::before,
         .theme-calligraphy-gold.lyric-text::before,
@@ -5246,7 +5494,7 @@
         .theme-sacred-parchment.lyric-text::before {
             content: "";
             position: absolute;
-            inset: -0.28em -0.7em;
+            inset: -0.40em -0.75em;
             z-index: -1;
             pointer-events: none;
         }
@@ -5300,7 +5548,7 @@
         }
 
         .theme-cinematic-caption.lyric-text::before {
-            inset: -0.22em -0.62em;
+            inset: -0.40em -0.75em;
             border-radius: 12px;
             background: linear-gradient(110deg, rgba(8, 10, 16, 0.86), rgba(30, 34, 48, 0.72));
             border: 1px solid rgba(255, 218, 145, 0.42);
@@ -5460,7 +5708,7 @@
         .fx-worship-letter-cinematic-breathe .char {
             display: inline-block;
             vertical-align: baseline !important;
-            line-height: 1 !important;
+            line-height: inherit !important;
             will-change: transform, opacity, filter;
             transform-origin: center;
             backface-visibility: hidden;
@@ -5554,7 +5802,7 @@
         @keyframes woCandleRise {
             0% { opacity: 0; transform: translate3d(0, 34px, 0) scale(0.86); filter: blur(5px) brightness(1.9); text-shadow: 0 0 20px rgba(255, 196, 95, 0.72); }
             68% { opacity: 1; transform: translate3d(0, -3px, 0) scale(1.02); filter: blur(1px) brightness(1.16); }
-            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; text-shadow: none; }
         }
 
         @keyframes woMistBloom {
@@ -5566,7 +5814,7 @@
         @keyframes woLensPrayer {
             0% { opacity: 0; transform: translate3d(0, 16px, 0) scale(1.12); filter: blur(6px) brightness(2); text-shadow: 0 0 28px rgba(255, 255, 255, 0.72); }
             58% { opacity: 1; transform: translate3d(0, -2px, 0) scale(1.02); filter: blur(1px) brightness(1.2); }
-            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
+            100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; text-shadow: none; }
         }
 
         @keyframes woSilkDrift {
@@ -5590,7 +5838,7 @@
         @keyframes woGoldenHour {
             0% { opacity: 0; transform: translateY(26px) scale(0.92); filter: sepia(1) blur(18px) brightness(3.2); text-shadow: 0 0 36px rgba(255, 190, 92, 0.78); }
             70% { opacity: 1; transform: translateY(-2px) scale(1.02); filter: sepia(0.25) blur(1px) brightness(1.25); }
-            100% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: none; text-shadow: none; }
         }
 
         @keyframes woDeepFocus {
@@ -5621,21 +5869,92 @@
             color: transparent !important;
         }
 
-        .gradient-text .word,
-        .gradient-text .char,
-        .gradient-text .main-lang {
+        /* Gradient text: in split animations, gradient fill is applied cleanly to .char (leaf elements) */
+        .gradient-text .char {
             background-image: var(--grad-color);
             -webkit-background-clip: text !important;
             -webkit-text-fill-color: transparent !important;
             color: transparent !important;
         }
 
-        .gradient-text .sub-lang,
+        /* In static/non-split state, .word and .main-lang also share gradient fill */
+        .gradient-text:not(.fx-split-active) .word,
+        .gradient-text:not(.fx-split-active) .main-lang {
+            background-image: var(--grad-color);
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+            color: transparent !important;
+        }
+
+        /* Untuk 21 tema gradient: saat animasi per kata/huruf, sembunyikan background clip
+           dan drop-shadow pada container .lyric-text, .main-lang, .word agar gradient fill murni dibawa oleh .char yang bergerak */
+        .fx-split-active.lyric-text:is(
+            .theme-gold, .theme-sunset, .theme-nature, .theme-covenant, .theme-hologram,
+            .theme-retro, .theme-metal, .theme-firework, .theme-spirit,
+            .theme-rainbow, .theme-goldleaf, .theme-wildfire, .theme-celebration,
+            .theme-duotone, .theme-aurora-art, .theme-solarpunk, .theme-neo-prism,
+            .theme-liquid-gold-box, .theme-aurora-glass-box, .theme-modern-kinetic,
+            .theme-blueprint
+        ),
+        .fx-split-active .lyric-text:is(
+            .theme-gold, .theme-sunset, .theme-nature, .theme-covenant, .theme-hologram,
+            .theme-retro, .theme-metal, .theme-firework, .theme-spirit,
+            .theme-rainbow, .theme-goldleaf, .theme-wildfire, .theme-celebration,
+            .theme-duotone, .theme-aurora-art, .theme-solarpunk, .theme-neo-prism,
+            .theme-liquid-gold-box, .theme-aurora-glass-box, .theme-modern-kinetic,
+            .theme-blueprint
+        ),
+        .fx-split-active .main-lang,
+        .fx-split-active .bilingual-line,
+        .gradient-text.fx-split-active .main-lang,
+        .fx-split-active .gradient-text .main-lang,
+        .gradient-text.fx-split-active .word,
+        .fx-split-active .gradient-text .word {
+            background-image: none !important;
+            -webkit-background-clip: initial !important;
+            -webkit-text-fill-color: initial !important;
+            filter: none !important;
+        }
+
+        /* Anti-ghosting untuk Word Motion Loop aktif pada tema gradient */
+        [class*='loop-worship-word-'] .gradient-text .main-lang,
+        [class*='loop-praise-word-'] .gradient-text .main-lang {
+            background-image: none !important;
+            -webkit-background-clip: initial !important;
+            -webkit-text-fill-color: initial !important;
+        }
+        [class*='loop-worship-word-'] .gradient-text .word,
+        [class*='loop-praise-word-'] .gradient-text .word {
+            background-image: var(--grad-color);
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+        }
+
+        /* Anti-ghosting pada container ghost layer saat transisi split */
+        .fx-split-active .lyric-ghost {
+            filter: none !important;
+            text-shadow: none !important;
+        }
+
+        /* Sub-lang bilingual: Jamin selalu tampak dengan warna konfigurasi di SEMUA theme */
+        .sub-lang,
+        .gradient-text .sub-lang {
+            background-image: none !important;
+            -webkit-background-clip: initial !important;
+            -webkit-text-fill-color: currentColor !important;
+            filter: none !important;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+        }
+
+        .sub-lang .word,
+        .sub-lang .char,
         .gradient-text .sub-lang .word,
         .gradient-text .sub-lang .char {
             background-image: none !important;
             -webkit-background-clip: initial !important;
-            -webkit-text-fill-color: initial !important;
+            -webkit-text-fill-color: inherit !important;
+            color: inherit !important;
+            filter: none !important;
         }
 
         .iframe-layer {
@@ -5646,10 +5965,23 @@
             height: 100%;
             border: none;
             background: transparent !important;
-            will-change: transform;
+            will-change: transform, opacity;
             transform: translate3d(0, 0, 0);
             backface-visibility: hidden;
             -webkit-backface-visibility: hidden;
+        }
+
+        .iframe-layer.layer-video {
+            transition: opacity var(--bg-transition-time, 0.5s) ease;
+        }
+
+        .iframe-layer.layer-photo {
+            transition: none !important;
+        }
+
+        .iframe-layer[data-media-source="remote_sender"].ftb-hidden {
+            opacity: 0 !important;
+            pointer-events: none !important;
         }
 
         .layer-audio {

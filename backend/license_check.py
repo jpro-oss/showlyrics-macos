@@ -274,7 +274,7 @@ async def activate_license_patched(payload: LicensePayload, request: Request):
             # Refresh integrity baseline setelah aktivasi lisensi baru
             try:
                 import file_integrity
-                await asyncio.to_thread(file_integrity._run_first_install)
+                await asyncio.to_thread(file_integrity.initialize)
                 print("[LICENSE] Integrity baseline refreshed after activation.")
             except Exception as e:
                 print(f"[LICENSE] Integrity refresh error: {e}")

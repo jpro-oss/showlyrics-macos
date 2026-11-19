@@ -4,6 +4,103 @@ let currentActiveSender = null;
 window.remoteLivePhotoId = null;
 window.activeRemoteSenderIp = null;
 
+// ==========================================
+// 📦 MULTI-SELECT MEDIA STATE & HELPERS
+// ==========================================
+window.selectedMediaIds = new Set();
+window.lastSelectedMediaId = null;
+
+function clearMediaSelection() {
+    if (!window.selectedMediaIds) window.selectedMediaIds = new Set();
+    window.selectedMediaIds.clear();
+    window.lastSelectedMediaId = null;
+    const grid = document.getElementById("bg-grid-container");
+    if (grid) {
+        grid.classList.remove("has-selection");
+        grid.classList.remove("multi-selection");
+        grid.querySelectorAll(".bg-media-card").forEach(card => {
+            card.classList.remove("selected");
+            card.draggable = true;
+        });
+        grid.querySelectorAll(".bg-media-select-btn.active").forEach(btn => {
+            btn.classList.remove("active");
+            btn.innerText = "";
+        });
+    }
+}
+window.clearMediaSelection = clearMediaSelection;
+
+function updateMediaSelectionUI() {
+    const grid = document.getElementById("bg-grid-container");
+    if (!grid) return;
+    const count = window.selectedMediaIds.size;
+    const isMulti = count > 1;
+    if (count > 0) {
+        grid.classList.add("has-selection");
+    } else {
+        grid.classList.remove("has-selection");
+        window.lastSelectedMediaId = null;
+    }
+    if (isMulti) {
+        grid.classList.add("multi-selection");
+    } else {
+        grid.classList.remove("multi-selection");
+    }
+    grid.querySelectorAll(".bg-media-card").forEach(card => {
+        const id = card.getAttribute("data-media-id");
+        const btn = card.querySelector(".bg-media-select-btn");
+        card.draggable = !isMulti;
+        if (id && window.selectedMediaIds.has(id)) {
+            card.classList.add("selected");
+            if (btn) {
+                btn.classList.add("active");
+                btn.innerText = "✓";
+            }
+        } else {
+            card.classList.remove("selected");
+            if (btn) {
+                btn.classList.remove("active");
+                btn.innerText = "";
+            }
+        }
+    });
+}
+window.updateMediaSelectionUI = updateMediaSelectionUI;
+
+function rangeSelectMedia(targetId, itemsList) {
+    if (!itemsList || itemsList.length === 0) return;
+    if (!window.lastSelectedMediaId) {
+        window.selectedMediaIds.add(targetId);
+        window.lastSelectedMediaId = targetId;
+        updateMediaSelectionUI();
+        return;
+    }
+    const ids = itemsList.map(item => item.id);
+    const startIdx = ids.indexOf(window.lastSelectedMediaId);
+    const endIdx = ids.indexOf(targetId);
+    if (startIdx === -1 || endIdx === -1) {
+        window.selectedMediaIds.add(targetId);
+        window.lastSelectedMediaId = targetId;
+        updateMediaSelectionUI();
+        return;
+    }
+    const min = Math.min(startIdx, endIdx);
+    const max = Math.max(startIdx, endIdx);
+    for (let i = min; i <= max; i++) {
+        window.selectedMediaIds.add(ids[i]);
+    }
+    window.lastSelectedMediaId = targetId;
+    updateMediaSelectionUI();
+}
+window.rangeSelectMedia = rangeSelectMedia;
+
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && window.selectedMediaIds && window.selectedMediaIds.size > 0) {
+        clearMediaSelection();
+    }
+});
+
+
 let mediaSortKey = localStorage.getItem("mediaSortKey") || "name";
 let mediaSortOrder = localStorage.getItem("mediaSortOrder") || "asc";
 
@@ -25,10 +122,15 @@ function toggleBgLibrary() {
     const content = document.getElementById("bg-library-content");
     const icon = document.getElementById("bg-toggle-icon");
     const resizer = document.getElementById("bg-library-resizer");
+    const subBar = document.getElementById("bg-sub-toggle-bar");
 
     if (content.style.display === "none" || content.style.display === "") {
         content.style.display = "flex";
         if (resizer) resizer.style.display = "block";
+        if (subBar) {
+            const isMedia = ['video', 'audio', 'photo', 'presentation'].includes(currentMediaCategory);
+            subBar.style.display = isMedia ? "flex" : "none";
+        }
         icon.innerText = "▼ COLLAPSE";
 
         if (currentMediaCategory === 'scripture') {
@@ -38,6 +140,7 @@ function toggleBgLibrary() {
             if (mediaPanel) mediaPanel.style.display = "none";
             if (scrPanel) scrPanel.style.display = "flex";
             if (typeof loadBibleTranslations === 'function') loadBibleTranslations();
+            if (typeof window.setNavigationTarget === 'function') window.setNavigationTarget('scripture');
         } else {
             // Load media biasa jika belum ada data
             if (!mediaDatabase.folders || mediaDatabase.folders.length === 0) {
@@ -47,9 +150,12 @@ function toggleBgLibrary() {
     } else {
         content.style.display = "none";
         if (resizer) resizer.style.display = "none";
+        if (subBar) subBar.style.display = "none";
         icon.innerText = "▲ EXPAND";
+        if (typeof window.setNavigationTarget === 'function') window.setNavigationTarget('lyrics');
     }
 }
+window.toggleBgLibrary = toggleBgLibrary;
 
 async function setupBgLibraryResizer() {
     const content = document.getElementById("bg-library-content");
@@ -314,10 +420,49 @@ function renderBgGrid(folderFilter) {
 
 function previewBgVideo(id, name) {
     closeBgPreview(); // Force cleanup of any previous decoders first!
-    document.getElementById("bg-preview-title").innerText = name;
+    document.getElementById("bg-preview-title").innerText = "Preview Video - " + name;
     const container = document.getElementById("bg-video-container");
-    container.innerHTML = `<video src="/api/stream_video/${id}" style="max-height: 70vh; max-width: 90vw;" autoplay loop muted controls></video>`;
+    container.innerHTML = `<video id="bg-video-preview-el" src="/api/stream_video/${id}" style="max-height: 70vh; max-width: 90vw;" autoplay loop controls></video>`;
     document.getElementById("bg-preview-modal").style.display = "flex";
+
+    const vidEl = document.getElementById("bg-video-preview-el");
+    if (vidEl && typeof window.applyMonitorRouting === 'function') {
+        window.applyMonitorRouting(vidEl);
+    }
+}
+
+function previewBgAudio(id, name) {
+    closeBgPreview(); // Force cleanup first
+    document.getElementById("bg-preview-title").innerText = "Preview Audio - " + name;
+    const container = document.getElementById("bg-video-container");
+    container.innerHTML = `
+        <div style="padding:40px; display:flex; flex-direction:column; align-items:center; gap:20px; background:#121218; width:450px; max-width:90vw; border-radius:10px;">
+            <div style="font-size:4em; animation: audioDiscSpin 6s linear infinite;">🎵</div>
+            <audio id="bg-audio-preview-el" src="/api/stream_audio/${id}" style="width:100%;" autoplay controls loop></audio>
+        </div>`;
+    document.getElementById("bg-preview-modal").style.display = "flex";
+
+    // Route to monitor device if enabled
+    const audioEl = document.getElementById("bg-audio-preview-el");
+    if (audioEl && window._audioMonitorEnabled && window._audioMonitorDeviceId && window._audioMonitorDeviceId !== 'default') {
+        if (audioEl.setSinkId) {
+            audioEl.setSinkId(window._audioMonitorDeviceId).catch(() => {});
+        }
+    }
+}
+window.previewBgAudio = previewBgAudio;
+
+// CSS animation style for spinning disc in preview modal
+if (!document.getElementById("preview-audio-anim")) {
+    const style = document.createElement("style");
+    style.id = "preview-audio-anim";
+    style.textContent = `
+        @keyframes audioDiscSpin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 function closeBgPreview() {
@@ -333,7 +478,273 @@ function closeBgPreview() {
             vid.load(); // Force browser to cancel pending loads and release GPU decoders
         } catch (_) {}
     }
+
+    const aud = container.querySelector('audio');
+    if (aud) {
+        aud.pause();
+        aud.src = "";
+        aud.removeAttribute('src');
+        try {
+            aud.load();
+        } catch (_) {}
+    }
+
     container.innerHTML = "";
+}
+
+// ==========================================
+// 📷 PHOTO PREVIEW MODAL (FULLSCREEN + ZOOM/PAN)
+// ==========================================
+let photoPreviewList = [];
+let photoPreviewIndex = 0;
+let photoZoomScale = 1;
+let photoPanX = 0;
+let photoPanY = 0;
+let isPhotoDragging = false;
+let photoDragMoved = false;
+let photoDragStartX = 0;
+let photoDragStartY = 0;
+let photoPanOriginX = 0;
+let photoPanOriginY = 0;
+let photoSuppressBackdropClick = false;
+let photoPreviewBound = false;
+
+function isPhotoPreviewOpen() {
+    const modal = document.getElementById("photo-preview-modal");
+    return Boolean(modal && modal.classList.contains("show-flex"));
+}
+
+function clampPhotoPan(panX, panY, scale) {
+    const stage = document.getElementById("photo-preview-stage");
+    const img = document.getElementById("photo-preview-img");
+    if (!stage || !img || scale <= 1) return { x: 0, y: 0 };
+
+    const maxX = Math.max(0, (img.clientWidth * scale - stage.clientWidth) / 2);
+    const maxY = Math.max(0, (img.clientHeight * scale - stage.clientHeight) / 2);
+    return {
+        x: Math.max(-maxX, Math.min(maxX, panX)),
+        y: Math.max(-maxY, Math.min(maxY, panY))
+    };
+}
+
+function applyPhotoTransform() {
+    const img = document.getElementById("photo-preview-img");
+    const label = document.getElementById("photo-zoom-label");
+    if (img) {
+        img.style.transform = `translate(${photoPanX}px, ${photoPanY}px) scale(${photoZoomScale})`;
+        img.classList.toggle("is-zoomed", photoZoomScale > 1);
+    }
+    if (label) {
+        label.innerText = `${Math.round(photoZoomScale * 100)}%`;
+    }
+}
+
+window.resetPhotoZoom = function () {
+    photoZoomScale = 1;
+    photoPanX = 0;
+    photoPanY = 0;
+    applyPhotoTransform();
+};
+
+window.zoomPhotoPreview = function (delta) {
+    const nextScale = Math.max(1, Math.min(5, Math.round((photoZoomScale + delta) * 100) / 100));
+    photoZoomScale = nextScale;
+    const clamped = clampPhotoPan(photoPanX, photoPanY, photoZoomScale);
+    photoPanX = clamped.x;
+    photoPanY = clamped.y;
+    applyPhotoTransform();
+};
+
+function updatePhotoPreviewUI() {
+    const item = photoPreviewList[photoPreviewIndex];
+    if (!item) return;
+
+    const titleEl = document.getElementById("photo-preview-title");
+    const counterEl = document.getElementById("photo-preview-counter");
+    const prevBtn = document.getElementById("photo-preview-prev");
+    const nextBtn = document.getElementById("photo-preview-next");
+    const imgEl = document.getElementById("photo-preview-img");
+
+    if (titleEl) titleEl.innerText = "Preview: " + item.name;
+    if (counterEl) counterEl.innerText = `Photo ${photoPreviewIndex + 1} / ${photoPreviewList.length}`;
+    if (prevBtn) prevBtn.disabled = photoPreviewIndex <= 0;
+    if (nextBtn) nextBtn.disabled = photoPreviewIndex >= photoPreviewList.length - 1;
+
+    window.resetPhotoZoom();
+
+    if (imgEl) {
+        imgEl.onerror = () => {
+            if (!imgEl.src.endsWith("/static/logo.png")) {
+                imgEl.src = "/static/logo.png";
+            }
+        };
+        imgEl.src = `/api/stream_photo/${item.id}`;
+    }
+}
+
+function bindPhotoPreviewInteractions() {
+    if (photoPreviewBound) return;
+    photoPreviewBound = true;
+
+    const stage = document.getElementById("photo-preview-stage");
+    const img = document.getElementById("photo-preview-img");
+
+    if (stage) {
+        stage.addEventListener("wheel", (e) => {
+            if (!isPhotoPreviewOpen()) return;
+            e.preventDefault();
+            window.zoomPhotoPreview(e.deltaY < 0 ? 0.25 : -0.25);
+        }, { passive: false });
+    }
+
+    if (img) {
+        img.addEventListener("dblclick", (e) => {
+            if (!isPhotoPreviewOpen()) return;
+            e.preventDefault();
+            if (photoZoomScale > 1) {
+                window.resetPhotoZoom();
+            } else {
+                photoZoomScale = 2;
+                photoPanX = 0;
+                photoPanY = 0;
+                applyPhotoTransform();
+            }
+        });
+
+        img.addEventListener("mousedown", (e) => {
+            if (!isPhotoPreviewOpen() || photoZoomScale <= 1 || e.button !== 0) return;
+            e.preventDefault();
+            isPhotoDragging = true;
+            photoDragMoved = false;
+            photoDragStartX = e.clientX;
+            photoDragStartY = e.clientY;
+            photoPanOriginX = photoPanX;
+            photoPanOriginY = photoPanY;
+            img.classList.add("is-dragging");
+        });
+    }
+
+    window.addEventListener("mousemove", (e) => {
+        if (!isPhotoDragging) return;
+        const dx = e.clientX - photoDragStartX;
+        const dy = e.clientY - photoDragStartY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+            photoDragMoved = true;
+        }
+        const clamped = clampPhotoPan(photoPanOriginX + dx, photoPanOriginY + dy, photoZoomScale);
+        photoPanX = clamped.x;
+        photoPanY = clamped.y;
+        applyPhotoTransform();
+    });
+
+    window.addEventListener("mouseup", () => {
+        if (!isPhotoDragging) return;
+        isPhotoDragging = false;
+        const imgEl = document.getElementById("photo-preview-img");
+        if (imgEl) imgEl.classList.remove("is-dragging");
+        if (photoDragMoved) {
+            photoSuppressBackdropClick = true;
+            setTimeout(() => { photoSuppressBackdropClick = false; }, 0);
+        }
+    });
+
+    // Capture phase prevents global lyric/scripture/selection handlers from reacting while modal is open
+    window.addEventListener("keydown", (e) => {
+        if (!isPhotoPreviewOpen()) return;
+
+        if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.closePhotoPreview();
+        } else if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.prevPhotoPreview();
+        } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.nextPhotoPreview();
+        } else if (e.key === "+" || e.key === "=") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.zoomPhotoPreview(0.25);
+        } else if (e.key === "-" || e.key === "_") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.zoomPhotoPreview(-0.25);
+        } else if (e.key === "0") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.resetPhotoZoom();
+        }
+    }, true);
+}
+
+window.openPhotoPreview = function (mediaId, mediaName) {
+    bindPhotoPreviewInteractions();
+
+    const items = getFilteredSortedMediaItems();
+    const idx = items.findIndex(item => item.id === mediaId);
+    if (idx !== -1) {
+        photoPreviewList = items.map(item => ({ id: item.id, name: item.name }));
+        photoPreviewIndex = idx;
+    } else {
+        photoPreviewList = [{ id: mediaId, name: mediaName }];
+        photoPreviewIndex = 0;
+    }
+
+    const modal = document.getElementById("photo-preview-modal");
+    if (modal) modal.classList.add("show-flex");
+    updatePhotoPreviewUI();
+};
+
+window.closePhotoPreview = function () {
+    const modal = document.getElementById("photo-preview-modal");
+    if (modal) modal.classList.remove("show-flex");
+
+    isPhotoDragging = false;
+    photoDragMoved = false;
+    window.resetPhotoZoom();
+
+    const imgEl = document.getElementById("photo-preview-img");
+    if (imgEl) {
+        imgEl.onerror = null;
+        imgEl.classList.remove("is-dragging");
+        imgEl.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        imgEl.removeAttribute("src");
+    }
+
+    photoPreviewList = [];
+    photoPreviewIndex = 0;
+};
+
+window.prevPhotoPreview = function () {
+    if (photoPreviewIndex > 0) {
+        photoPreviewIndex--;
+        updatePhotoPreviewUI();
+    }
+};
+
+window.nextPhotoPreview = function () {
+    if (photoPreviewIndex < photoPreviewList.length - 1) {
+        photoPreviewIndex++;
+        updatePhotoPreviewUI();
+    }
+};
+
+window.handlePhotoPreviewBackdropClick = function (e) {
+    if (photoSuppressBackdropClick) return;
+    const modal = document.getElementById("photo-preview-modal");
+    if (e.target === modal || (e.target && e.target.classList && e.target.classList.contains("photo-preview-content"))) {
+        window.closePhotoPreview();
+    }
+};
+
+function _updateAudioCardBtn(mediaId, isPlaying) {
+    const btn = document.getElementById(`audio-prev-btn-${mediaId}`);
+    if (!btn) return;
+    btn.innerText = isPlaying ? '⏹' : '▶';
+    btn.classList.toggle('playing', isPlaying);
 }
 
 async function createVirtualFolder() {
@@ -529,6 +940,28 @@ function showLibraryContextMenu(e, mediaId, mediaName, category) {
             btnPreview.onclick = () => { menu.remove(); previewBgVideo(mediaId, mediaName); };
             menu.appendChild(btnPreview);
         }
+
+        if (category === 'audio') {
+            const btnAudioPrev = document.createElement("div");
+            btnAudioPrev.className = "grid-context-menu-item";
+            btnAudioPrev.innerHTML = "🎵 Preview Audio";
+            btnAudioPrev.onclick = () => { menu.remove(); previewBgAudio(mediaId, mediaName); };
+            menu.appendChild(btnAudioPrev);
+        }
+
+        if (category === 'photo') {
+            const btnPhotoPrev = document.createElement("div");
+            btnPhotoPrev.className = "grid-context-menu-item";
+            btnPhotoPrev.innerHTML = "👁️ Preview Photo";
+            btnPhotoPrev.onclick = () => { menu.remove(); window.openPhotoPreview(mediaId, mediaName); };
+            menu.appendChild(btnPhotoPrev);
+        }
+
+        const btnSched = document.createElement("div");
+        btnSched.className = "grid-context-menu-item";
+        btnSched.innerHTML = "📝 Add to Schedule";
+        btnSched.onclick = () => { menu.remove(); window.addMediaToSchedule(category, mediaId, mediaName); };
+        menu.appendChild(btnSched);
     }
 
     const btnRename = document.createElement("div");
@@ -600,6 +1033,203 @@ function showLibraryContextMenu(e, mediaId, mediaName, category) {
     setTimeout(() => { document.addEventListener("click", function close() { if (menu) menu.remove(); document.removeEventListener("click", close); }); }, 10);
 }
 
+
+function showBatchContextMenu(e, filteredItems) {
+    const oldMenu = document.getElementById("lib-context-menu");
+    if (oldMenu) oldMenu.remove();
+
+    const count = window.selectedMediaIds ? window.selectedMediaIds.size : 0;
+    if (count <= 1) return;
+
+    const menu = document.createElement("div");
+    menu.id = "lib-context-menu";
+    menu.className = "grid-context-menu";
+
+    const catLabel = currentMediaCategory === 'presentation' ? 'PPT' : currentMediaCategory.toUpperCase();
+    const header = document.createElement("div");
+    header.className = "grid-context-menu-header";
+    header.innerHTML = `📦 <b>${count} ${catLabel} Selected</b>`;
+    menu.appendChild(header);
+
+    // 1. Add to Schedule
+    const btnSched = document.createElement("div");
+    btnSched.className = "grid-context-menu-item";
+    btnSched.innerHTML = `📝 Add ${count} items to Schedule`;
+    btnSched.onclick = () => {
+        menu.remove();
+        batchAddMediaToSchedule(filteredItems);
+    };
+    menu.appendChild(btnSched);
+
+    // 2. Move / Add to Folder
+    const btnMove = document.createElement("div");
+    btnMove.className = "grid-context-menu-item";
+    btnMove.innerHTML = `📁 Move / Add to Folder (${count})...`;
+    btnMove.onclick = () => {
+        menu.remove();
+        batchMoveMediaToFolder();
+    };
+    menu.appendChild(btnMove);
+
+    // 3. Delete Files
+    const btnDel = document.createElement("div");
+    btnDel.className = "grid-context-menu-item grid-context-menu-danger";
+    btnDel.innerHTML = `🗑️ Delete ${count} Files`;
+    btnDel.onclick = () => {
+        menu.remove();
+        batchDeleteMedia();
+    };
+    menu.appendChild(btnDel);
+
+    // 4. Deselect All
+    const btnClear = document.createElement("div");
+    btnClear.className = "grid-context-menu-item";
+    btnClear.innerHTML = `✕ Deselect All (Esc)`;
+    btnClear.onclick = () => {
+        menu.remove();
+        clearMediaSelection();
+    };
+    menu.appendChild(btnClear);
+
+    document.body.appendChild(menu);
+    positionContextMenu(menu, e.clientX, e.clientY);
+    setTimeout(() => {
+        document.addEventListener("click", function close() {
+            if (menu) menu.remove();
+            document.removeEventListener("click", close);
+        });
+    }, 10);
+}
+
+async function batchAddMediaToSchedule(filteredItems) {
+    if (!window.selectedMediaIds || window.selectedMediaIds.size === 0) return;
+    const selectedIds = new Set(window.selectedMediaIds);
+    const itemsToAdd = (filteredItems || []).filter(item => selectedIds.has(item.id));
+    if (itemsToAdd.length === 0) return;
+
+    try {
+        if (currentMediaCategory === 'presentation') {
+            for (const item of itemsToAdd) {
+                const res = await fetch(`/api/media/presentation/${item.id}/slides`);
+                const data = await res.json();
+                const count = data.count || 0;
+                if (count > 0) {
+                    let pptSlides = [];
+                    for (let i = 1; i <= count; i++) {
+                        pptSlides.push({
+                            id: Date.now() + i, text: "", type: "presentation_slide",
+                            bg_id: item.id, bg_type: "presentation", bg_name: `${item.name} (Slide ${i})`, slide_num: i
+                        });
+                    }
+                    const title = `📊 PPT: ${item.name}`;
+                    const payload = { title: title, data: pptSlides, settings: {} };
+                    await fetch('/api/songs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    scheduleList.push({ title: title, note: "Presentation Slide" });
+                }
+            }
+        } else {
+            for (const item of itemsToAdd) {
+                const icon = currentMediaCategory === 'video' ? '🎬' : (currentMediaCategory === 'photo' ? '📷' : '🎵');
+                const labelPrefix = currentMediaCategory === 'video' ? 'VIDEO' : (currentMediaCategory === 'photo' ? 'PHOTO' : 'AUDIO');
+                const title = `${icon} ${labelPrefix}: ${item.name}`;
+                scheduleList.push({
+                    title: title,
+                    note: `${currentMediaCategory.charAt(0).toUpperCase() + currentMediaCategory.slice(1)} Media`,
+                    type: "media",
+                    media_category: currentMediaCategory,
+                    media_id: item.id,
+                    media_name: item.name
+                });
+            }
+        }
+
+        if (typeof renderSchedule === 'function') renderSchedule();
+        if (typeof saveActiveSchedule === 'function') await saveActiveSchedule();
+
+        clearMediaSelection();
+    } catch (err) {
+        console.error("batchAddMediaToSchedule error:", err);
+        showToast("Failed to add items to schedule", "error", 3000);
+    }
+}
+
+async function batchMoveMediaToFolder() {
+    if (!window.selectedMediaIds || window.selectedMediaIds.size === 0) return;
+    const selectedIds = Array.from(window.selectedMediaIds);
+    if (selectedIds.length === 0) return;
+
+    let options = (mediaDatabase.folders || []).filter(f => f !== "ALL").map(f => ({ value: f, label: `📁 ${f}` }));
+    options.unshift({ value: "Uncategorized", label: "🌍 Uncategorized (Remove from folder)" });
+    options.push({ value: "__NEW_FOLDER__", label: "➕ [Create New Folder...]" });
+
+    let targetFolder = await showCustomDialog("select", `Move <b style="color:#00e5ff;">${selectedIds.length} items</b> to folder:`, options, "Uncategorized");
+    if (!targetFolder) return;
+
+    if (targetFolder === "__NEW_FOLDER__") {
+        const newName = await showCustomDialog("prompt", "Enter new folder name:");
+        if (!newName || !newName.trim()) return;
+        targetFolder = newName.trim();
+    }
+
+    showToast(`Moving ${selectedIds.length} files...`, "loading");
+    try {
+        const res = await fetch(`/api/media/${currentMediaCategory}/batch_move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                item_ids: selectedIds,
+                new_folder: targetFolder
+            })
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+            showToast(`Moved ${data.count || selectedIds.length} files to "${targetFolder}"!`, "success", 2500);
+            clearMediaSelection();
+            loadMediaData(currentMediaCategory);
+        } else {
+            showToast(data.message || "Failed to move files", "error", 3000);
+        }
+    } catch (err) {
+        console.error("batchMoveMediaToFolder error:", err);
+        showToast("Error moving files", "error", 3000);
+    }
+}
+
+async function batchDeleteMedia() {
+    if (!window.selectedMediaIds || window.selectedMediaIds.size === 0) return;
+    const selectedIds = Array.from(window.selectedMediaIds);
+    if (selectedIds.length === 0) return;
+
+    const isOk = await showCustomDialog("confirm", `Are you sure you want to delete <b style="color:#ff4444;">${selectedIds.length} selected files</b>?`);
+    if (!isOk) return;
+
+    showToast(`Deleting ${selectedIds.length} files...`, "loading");
+    try {
+        const res = await fetch(`/api/media/${currentMediaCategory}/batch_delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                item_ids: selectedIds
+            })
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+            showToast(`Deleted ${data.count || selectedIds.length} files successfully!`, "success", 2500);
+            clearMediaSelection();
+            loadMediaData(currentMediaCategory);
+        } else {
+            showToast(data.message || "Failed to delete files", "error", 3000);
+        }
+    } catch (err) {
+        console.error("batchDeleteMedia error:", err);
+        showToast("Error deleting files", "error", 3000);
+    }
+}
+
 function openSettingsModal() {
     document.getElementById('settings-modal').style.display = 'flex';
 }
@@ -621,21 +1251,70 @@ function sendBgConfig() {
 }
 
 let currentMediaCategory = "video";
+let lastActiveMediaSubCategory = "video";
 let mediaDatabase = { folders: [], items: {} };
 
 function switchMediaCategory(event, category) {
     if (event) event.stopPropagation();
-    if (currentMediaCategory === category) return;
 
+    // If 'media' parent clicked:
+    if (category === 'media') {
+        const isCurrentMedia = ['video', 'audio', 'photo', 'presentation'].includes(currentMediaCategory);
+        const content = document.getElementById("bg-library-content");
+        const isCollapsed = !content || content.style.display === "none" || content.style.display === "";
+
+        if (isCurrentMedia) {
+            // If collapsed, expand drawer
+            if (isCollapsed) {
+                toggleBgLibrary();
+            }
+            // If already open, do nothing (no-op as chosen in interview)
+            return;
+        } else {
+            // Switching from scripture/camera/plugin to media: restore last sub-category
+            category = lastActiveMediaSubCategory || "video";
+        }
+    }
+
+    const isMediaCategory = ['video', 'audio', 'photo', 'presentation'].includes(category);
+    if (isMediaCategory) {
+        lastActiveMediaSubCategory = category;
+    }
+
+    if (currentMediaCategory === category) {
+        // Ensure drawer is open if user clicks the category
+        const content = document.getElementById("bg-library-content");
+        if (content && (content.style.display === "none" || content.style.display === "")) {
+            toggleBgLibrary();
+        }
+        return;
+    }
+
+    clearMediaSelection();
     currentMediaCategory = category;
     currentActiveFolder = "ALL";
 
+    // Update parent media-cat-btn active states
     const btns = document.querySelectorAll(".media-cat-btn");
     btns.forEach(btn => { btn.classList.remove("active"); });
 
-    const activeBtn = event ? event.currentTarget : document.querySelector(`.media-cat-btn[onclick*="'${category}'"]`);
-    if (activeBtn) { activeBtn.classList.add("active"); }
+    if (isMediaCategory) {
+        const parentBtn = document.getElementById("media-cat-btn-media");
+        if (parentBtn) parentBtn.classList.add("active");
+    } else {
+        const activeBtn = event ? event.currentTarget : (document.getElementById(`media-cat-btn-${category}`) || document.querySelector(`.media-cat-btn[onclick*="'${category}'"]`));
+        if (activeBtn) { activeBtn.classList.add("active"); }
+    }
 
+    // Update sub-media-btn active states
+    const subBtns = document.querySelectorAll(".sub-media-btn");
+    subBtns.forEach(btn => { btn.classList.remove("active"); });
+    if (isMediaCategory) {
+        const activeSubBtn = document.getElementById(`sub-media-btn-${category}`) || document.querySelector(`.sub-media-btn[onclick*="'${category}'"]`);
+        if (activeSubBtn) activeSubBtn.classList.add("active");
+    }
+
+    // Ensure content drawer is open
     const content = document.getElementById("bg-library-content");
     const icon = document.getElementById("bg-toggle-icon");
     const resizer = document.getElementById("bg-library-resizer");
@@ -645,41 +1324,102 @@ function switchMediaCategory(event, category) {
         if (icon) icon.innerText = "▼ COLLAPSE";
     }
 
+    // Show/Hide sub-toggle bar based on media category
+    const subBar = document.getElementById("bg-sub-toggle-bar");
+    if (subBar) {
+        subBar.style.display = isMediaCategory ? "flex" : "none";
+    }
+
     const mediaPanel = document.getElementById("bg-media-panel");
     const scrPanel = document.getElementById("scr-lib-panel");
+    const pluginPanel = document.getElementById("plugin-lib-panel");
+    const extPanel = document.getElementById("ext-lib-panel");
 
     const sidebarTabs = document.getElementById("bg-sidebar-tabs");
     if (sidebarTabs) {
-        sidebarTabs.style.display = (category === 'presentation' || category === 'photo' || category === 'video') ? "flex" : "none";
+        sidebarTabs.style.display = "none";
     }
 
     if (category === 'scripture') {
+        if (typeof window.setNavigationTarget === 'function') window.setNavigationTarget('scripture');
         if (mediaPanel) mediaPanel.style.display = "none";
         if (scrPanel) scrPanel.style.display = "flex";
+        if (pluginPanel) pluginPanel.style.display = "none";
+        if (extPanel) extPanel.style.display = "none";
         const camPanel = document.getElementById("cam-lib-panel");
         if (camPanel) camPanel.style.display = "none";
         if (typeof loadBibleTranslations === 'function') loadBibleTranslations();
     } else if (category === 'camera') {
+        if (typeof window.setNavigationTarget === 'function') window.setNavigationTarget('lyrics');
         if (mediaPanel) mediaPanel.style.display = "none";
         if (scrPanel) scrPanel.style.display = "none";
+        if (pluginPanel) pluginPanel.style.display = "none";
+        if (extPanel) extPanel.style.display = "none";
         const camPanel = document.getElementById("cam-lib-panel");
         if (camPanel) camPanel.style.display = "flex";
         refreshCameraDevices();
         loadCameraSettings();
-    } else {
+    } else if (category === 'plugin') {
+        if (typeof window.setNavigationTarget === 'function') window.setNavigationTarget('lyrics');
+        if (mediaPanel) mediaPanel.style.display = "none";
         if (scrPanel) scrPanel.style.display = "none";
+        if (extPanel) extPanel.style.display = "none";
+        const camPanel = document.getElementById("cam-lib-panel");
+        if (camPanel) camPanel.style.display = "none";
+        if (pluginPanel) pluginPanel.style.display = "flex";
+
+        // Auto-expand drawer agar grid plugin lega (50vh) dan scroll mulus
+        const content = document.getElementById("bg-library-content");
+        if (content) {
+            content.style.display = "flex";
+            const curH = parseInt(content.style.height || "0", 10);
+            if (!content.style.height || content.style.height === "20vh" || curH < 350) {
+                content.style.height = "50vh";
+            }
+        }
+        const resizer = document.getElementById("bg-library-resizer");
+        if (resizer) resizer.style.display = "block";
+        const icon = document.getElementById("bg-toggle-icon");
+        if (icon) icon.innerText = "▼ COLLAPSE";
+
+        if (typeof loadPluginLibrary === 'function') loadPluginLibrary();
+    } else if (category === 'external') {
+        if (typeof window.setNavigationTarget === 'function') window.setNavigationTarget('lyrics');
+        if (mediaPanel) mediaPanel.style.display = "none";
+        if (scrPanel) scrPanel.style.display = "none";
+        if (pluginPanel) pluginPanel.style.display = "none";
+        const camPanel = document.getElementById("cam-lib-panel");
+        if (camPanel) camPanel.style.display = "none";
+        if (extPanel) extPanel.style.display = "flex";
+
+        // Auto-expand drawer agar panel external lega (50vh)
+        const content = document.getElementById("bg-library-content");
+        if (content) {
+            content.style.display = "flex";
+            const curH = parseInt(content.style.height || "0", 10);
+            if (!content.style.height || content.style.height === "20vh" || curH < 350) {
+                content.style.height = "50vh";
+            }
+        }
+        const resizer = document.getElementById("bg-library-resizer");
+        if (resizer) resizer.style.display = "block";
+        const icon = document.getElementById("bg-toggle-icon");
+        if (icon) icon.innerText = "▼ COLLAPSE";
+
+        if (typeof window.initExternalPanel === 'function') window.initExternalPanel();
+    } else {
+        if (typeof window.setNavigationTarget === 'function') window.setNavigationTarget('lyrics');
+        if (scrPanel) scrPanel.style.display = "none";
+        if (pluginPanel) pluginPanel.style.display = "none";
+        if (extPanel) extPanel.style.display = "none";
         const camPanel = document.getElementById("cam-lib-panel");
         if (camPanel) camPanel.style.display = "none";
         if (mediaPanel) mediaPanel.style.display = "flex";
 
-        // Reset sidebar mode to local when switching categories, but ONLY if we are not actively in a remote PPT session
-        const isRemotePptActive = document.getElementById("ppt-remote-ui") && document.getElementById("ppt-remote-ui").style.display !== "none";
-        if (!isRemotePptActive) {
-            setSidebarMode('local');
-        }
         loadMediaData(category);
     }
 }
+window.switchMediaCategory = switchMediaCategory;
 
 let currentSidebarMode = 'local';
 let discoveredSenders = [];
@@ -688,18 +1428,16 @@ function setSidebarMode(mode) {
     currentSidebarMode = mode;
     const tabs = document.querySelectorAll(".bg-sb-tab");
     tabs.forEach(t => {
-        t.classList.toggle("active", t.getAttribute("onclick").includes(`'${mode}'`));
+        const onclickAttr = t.getAttribute("onclick") || "";
+        t.classList.toggle("active", onclickAttr.includes(`'${mode}'`));
     });
 
     const localSection = document.getElementById("bg-local-section");
     const senderSection = document.getElementById("bg-sender-section");
 
-    if (mode === 'local') {
-        localSection.style.display = "flex";
-        senderSection.style.display = "none";
-    } else {
-        localSection.style.display = "none";
-        senderSection.style.display = "flex";
+    if (localSection) localSection.style.display = (mode === 'local') ? "flex" : "none";
+    if (senderSection) senderSection.style.display = (mode === 'local') ? "none" : "flex";
+    if (mode !== 'local') {
         refreshMediaSenders();
     }
 }
@@ -851,7 +1589,7 @@ window.enterPhotoRemoteMode = async function (sender) {
     const title = document.getElementById("bg-active-folder-name");
     if (title) title.innerText = `🌐 REMOTE PHOTO: ${sender.device_name}`;
 
-    // Fetch photos from sender with token
+    // Fetch photos from sender
     try {
         const tokenParam = sender.token ? `?auth=${sender.token}` : '';
         const res = await fetch(`http://${sender.ip}:${sender.ws_port}/api/photos${tokenParam}`);
@@ -918,28 +1656,16 @@ window.enterPhotoRemoteMode = async function (sender) {
                 }
             } else if (data.type === "photo_control" && data.payload) {
                 if (data.payload.command === "ftb" && typeof ws !== 'undefined' && ws.readyState === WebSocket.OPEN) {
-                    if (data.payload.value) {
-                        ws.send(JSON.stringify({
-                            action: "update_photo",
-                            payload: {
-                                url: "",
-                                source: "remote_sender",
-                                sender_id: sender.ip
-                            }
-                        }));
-                    } else if (window.remoteLivePhotoId) {
-                        const restoreBaseUrl = `http://${sender.ip}:${sender.ws_port}`;
-                        const tokenParam = sender.token ? `?auth=${sender.token}` : '';
-                        const fullUrl = `${restoreBaseUrl}/api/photos/file/${window.remoteLivePhotoId}${tokenParam}`;
-                        ws.send(JSON.stringify({
-                            action: "update_photo",
-                            payload: {
-                                url: fullUrl,
-                                source: "remote_sender",
-                                sender_id: sender.ip
-                            }
-                        }));
-                    }
+                    const isFtb = Boolean(data.payload.value);
+                    ws.send(JSON.stringify({
+                        action: "ftb",
+                        payload: {
+                            enabled: isFtb,
+                            value: isFtb,
+                            active: isFtb,
+                            source: "remote_sender"
+                        }
+                    }));
                 }
             }
         } catch (err) {
@@ -959,14 +1685,13 @@ function renderRemotePhotoGrid(photos, sender) {
     }
 
     const baseUrl = `http://${sender.ip}:${sender.ws_port}`;
-    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
 
     // photos is now guaranteed to be an array
     photos.forEach(photo => {
         const box = document.createElement("div");
         box.className = "bg-media-card";
 
-        const thumbUrl = `${baseUrl}/api/photos/thumb/${photo.id}${tokenParam}`;
+        const thumbUrl = `${baseUrl}/api/photos/thumb/${photo.id}`;
         const thumbHtml = `<div class="bg-media-thumb-wrap"><img src="${thumbUrl}" class="bg-media-thumb" onerror="this.src='/static/logo.png'"></div>`;
 
         if (window.remoteLivePhotoId === photo.id && sender.ip === window.activeRemoteSenderIp) {
@@ -987,8 +1712,7 @@ function renderRemotePhotoGrid(photos, sender) {
 
 function applyRemotePhoto(photo, sender) {
     const baseUrl = `http://${sender.ip}:${sender.ws_port}`;
-    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
-    const fullUrl = `${baseUrl}/api/photos/file/${photo.id}${tokenParam}`;
+    const fullUrl = `${baseUrl}/api/photos/file/${photo.id}`;
 
     window.remoteLivePhotoId = photo.id;
     window.activeRemoteSenderIp = sender.ip;
@@ -1002,9 +1726,6 @@ function applyRemotePhoto(photo, sender) {
             sender_id: sender.ip
         }
     }));
-    if (typeof createOrUpdateFloatingPlayer === 'function') {
-        createOrUpdateFloatingPlayer('photo', photo.name || 'Remote Photo');
-    }
 
     // Update UI
     renderRemotePhotoGrid(window.lastRemotePhotos || [], sender);
@@ -1054,6 +1775,7 @@ function renderMediaFolders() {
         div.innerHTML = `<span>${icon}</span><span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${displayName}</span>`;
 
         div.onclick = () => {
+            clearMediaSelection();
             currentActiveFolder = folder;
             const titleEl = document.getElementById("bg-active-folder-name");
             if (titleEl) titleEl.innerText = icon + " " + displayName;
@@ -1077,17 +1799,7 @@ function renderMediaFolders() {
     });
 }
 
-function renderMediaGrid() {
-    const grid = document.getElementById("bg-grid-container");
-    if (!grid) return;
-    grid.innerHTML = "";
-
-    // Sync dropdown select value
-    const sortSelect = document.getElementById("media-sort-select");
-    if (sortSelect) {
-        sortSelect.value = `${mediaSortKey}_${mediaSortOrder}`;
-    }
-
+function getFilteredSortedMediaItems() {
     const items = mediaDatabase.items || {};
     const itemsArray = Object.keys(items).map(key => {
         let obj = items[key];
@@ -1099,12 +1811,6 @@ function renderMediaGrid() {
         currentActiveFolder === "ALL" || item.folder === currentActiveFolder
     );
 
-    if (filteredItems.length === 0) {
-        grid.innerHTML = `<div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: #666; font-style: italic;">No files in ${currentMediaCategory.toUpperCase()} category</div>`;
-        return;
-    }
-
-    // Sort filteredItems
     filteredItems.sort((a, b) => {
         let compare = 0;
         if (mediaSortKey === 'date') {
@@ -1115,9 +1821,77 @@ function renderMediaGrid() {
         return mediaSortOrder === 'desc' ? -compare : compare;
     });
 
+    return filteredItems;
+}
+
+function renderMediaGrid() {
+    const grid = document.getElementById("bg-grid-container");
+    if (!grid) return;
+    grid.innerHTML = "";
+
+    // Sync dropdown select value
+    const sortSelect = document.getElementById("media-sort-select");
+    if (sortSelect) {
+        sortSelect.value = `${mediaSortKey}_${mediaSortOrder}`;
+    }
+
+    const filteredItems = getFilteredSortedMediaItems();
+
+    if (filteredItems.length === 0) {
+        grid.innerHTML = `<div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: #666; font-style: italic;">No files in ${currentMediaCategory.toUpperCase()} category</div>`;
+        return;
+    }
+
+    // Deselect if user clicks on empty space in grid
+    grid.onclick = (e) => {
+        if (e.target === grid) {
+            clearMediaSelection();
+        }
+    };
+
+    const isMultiMode = window.selectedMediaIds && window.selectedMediaIds.size > 1;
+    if (window.selectedMediaIds && window.selectedMediaIds.size > 0) {
+        grid.classList.add("has-selection");
+    } else {
+        grid.classList.remove("has-selection");
+    }
+    if (isMultiMode) {
+        grid.classList.add("multi-selection");
+    } else {
+        grid.classList.remove("multi-selection");
+    }
+
     filteredItems.forEach(item => {
         const box = document.createElement("div");
         box.className = "bg-media-card";
+        box.setAttribute("data-media-id", item.id);
+
+        const isSelected = window.selectedMediaIds && window.selectedMediaIds.has(item.id);
+        if (isSelected) {
+            box.classList.add("selected");
+        }
+
+        // Small corner selection checkbox
+        const selectBtn = document.createElement("div");
+        selectBtn.className = "bg-media-select-btn" + (isSelected ? " active" : "");
+        selectBtn.title = "Select (Shift+click for range)";
+        selectBtn.innerText = isSelected ? "✓" : "";
+        selectBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (e.shiftKey && window.lastSelectedMediaId) {
+                rangeSelectMedia(item.id, filteredItems);
+            } else {
+                if (window.selectedMediaIds.has(item.id)) {
+                    window.selectedMediaIds.delete(item.id);
+                    if (window.selectedMediaIds.size === 0) window.lastSelectedMediaId = null;
+                } else {
+                    window.selectedMediaIds.add(item.id);
+                    window.lastSelectedMediaId = item.id;
+                }
+                updateMediaSelectionUI();
+            }
+        };
+        box.appendChild(selectBtn);
 
         let thumbHtml = "";
         let thumbUrl = `/api/media/thumb/${currentMediaCategory}/${item.id}`;
@@ -1131,9 +1905,20 @@ function renderMediaGrid() {
             thumbHtml = `<div class="bg-media-thumb-wrap"><img src="${thumbUrl}" class="bg-media-thumb" data-thumb-id="${item.id}" onerror="this.src='/static/logo.png'"></div>`;
         }
 
-        box.innerHTML = `${thumbHtml}<div class="bg-media-label" title="${item.name}">${item.name}</div>`;
-        box.draggable = true;
+        const labelDiv = document.createElement("div");
+        labelDiv.className = "bg-media-label";
+        labelDiv.title = item.name;
+        labelDiv.innerText = item.name;
+
+        box.insertAdjacentHTML('beforeend', thumbHtml);
+        box.appendChild(labelDiv);
+
+        box.draggable = !isMultiMode;
         box.ondragstart = (e) => {
+            if (window.selectedMediaIds && window.selectedMediaIds.size > 1) {
+                e.preventDefault();
+                return false;
+            }
             e.dataTransfer.setData("text/plain", JSON.stringify({
                 action: "apply_media",
                 id: item.id,
@@ -1142,9 +1927,37 @@ function renderMediaGrid() {
             }));
         };
 
+        // When selection mode is active (> 0 selected), clicking anywhere on card toggles / range-selects
+        box.onclick = (e) => {
+            if (window.selectedMediaIds && window.selectedMediaIds.size > 0) {
+                if (e.shiftKey && window.lastSelectedMediaId) {
+                    rangeSelectMedia(item.id, filteredItems);
+                } else {
+                    if (window.selectedMediaIds.has(item.id)) {
+                        window.selectedMediaIds.delete(item.id);
+                        if (window.selectedMediaIds.size === 0) window.lastSelectedMediaId = null;
+                    } else {
+                        window.selectedMediaIds.add(item.id);
+                        window.lastSelectedMediaId = item.id;
+                    }
+                    updateMediaSelectionUI();
+                }
+            }
+        };
+
         box.oncontextmenu = (e) => {
             e.preventDefault();
-            showLibraryContextMenu(e, item.id, item.name, currentMediaCategory);
+            if (window.selectedMediaIds && window.selectedMediaIds.size > 1 && window.selectedMediaIds.has(item.id)) {
+                showBatchContextMenu(e, filteredItems);
+            } else {
+                if (window.selectedMediaIds && window.selectedMediaIds.size > 0 && !window.selectedMediaIds.has(item.id)) {
+                    window.selectedMediaIds.clear();
+                    window.selectedMediaIds.add(item.id);
+                    window.lastSelectedMediaId = item.id;
+                    updateMediaSelectionUI();
+                }
+                showLibraryContextMenu(e, item.id, item.name, currentMediaCategory);
+            }
         };
         grid.appendChild(box);
     });
@@ -1164,10 +1977,33 @@ async function refreshCameraDevices() {
     list.innerHTML = `<div style="padding:10px; color:#666; font-size:0.7em;">🔍 Scanning cameras...</div>`;
 
     try {
+        ffmpegCameraNames = await loadCameraServiceDevices();
+        deviceIdToNameMap = {};
+
+        if (ffmpegCameraNames.length === 0) {
+            // Camera-service tidak merespons sama sekali — tampilkan pesan retry
+            list.innerHTML = `
+                <div style="padding:10px; color:#ff9800; font-size:0.7em;">⚠️ Camera service belum siap.<br>Klik <b>🔄 REFRESH LIST</b> untuk coba lagi.</div>`;
+            return;
+        }
+
+        const videoDevices = createCameraServiceDevices();
+        renderCameraDeviceList(videoDevices, list);
+    } catch (e) {
+        console.error("Camera access error:", e);
+        list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">❌ Error: ${e.message}</div>`;
+    }
+    return;
+
+
+    try {
         // 🎯 CHECK IF RUNNING IN ELECTRON
         const isElectron = typeof window.electronAPI !== 'undefined';
 
         let videoDevices = [];
+        if (videoDevices.length === 0 && ffmpegCameraNames.length > 0) {
+            videoDevices = createCameraServiceDevices();
+        }
 
         if (isElectron) {
             console.log("🎬 Electron detected - using navigator.mediaDevices directly");
@@ -1188,13 +2024,14 @@ async function refreshCameraDevices() {
                 let tempStream = null;
                 try {
                     console.log("Attempting getUserMedia with video constraint...");
-                    tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    tempStream = await Promise.race([
+                        navigator.mediaDevices.getUserMedia({ video: true }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error("getUserMedia timeout")), 3500))
+                    ]);
                     console.log("getUserMedia successful, stream tracks:", tempStream.getTracks().length);
                     console.log("Stream tracks:", tempStream.getTracks().map(t => ({ kind: t.kind, label: t.label, enabled: t.enabled })));
                 } catch (getUserMediaErr) {
-                    console.error("getUserMedia failed:", getUserMediaErr);
-                    console.error("getUserMedia error name:", getUserMediaErr.name);
-                    console.error("getUserMedia error message:", getUserMediaErr.message);
+                    console.warn("Browser camera permission check failed, using enumerate/FFmpeg fallback:", getUserMediaErr.message);
                     // Don't throw - try enumerateDevices anyway
                 }
 
@@ -1234,13 +2071,15 @@ async function refreshCameraDevices() {
                 console.error("Error name:", electronErr.name);
                 console.error("Error message:", electronErr.message);
                 console.error("Error stack:", electronErr.stack);
-                list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">❌ Error: ${electronErr.message}</div>`;
-                return;
+                videoDevices = createCameraServiceDevices();
             }
         } else {
             console.log("🌐 Browser mode detected - using navigator.mediaDevices");
             videoDevices = await getCameraDevicesWeb();
         }
+
+        ffmpegCameraNames = await loadCameraServiceDevices();
+        deviceIdToNameMap = {};
 
         // 🎯 RENDER CAMERA LIST
         list.innerHTML = "";
@@ -1264,6 +2103,14 @@ async function refreshCameraDevices() {
 
             // Get camera name, fallback to generic name if not available
             const cameraName = dev.label && dev.label.trim() ? dev.label : `Camera ${idx + 1}`;
+            const ffmpegName = resolveCameraServiceName(cameraName, idx);
+            deviceIdToNameMap[dev.deviceId] = ffmpegName;
+            if (cameraSettings.main.device_id === dev.deviceId && !cameraSettings.main.device_name) {
+                cameraSettings.main.device_name = ffmpegName;
+            }
+            if (cameraSettings.audience.device_id === dev.deviceId && !cameraSettings.audience.device_name) {
+                cameraSettings.audience.device_name = ffmpegName;
+            }
 
             item.innerHTML = `
                 <div style="display:flex; align-items:center; gap:10px; flex:1; overflow:hidden;">
@@ -1282,6 +2129,107 @@ async function refreshCameraDevices() {
         console.error("Camera access error:", e);
         list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">❌ Error: ${e.message}</div>`;
     }
+}
+
+// Fungsi dengan retry: camera-service mungkin belum siap saat halaman pertama dibuka
+async function loadCameraServiceDevices(retries = 4, delayMs = 1500) {
+    const camHost = window.location.hostname || '127.0.0.1';
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const res = await fetch(`http://${camHost}:18901/api/camera/list`, { cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const cameras = Array.isArray(data) ? data : (data.cameras || []);
+            if (cameras.length > 0) {
+                console.log(`[CAM] camera-service ready (attempt ${attempt}), cameras:`, cameras);
+                return cameras;
+            }
+            throw new Error('empty list');
+        } catch (err) {
+            console.warn(`[CAM] loadCameraServiceDevices attempt ${attempt}/${retries} failed:`, err.message);
+            if (attempt < retries) {
+                await new Promise(r => setTimeout(r, delayMs));
+            }
+        }
+    }
+    console.warn('[CAM] camera-service tidak merespons setelah semua retry.');
+    return [];
+}
+
+
+function renderCameraDeviceList(videoDevices, list) {
+    list.innerHTML = "";
+    if (videoDevices.length === 0) {
+        list.innerHTML = `<div style="padding:10px; color:#ff4444; font-size:0.7em;">❌ No cameras found</div>
+                        <div style="padding:5px; color:#888; font-size:0.65em;">Camera service is running, but no video devices were reported.</div>`;
+        return;
+    }
+
+    videoDevices.forEach((dev, idx) => {
+        const item = document.createElement("div");
+        item.className = "cam-device-item";
+        let assignmentBadge = "";
+        if (cameraSettings.main.device_id === dev.deviceId && cameraSettings.main.show) {
+            assignmentBadge += `<span class="cam-badge main">MAIN</span>`;
+        }
+        if (cameraSettings.audience.device_id === dev.deviceId && cameraSettings.audience.show) {
+            assignmentBadge += `<span class="cam-badge audience">AUDIENCE</span>`;
+        }
+
+        const cameraName = dev.label && dev.label.trim() ? dev.label : `Camera ${idx + 1}`;
+        const ffmpegName = resolveCameraServiceName(cameraName, idx);
+        deviceIdToNameMap[dev.deviceId] = ffmpegName;
+        if (cameraSettings.main.device_id === dev.deviceId && !cameraSettings.main.device_name) {
+            cameraSettings.main.device_name = ffmpegName;
+        }
+        if (cameraSettings.audience.device_id === dev.deviceId && !cameraSettings.audience.device_name) {
+            cameraSettings.audience.device_name = ffmpegName;
+        }
+
+        item.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; flex:1; overflow:hidden;">
+                <div style="flex:1; display:flex; flex-direction:column; min-width:0; gap:4px;">
+                    <span style="overflow:hidden; text-overflow:ellipsis; font-weight:600; font-size:0.85em;">${cameraName}</span>
+                    <span style="font-size:0.75em; color:#888; overflow:hidden; text-overflow:ellipsis;">${dev.deviceId.substring(0, 24)}...</span>
+                </div>
+            </div>
+            <div style="display:flex; gap:4px; flex-shrink:0;">${assignmentBadge}</div>
+        `;
+        item.onclick = () => selectCameraForPreview(dev.deviceId, item);
+        list.appendChild(item);
+    });
+    updateCameraAssignmentLabels();
+}
+
+function createCameraServiceDevices() {
+    return ffmpegCameraNames.map((name, idx) => ({
+        kind: "videoinput",
+        label: name,
+        deviceId: `ffmpeg:${idx}:${name}`
+    }));
+}
+
+function normalizeCameraName(name) {
+    return String(name || "")
+        .toLowerCase()
+        .replace(/\([^)]*\)/g, "")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+}
+
+function resolveCameraServiceName(browserName, idx) {
+    if (!ffmpegCameraNames.length) return browserName || `${idx}`;
+
+    const normalizedBrowser = normalizeCameraName(browserName);
+    const exact = ffmpegCameraNames.find(name => normalizeCameraName(name) === normalizedBrowser);
+    if (exact) return exact;
+
+    const partial = ffmpegCameraNames.find(name => {
+        const normalizedService = normalizeCameraName(name);
+        return normalizedService && normalizedBrowser &&
+            (normalizedBrowser.includes(normalizedService) || normalizedService.includes(normalizedBrowser));
+    });
+    return partial || ffmpegCameraNames[idx] || browserName || `${idx}`;
 }
 
 // 🎯 HELPER: Get cameras using web API (browser)
@@ -1310,13 +2258,16 @@ async function getCameraDevicesWeb() {
         );
 
         const mediaPromise = mediaDevices.getUserMedia({ video: true });
-        await Promise.race([mediaPromise, timeoutPromise]);
+        const stream = await Promise.race([mediaPromise, timeoutPromise]);
+        if (stream && stream.getTracks) {
+            stream.getTracks().forEach(track => track.stop());
+        }
 
         // After permission granted, enumerate devices
         const devices = await mediaDevices.enumerateDevices();
         return devices.filter(d => d.kind === 'videoinput');
     } catch (err) {
-        console.error("Web camera API error:", err);
+        console.warn("Browser camera API unavailable, using FFmpeg camera-service fallback:", err.message);
 
         // Try enumerate without getUserMedia (might work if already granted)
         try {
@@ -1343,108 +2294,157 @@ async function getCameraDevicesWeb() {
     }
 }
 
-// Cache for successful constraints to speed up subsequent camera opens
-let successfulConstraintCache = null;
-let lastDeviceId = null;
-
 async function selectCameraForPreview(deviceId, element) {
     document.querySelectorAll(".cam-device-item").forEach(el => el.classList.remove("active"));
     element.classList.add("active");
-    if (currentCamStream) { currentCamStream.getTracks().forEach(track => track.stop()); }
+    if (currentCamStream) {
+        currentCamStream.getTracks().forEach(track => track.stop());
+        currentCamStream = null;
+    }
 
     const video = document.getElementById("cam-local-preview");
     const noPreview = document.getElementById("cam-no-preview");
+    const cameraName = deviceIdToNameMap[deviceId] || "0";
+    window.lastSelectedCamId = deviceId;
 
-    try {
-        console.log("🎬 Opening camera preview for device:", deviceId);
+    // 🔍 DIAGNOSTIC LOG — cek nama kamera yang akan dikirim ke camera-service
+    console.log('[CAM-DIAG] selectCameraForPreview called');
+    console.log('[CAM-DIAG]   deviceId         :', deviceId);
+    console.log('[CAM-DIAG]   deviceIdToNameMap :', JSON.stringify(deviceIdToNameMap));
+    console.log('[CAM-DIAG]   cameraName (hasil):', cameraName);
+    console.log('[CAM-DIAG]   ffmpegCameraNames :', JSON.stringify(ffmpegCameraNames));
 
-        // 🎯 CHECK IF RUNNING IN ELECTRON
-        const isElectron = typeof window.electronAPI !== 'undefined';
-        let stream;
-        let lastError = null;
+    startPreviewWebRTC(video, noPreview, cameraName);
+}
 
-        // 🎯 Clear cache if switching to a different camera
-        if (lastDeviceId && lastDeviceId !== deviceId) {
-            console.log("🔄 Different camera selected, clearing cache");
-            successfulConstraintCache = null;
+
+function startPreviewWebRTC(videoEl, noPreviewEl, cameraName) {
+    stopPreviewWebRTC();
+
+    // Safety net: strip hardware ID suffix yang mungkin muncul dari browser API
+    // contoh: "Integrated Camera (13d3:56a6)" → "Integrated Camera"
+    const cleanCameraName = cameraName
+        .replace(/\s*\([0-9a-fA-F]{4}:[0-9a-fA-F]{4}\)\s*$/, '')
+        .trim();
+
+    const camHost = window.location.hostname || '127.0.0.1';
+    const wsUrl = `ws://${camHost}:18901/ws/webrtc?channel=preview&camera=${encodeURIComponent(cleanCameraName)}`;
+    // 🔍 DIAGNOSTIC LOG — cek URL WebSocket yang akan digunakan
+    console.log('[CAM-DIAG] startPreviewWebRTC called');
+    console.log('[CAM-DIAG]   cameraName (raw)  :', cameraName);
+    console.log('[CAM-DIAG]   cameraName (clean):', cleanCameraName);
+    console.log('[CAM-DIAG]   WebSocket URL:', wsUrl);
+
+    const ws = new WebSocket(wsUrl);
+    previewWS = ws;
+
+    // Connection timeout — if WS doesn't open in 5 seconds, show error
+    const connTimeout = setTimeout(() => {
+        if (ws === previewWS && ws.readyState !== WebSocket.OPEN) {
+            console.warn('[Preview] WebSocket connection timeout');
+            showToast("Camera service connection timeout", "error", 1500);
+            stopPreviewWebRTC();
         }
-        lastDeviceId = deviceId;
+    }, 5000);
 
-        // 🎯 Helper function with timeout (increased to 10 seconds)
-        const getUserMediaWithTimeout = async (constraints, timeout = 10000) => {
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("getUserMedia timeout")), timeout)
-            );
-            const mediaPromise = navigator.mediaDevices.getUserMedia(constraints);
-            return await Promise.race([mediaPromise, timeoutPromise]);
+    ws.onopen = () => {
+        clearTimeout(connTimeout);
+        if (ws !== previewWS) return; // stale reference
+        console.log('[CAM-DIAG] WebSocket OPEN — camera-service connected OK');
+
+        previewPC = new RTCPeerConnection({
+            iceServers: [],
+            iceCandidatePoolSize: 0,
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require'
+        });
+
+        previewPC.ontrack = (event) => {
+            if (event.streams && event.streams[0]) {
+                videoEl.srcObject = event.streams[0];
+                videoEl.onloadedmetadata = () => videoEl.play().catch(err => console.warn("Preview play failed:", err));
+                videoEl.style.opacity = "1";
+                noPreviewEl.style.display = "none";
+            }
         };
 
-        // 🎯 Try cached successful constraint first (if available and same device)
-        if (successfulConstraintCache && lastDeviceId === deviceId) {
-            try {
-                console.log("🎯 Trying cached successful constraint first");
-                stream = await getUserMediaWithTimeout(successfulConstraintCache, 5000);
-                console.log("✅ Success with cached constraint");
-                currentCamStream = stream;
-                video.srcObject = stream;
-                video.style.opacity = "1";
-                noPreview.style.display = "none";
-                window.lastSelectedCamId = deviceId;
-                console.log("Camera preview started successfully (cached)");
+        previewPC.onconnectionstatechange = () => {
+            if (!previewPC) return;
+            console.log('[CAM-DIAG] PeerConnection state:', previewPC.connectionState);
+            if (previewPC.connectionState === "failed" || previewPC.connectionState === "disconnected") {
+                console.warn("[Preview] Connection state:", previewPC.connectionState);
+                stopPreviewWebRTC();
+            }
+        };
+    };
+
+    ws.onmessage = async (event) => {
+        try {
+            const offer = JSON.parse(event.data);
+            if (offer.type === "error") {
+                console.error('[CAM-DIAG] camera-service returned error:', offer.message);
+                throw new Error(offer.message || "Camera service error");
+            }
+            if (!previewPC) {
+                console.warn('[Preview] PeerConnection not ready yet');
                 return;
-            } catch (err) {
-                console.warn("❌ Cached constraint failed, trying other options:", err.message);
-                successfulConstraintCache = null; // Clear cache if it fails
             }
-        }
-
-        // 🎯 OPTIMIZED CONSTRAINT TESTING - Fewer attempts with longer timeout
-        // Start with most likely to work constraints first
-
-        const constraintAttempts = [
-            // Attempt 1: Exact device without resolution (most likely to work in Electron)
-            { name: "Exact device (no resolution)", constraints: { video: { deviceId: { exact: deviceId } } } },
-            // Attempt 2: Simplest - any camera (fallback)
-            { name: "Simple (any camera)", constraints: { video: true } },
-            // Attempt 3: Exact device with ideal resolution
-            { name: "Exact device with ideal resolution", constraints: { video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } } } }
-        ];
-
-        for (const attempt of constraintAttempts) {
-            try {
-                console.log(`🎯 Attempting: ${attempt.name}`);
-
-                stream = await getUserMediaWithTimeout(attempt.constraints, 10000);
-
-                console.log(`✅ Success with: ${attempt.name}`);
-                // Cache the successful constraint for future use
-                successfulConstraintCache = attempt.constraints;
-                lastError = null;
-                break; // Success - exit loop
-            } catch (err) {
-                console.warn(`❌ Failed with ${attempt.name}:`, err.message);
-                lastError = err;
-                // Continue to next attempt
+            await previewPC.setRemoteDescription(offer);
+            const answer = await previewPC.createAnswer();
+            await previewPC.setLocalDescription(answer);
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(previewPC.localDescription));
             }
+        } catch (err) {
+            console.error("Failed to start camera preview:", err);
+            showToast("Failed to open camera preview: " + err.message, "error", 2000);
+            stopPreviewWebRTC();
         }
+    };
 
-        if (!stream) {
-            throw lastError || new Error("All constraint attempts failed");
+    ws.onerror = (event) => {
+        clearTimeout(connTimeout);
+        // 🔍 DIAGNOSTIC LOG — cek detail error WebSocket
+        console.error('[CAM-DIAG] WebSocket ERROR on preview connection');
+        console.error('[CAM-DIAG]   cameraName sent  :', cameraName);
+        console.error('[CAM-DIAG]   WebSocket URL    :', wsUrl);
+        console.error('[CAM-DIAG]   ws.readyState    :', ws.readyState, '(0=CONNECTING,1=OPEN,2=CLOSING,3=CLOSED)');
+        console.error('[CAM-DIAG]   ffmpegCameraNames:', JSON.stringify(ffmpegCameraNames));
+        console.error('[CAM-DIAG]   Full event       :', event);
+        showToast("Camera service is not ready yet", "error", 1500);
+        stopPreviewWebRTC();
+    };
+}
+
+function stopPreviewWebRTC() {
+    if (previewWS) {
+        previewWS.onopen = null;
+        previewWS.onclose = null;
+        previewWS.onerror = null;
+        previewWS.onmessage = null;
+        if (previewWS.readyState === WebSocket.OPEN || previewWS.readyState === WebSocket.CONNECTING) {
+            previewWS.close();
         }
-
-        console.log("Camera stream obtained successfully");
-        currentCamStream = stream;
-        video.srcObject = stream;
-        video.style.opacity = "1";
-        noPreview.style.display = "none";
-        window.lastSelectedCamId = deviceId;
-        console.log("Camera preview started successfully");
-    } catch (e) {
-        console.error("Failed to open camera preview:", e);
-        console.error("Error name:", e.name);
-        console.error("Error message:", e.message);
-        showToast("Failed to open camera preview: " + e.message, "error", 2000);
+        previewWS = null;
     }
+    if (previewPC) {
+        previewPC.ontrack = null;
+        previewPC.onconnectionstatechange = null;
+        previewPC.close();
+        previewPC = null;
+    }
+    const video = document.getElementById("cam-local-preview");
+    if (video) {
+        // Stop all tracks before releasing srcObject to free GPU decoder
+        if (video.srcObject) {
+            video.srcObject.getTracks().forEach(t => t.stop());
+        }
+        video.srcObject = null;
+        video.load(); // reset decoder
+        video.style.opacity = "0";
+    }
+    const noPreview = document.getElementById("cam-no-preview");
+    if (noPreview) noPreview.style.display = "";
 }
 
 async function loadCameraSettings() {
@@ -1794,7 +2794,7 @@ window.enterVideoRemoteMode = async function (sender) {
     const title = document.getElementById("bg-active-folder-name");
     if (title) title.innerText = `🌐 REMOTE VIDEO: ${sender.device_name}`;
 
-    // Fetch videos from sender with token
+    // Fetch videos from sender
     try {
         const tokenParam = sender.token ? `?auth=${sender.token}` : '';
         const res = await fetch(`http://${sender.ip}:${sender.ws_port}/api/videos${tokenParam}`);
@@ -1842,15 +2842,9 @@ window.enterVideoRemoteMode = async function (sender) {
                             url: fullUrl,
                             behavior: "loop",
                             source: "remote_sender",
-                            sender_id: senderIp,
-                            video_id: videoItem.id,
-                            duration: videoItem.duration,
-                            name: videoItem.name
+                            sender_id: senderIp
                         }
                     }));
-                }
-                if (typeof createOrUpdateFloatingPlayer === 'function') {
-                    createOrUpdateFloatingPlayer('video', videoItem.name || 'Remote Video');
                 }
 
                 // Update UI immediately if we are in remote grid
@@ -1870,28 +2864,25 @@ window.enterVideoRemoteMode = async function (sender) {
 
                 if (typeof ws !== 'undefined' && ws.readyState === WebSocket.OPEN) {
                     if (cmd === "ftb") {
-                        if (val) {
-                            ws.send(JSON.stringify({
-                                action: "update_background",
-                                payload: {
-                                    url: "",
-                                    source: "remote_sender",
-                                    sender_id: sender.ip
-                                }
-                            }));
-                        } else if (window.remoteLiveVideoId) {
-                            const restoreBaseUrl = `http://${sender.ip}:${sender.ws_port}`;
-                            const tokenParam = sender.token ? `?auth=${sender.token}` : '';
-                            ws.send(JSON.stringify({
-                                action: "update_background",
-                                payload: {
-                                    url: `${restoreBaseUrl}/api/videos/file/${window.remoteLiveVideoId}${tokenParam}`,
-                                    behavior: "loop",
-                                    source: "remote_sender",
-                                    sender_id: sender.ip
-                                }
-                            }));
-                        }
+                        const isFtb = Boolean(val);
+                        ws.send(JSON.stringify({
+                            action: "bg_control",
+                            payload: {
+                                target: "video",
+                                command: "ftb",
+                                value: isFtb,
+                                source: "remote_sender"
+                            }
+                        }));
+                        ws.send(JSON.stringify({
+                            action: "ftb",
+                            payload: {
+                                enabled: isFtb,
+                                value: isFtb,
+                                active: isFtb,
+                                source: "remote_sender"
+                            }
+                        }));
                     } else {
                         ws.send(JSON.stringify({
                             action: "bg_control",
@@ -1924,13 +2915,12 @@ function renderRemoteVideoGrid(videos, sender) {
     }
 
     const baseUrl = `http://${sender.ip}:${sender.ws_port}`;
-    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
 
     videos.forEach(video => {
         const box = document.createElement("div");
         box.className = "bg-media-card";
 
-        const thumbUrl = `${baseUrl}/api/videos/thumb/${video.id}${tokenParam}`;
+        const thumbUrl = `${baseUrl}/api/videos/thumb/${video.id}`;
         const thumbHtml = `<div class="bg-media-thumb-wrap"><img src="${thumbUrl}" class="bg-media-thumb" onerror="this.src='/static/logo.png'"></div>`;
 
         if (window.remoteLiveVideoId === video.id && sender.ip === window.activeRemoteSenderIp) {
@@ -1950,8 +2940,7 @@ function renderRemoteVideoGrid(videos, sender) {
 
 function applyRemoteVideo(videoItem, sender) {
     const baseUrl = `http://${sender.ip}:${sender.ws_port}`;
-    const tokenParam = sender.token ? `?auth=${sender.token}` : '';
-    const fullUrl = `${baseUrl}/api/videos/file/${videoItem.id}${tokenParam}`;
+    const fullUrl = `${baseUrl}/api/videos/file/${videoItem.id}`;
 
     window.remoteLiveVideoId = videoItem.id;
     window.activeRemoteSenderIp = sender.ip;
@@ -1962,10 +2951,7 @@ function applyRemoteVideo(videoItem, sender) {
             url: fullUrl,
             behavior: "loop",
             source: "remote_sender",
-            sender_id: sender.ip,
-            video_id: videoItem.id,
-            duration: videoItem.duration,
-            name: videoItem.name
+            sender_id: sender.ip
         }
     }));
     if (typeof createOrUpdateFloatingPlayer === 'function') {
@@ -2072,6 +3058,7 @@ function setupDragDropImport() {
             return;
         }
 
+        showToast("Inspecting dropped paths...", "loading");
         try {
             const res = await fetch("/api/media/inspect_paths", {
                 method: "POST",
@@ -2229,3 +3216,53 @@ async function importFolders(folders) {
     }
 }
 
+// === MEDIA SCHEDULE & DIRECT LIVE HELPER FUNCTIONS ===
+function fireDirectLiveMedia(mediaId, mediaName, category) {
+    const streamUrl = (category === 'video') ? `/api/stream_video/${mediaId}` :
+                      (category === 'photo') ? `/api/stream_photo/${mediaId}` :
+                      `/api/stream_audio/${mediaId}`;
+
+    if (category === 'video' || category === 'photo') {
+        if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                action: "update_background",
+                payload: { url: streamUrl, behavior: "loop", type: category }
+            }));
+        }
+    } else if (category === 'audio') {
+        if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                action: "play_audio",
+                payload: { url: streamUrl, id: mediaId, name: mediaName }
+            }));
+        }
+    }
+    if (typeof createOrUpdateFloatingPlayer === 'function') {
+        createOrUpdateFloatingPlayer(category, mediaName);
+    }
+}
+window.fireDirectLiveMedia = fireDirectLiveMedia;
+
+window.addMediaToSchedule = async function (category, mediaId, mediaName, insertIndex = -1) {
+    const icon = category === 'video' ? '🎬' : (category === 'photo' ? '📷' : '🎵');
+    const labelPrefix = category === 'video' ? 'VIDEO' : (category === 'photo' ? 'PHOTO' : 'AUDIO');
+    const title = `${icon} ${labelPrefix}: ${mediaName}`;
+    const newItem = {
+        title: title,
+        note: `${category.charAt(0).toUpperCase() + category.slice(1)} Media`,
+        type: "media",
+        media_category: category,
+        media_id: mediaId,
+        media_name: mediaName
+    };
+
+    const targetList = (typeof scheduleList !== 'undefined' ? scheduleList : (window.scheduleList || []));
+    if (insertIndex !== -1 && insertIndex >= 0 && insertIndex <= targetList.length) {
+        targetList.splice(insertIndex, 0, newItem);
+    } else {
+        targetList.push(newItem);
+    }
+
+    if (typeof renderSchedule === 'function') renderSchedule();
+    if (typeof saveActiveSchedule === 'function') await saveActiveSchedule();
+};

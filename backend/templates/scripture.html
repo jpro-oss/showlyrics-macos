@@ -17,17 +17,26 @@
             --scr-overlay-radius: 15px;
             --scr-margin-x: 40px;
             --scr-margin-y: 40px;
+            --scr-block-justify: flex-start;
 
+            --scr-title-order: 0;
+            --scr-body-order: 1;
             --scr-title-font: 'Montserrat', sans-serif;
             --scr-title-size: 28px;
             --scr-title-color: #00e5ff;
             --scr-title-align: left;
+            --scr-title-weight: normal;
+            --scr-title-style: normal;
+            --scr-title-decoration: none;
             --scr-title-pad: 15px 20px 15px 20px;
 
             --scr-body-font: 'Montserrat', sans-serif;
             --scr-body-size: 45px;
             --scr-body-color: #ffffff;
             --scr-body-align: left;
+            --scr-body-weight: normal;
+            --scr-body-style: normal;
+            --scr-body-decoration: none;
             --scr-body-pad: 20px 30px 20px 30px;
         }
 
@@ -90,6 +99,7 @@
             display: flex;
             flex-direction: column;
             box-sizing: border-box;
+            flex-shrink: 0;
             /* transform dan origin diatur oleh JS scaling */
             will-change: transform;
         }
@@ -107,6 +117,16 @@
 
             display: flex;
             flex-direction: column;
+            justify-content: var(--scr-block-justify, flex-start);
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+
+        .scr-block {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-height: 100%;
             overflow: hidden;
             box-sizing: border-box;
         }
@@ -120,23 +140,35 @@
             padding: var(--scr-title-pad);
             box-sizing: border-box;
             flex-shrink: 0;
-            font-weight: bold;
+            font-weight: var(--scr-title-weight, normal);
+            font-style: var(--scr-title-style, normal);
+            text-decoration: var(--scr-title-decoration, none);
+            order: var(--scr-title-order, 0);
+            line-height: 1.25;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
         }
 
         .scr-body-container {
-            flex-grow: 1;
+            flex: 0 1 auto;
+            min-height: 0;
             display: flex;
             flex-direction: column;
             justify-content: flex-start;
             padding: var(--scr-body-pad);
             box-sizing: border-box;
             overflow: hidden;
+            order: var(--scr-body-order, 1);
         }
 
         .scr-body-box {
+            width: 100%;
             font-family: var(--scr-body-font);
             color: var(--scr-body-color);
             text-align: var(--scr-body-align);
+            font-weight: var(--scr-body-weight, normal);
+            font-style: var(--scr-body-style, normal);
+            text-decoration: var(--scr-body-decoration, none);
             display: flex;
             flex-direction: column;
             justify-content: flex-start;
@@ -145,6 +177,9 @@
         #scr-v1,
         #scr-v2 {
             font-size: var(--scr-body-size);
+            line-height: 1.3;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
         }
 
         #scr-v2 {
@@ -164,6 +199,8 @@
             margin-right: 8px;
             vertical-align: super;
             font-weight: 900;
+            font-style: normal;
+            text-decoration: none;
             background: rgba(0, 0, 0, 0.3);
             padding: 3px 6px;
             border-radius: 4px;
@@ -178,12 +215,14 @@
     <div id="scripture-layer">
         <div class="scr-wrapper" id="scr-wrapper">
             <div class="scr-content-box" id="scr-overlay-box">
-                <div class="scr-title-box" id="scr-title"></div>
+                <div class="scr-block" id="scr-block">
+                    <div class="scr-title-box" id="scr-title"></div>
 
-                <div class="scr-body-container" id="scr-container">
-                    <div class="scr-body-box">
-                        <div id="scr-v1"></div>
-                        <div id="scr-v2" class="te-hidden"></div>
+                    <div class="scr-body-container" id="scr-container">
+                        <div class="scr-body-box">
+                            <div id="scr-v1"></div>
+                            <div id="scr-v2" class="te-hidden"></div>
+                        </div>
                     </div>
                 </div>
             </div>

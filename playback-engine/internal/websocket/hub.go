@@ -29,6 +29,7 @@ type Client struct {
 	// Di low-end device dengan JS event loop lambat, burst event sering memenuhi channel 256
 	// dan menyebabkan unregister prematur. 512 memberikan ruang buffer yang aman.
 	send    chan []byte
+	done    chan struct{}
 	host    string
 	scheme  string
 	// [PERF-FIX] closing flag untuk mencegah goroutine spawn tak terbatas.
@@ -83,13 +84,15 @@ func (h *Hub) Run() {
 					MediaID:      state.MediaID,
 					PlaybackRate: state.PlaybackRate,
 					Hash:         state.Hash,
+					IsRemote:     state.IsRemote,
 				}
 				msg := models.WSMessage{
-					Type:    "update_background",
-					Payload: payload,
+					Type:     "update_background",
+					Payload:  payload,
+					IsRemote: state.IsRemote,
 				}
 				if data, err := json.Marshal(msg); err == nil {
-					client.send <- data
+					client.safeSend(data)
 				}
 			}
 
@@ -103,7 +106,7 @@ func (h *Hub) Run() {
 					Payload: savedConfig,
 				}
 				if data, err := json.Marshal(msg); err == nil {
-					client.send <- data
+					client.safeSend(data)
 				}
 			}
 
@@ -111,10 +114,27 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				close(client.send)
+				close(client.done)
 			}
 			h.mu.Unlock()
 		}
+	}
+}
+
+// safeSend mengirim data ke channel client tanpa panic jika client sudah disconnect.
+func (c *Client) safeSend(data []byte) bool {
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+	select {
+	case c.send <- data:
+		return true
+	case <-c.done:
+		return false
+	default:
+		return false
 	}
 }
 
@@ -151,7 +171,13 @@ func (h *Hub) Broadcast(msg interface{}) {
 
 	for client := range h.clients {
 		select {
+		case <-client.done:
+			continue
+		default:
+		}
+		select {
 		case client.send <- data:
+		case <-client.done:
 		default:
 			// [PERF-FIX] Client channel penuh — tandai sebagai closing dengan atomic flag.
 			// tryMarkClosing() memastikan hanya SATU goroutine yang mengirim unregister,
@@ -213,6 +239,7 @@ func (h *Hub) StartHeartbeat() {
 					Position:       state.PausedPosition,
 					Playing:        true,
 					PlaybackRate:   state.PlaybackRate,
+					IsRemote:       state.IsRemote,
 					// [OPT] 25ms = estimasi half-RTT jaringan lokal (localhost/LAN).
 					// Client JS menambahkan nilai ini ke target position:
 					// targetPos = position + elapsed * rate + network_advance
@@ -248,6 +275,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	client := &Client{
 		conn:   conn,
 		send:   make(chan []byte, 512), // [OPT] 256→512: buffer lebih besar cegah disconnect saat burst
+		done:   make(chan struct{}),
 		host:   host,
 		scheme: scheme,
 	}
@@ -255,16 +283,28 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Write loop
 	go func() {
+		pingTicker := time.NewTicker(30 * time.Second)
 		defer func() {
+			pingTicker.Stop()
 			// Gunakan tryMarkClosing agar unregister tidak dikirim dua kali
 			if client.tryMarkClosing() {
 				h.unregister <- client
 			}
 			conn.Close()
 		}()
-		for msg := range client.send {
-			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+		for {
+			select {
+			case msg := <-client.send:
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					return
+				}
+			case <-pingTicker.C:
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					return
+				}
+			case <-client.done:
 				return
 			}
 		}
@@ -292,6 +332,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				break
 			}
+			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 			var clientMsg models.WSClientMessage
 			if err := json.Unmarshal(message, &clientMsg); err != nil {
@@ -315,7 +356,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 					Action:   "pong",
 				}
 				if data, err := json.Marshal(customResp); err == nil {
-					client.send <- data
+					client.safeSend(data)
 				}
 
 			case "cache_status":

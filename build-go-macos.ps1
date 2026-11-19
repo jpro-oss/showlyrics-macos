@@ -9,40 +9,45 @@
 #   - CGO_ENABLED=0 karena pure Go (tidak ada CGO dependencies)
 
 $ErrorActionPreference = "Stop"
-$GoDir  = Join-Path $PSScriptRoot "playback-engine"
+$PeDir  = Join-Path $PSScriptRoot "playback-engine"
+$CamDir = Join-Path $PSScriptRoot "camera-service"
 $BinDir = Join-Path $PSScriptRoot "backend"
 
 Write-Host ""
-Write-Host "ShowLyrics - Go Engine macOS Cross-Compile" -ForegroundColor Cyan
-Write-Host "-------------------------------------------" -ForegroundColor Cyan
+Write-Host "ShowLyrics - Go Services macOS Cross-Compile" -ForegroundColor Cyan
+Write-Host "--------------------------------------------" -ForegroundColor Cyan
 Write-Host ""
 
-Set-Location $GoDir
+function Build-GoMacService {
+    param(
+        [string]$ServiceDir,
+        [string]$BinaryName
+    )
+    Set-Location $ServiceDir
 
-# BUILD Intel amd64
-Write-Host "[1/2] Building macOS Intel (amd64)..." -ForegroundColor Yellow
-$env:GOOS        = "darwin"
-$env:GOARCH      = "amd64"
-$env:CGO_ENABLED = "0"
+    Write-Host "[1/2] Building $BinaryName macOS Intel (amd64)..." -ForegroundColor Yellow
+    $env:GOOS        = "darwin"
+    $env:GOARCH      = "amd64"
+    $env:CGO_ENABLED = "0"
+    $outAmd64 = Join-Path $BinDir "$BinaryName-amd64"
+    go build -ldflags="-s -w" -o $outAmd64 ./cmd/
+    Write-Host "OK - $BinaryName-amd64 selesai" -ForegroundColor Green
 
-$outAmd64 = Join-Path $BinDir "playback-engine-amd64"
-go build -ldflags="-s -w" -o $outAmd64 ./cmd/
-Write-Host "OK - playback-engine-amd64 selesai" -ForegroundColor Green
+    Write-Host "[2/2] Building $BinaryName macOS Apple Silicon (arm64)..." -ForegroundColor Yellow
+    $env:GOOS        = "darwin"
+    $env:GOARCH      = "arm64"
+    $env:CGO_ENABLED = "0"
+    $outArm64 = Join-Path $BinDir "$BinaryName-arm64"
+    go build -ldflags="-s -w" -o $outArm64 ./cmd/
+    Write-Host "OK - $BinaryName-arm64 selesai" -ForegroundColor Green
 
-# BUILD Apple Silicon arm64
-Write-Host "[2/2] Building macOS Apple Silicon (arm64)..." -ForegroundColor Yellow
-$env:GOOS        = "darwin"
-$env:GOARCH      = "arm64"
-$env:CGO_ENABLED = "0"
+    $outDefault = Join-Path $BinDir $BinaryName
+    Copy-Item $outAmd64 $outDefault -Force
+    Write-Host "OK - $BinaryName (default amd64) disalin" -ForegroundColor Green
+}
 
-$outArm64 = Join-Path $BinDir "playback-engine-arm64"
-go build -ldflags="-s -w" -o $outArm64 ./cmd/
-Write-Host "OK - playback-engine-arm64 selesai" -ForegroundColor Green
-
-# Copy amd64 sebagai default playback-engine
-$outDefault = Join-Path $BinDir "playback-engine"
-Copy-Item $outAmd64 $outDefault -Force
-Write-Host "OK - playback-engine (default amd64) disalin" -ForegroundColor Green
+Build-GoMacService -ServiceDir $PeDir -BinaryName "playback-engine"
+Build-GoMacService -ServiceDir $CamDir -BinaryName "camera-service"
 
 # Reset env vars
 Remove-Item Env:GOOS        -ErrorAction SilentlyContinue
@@ -56,7 +61,7 @@ Write-Host "-------------------------------------------" -ForegroundColor Cyan
 Write-Host "Cross-compile selesai!" -ForegroundColor Green
 Write-Host ""
 Write-Host "File yang dihasilkan di backend/:" -ForegroundColor White
-Get-ChildItem $BinDir -Filter "playback-engine*" | Select-Object Name, @{N='Size';E={"{0:N0} KB" -f ($_.Length/1KB)}} | Format-Table -AutoSize
+Get-ChildItem $BinDir | Where-Object { $_.Name -like "playback-engine*" -or $_.Name -like "camera-service*" } | Select-Object Name, @{N='Size';E={"{0:N0} KB" -f ($_.Length/1KB)}} | Format-Table -AutoSize
 Write-Host ""
 Write-Host "Untuk universal binary (Intel + Apple Silicon) - jalankan di macOS:" -ForegroundColor Yellow
 Write-Host "  lipo -create playback-engine-amd64 playback-engine-arm64 -output playback-engine"

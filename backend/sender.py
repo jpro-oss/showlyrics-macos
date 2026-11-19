@@ -17,8 +17,20 @@ router = APIRouter()
 def udp_discovery_listener():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_REUSEPORT"):
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except OSError:
+            pass
     try:
-        sock.bind(("", 5000)) 
+        sock.bind(("", 5000))
+    except OSError as e:
+        print(f"[DISCOVERY] Could not bind UDP port 5000 (AirPlay/in use?): {e}")
+        try:
+            sock.close()
+        except Exception:
+            pass
+        return
     except Exception as e:
         print(f"[DISCOVERY] Could not bind to port 5000: {e}")
         return
@@ -61,6 +73,10 @@ def udp_discovery_listener():
                 del DISCOVERED_SENDERS[ip]
         except Exception:
             time.sleep(1)
+    try:
+        sock.close()
+    except Exception:
+        pass
 
 def stop_discovery():
     global _stop_discovery
@@ -138,6 +154,13 @@ async def connect_to_sender(req: SenderConnectRequest):
         sender = DISCOVERED_SENDERS[req.ip]
         return {"status": "success", "message": f"Sender {sender['device_name']} ready", "sender": sender}
     return {"status": "error", "message": "Sender not found or offline"}
+
+class SenderDisconnectRequest(BaseModel):
+    ip: str
+
+@router.post("/disconnect")
+async def disconnect_from_sender(req: SenderDisconnectRequest):
+    return {"status": "success", "message": f"Disconnected from {req.ip}"}
 
 def find_sender_token(ip: str) -> str:
     """Find the auth token for a given sender IP (supports direct match, ip-field match, and loopback fallback)."""

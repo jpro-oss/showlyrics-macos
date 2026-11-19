@@ -1,18 +1,35 @@
-const { app, BrowserWindow, screen, ipcMain, dialog, powerSaveBlocker, shell, session } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, dialog, powerSaveBlocker, shell, session, Menu, systemPreferences } = require('electron');
 const path = require('path');
-const { spawn, execSync } = require('child_process');
+const { spawn } = require('child_process');
 const os = require('os');
 const http = require('http');
 const fs = require('fs');
 const crypto = require('crypto');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PRODUCTION LOG GUARD
-// Semua log hanya aktif di dev mode (npm start), zero overhead di build produksi
+// PRODUCTION LOG GUARD & PERSISTENT BACKEND LOG
 // ─────────────────────────────────────────────────────────────────────────────
 const isDev = !app.isPackaged;
 const log  = (...args) => isDev && console.log(...args);
 const logE = (...args) => isDev && console.error(...args);
+
+const logDir = path.join(os.homedir(), 'Library', 'Logs', 'ShowLyrics');
+const backendLogPath = path.join(logDir, 'backend.log');
+let backendLogStream = null;
+function appendBackendLog(line) {
+  try {
+    if (!backendLogStream) {
+      if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+      try {
+        if (fs.existsSync(backendLogPath) && fs.statSync(backendLogPath).size > 5 * 1024 * 1024) {
+          fs.renameSync(backendLogPath, backendLogPath + '.old');
+        }
+      } catch (_) {}
+      backendLogStream = fs.createWriteStream(backendLogPath, { flags: 'a' });
+    }
+    backendLogStream.write(`[${new Date().toISOString()}] ${line}\n`);
+  } catch (_) {}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SECURE SESSION TOKEN
@@ -23,14 +40,54 @@ process.env.SHOWLYRICS_SECRET = secretToken;
 const userDocs  = path.join(os.homedir(), 'Library', 'Application Support', 'ShowLyrics');
 const appFolder = userDocs;
 const tokenFile = path.join(appFolder, '.session_token');
+const settingsFile = path.join(appFolder, 'app_settings.json');
+let appWindowBgColor = '#000000';
+let mainDisplayBgColor = '#000000';
+let ltDisplayBgColor = '#000000';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BACA COMPATIBILITY SETTINGS dari app_settings.json
+// Dibaca SEBELUM GPU flags diset karena flags hanya berlaku saat app cold-start.
+// Default: false — hanya aktifkan jika user mengalami masalah (pink/hijau overlay, dll)
+// ─────────────────────────────────────────────────────────────────────────────
+let gpuCompatibilityMode = false;      // GPU Compatibility Mode: matikan Metal overlay path
+let forceGpuCompositingLayer = false;  // Force GPU Compositing Layer: CSS injection
 
 try {
   if (!fs.existsSync(appFolder)) fs.mkdirSync(appFolder, { recursive: true });
-  fs.writeFileSync(tokenFile, secretToken, 'utf8');
+  fs.writeFileSync(tokenFile, secretToken, { encoding: 'utf8', mode: 0o600 });
   log('Secure session token stored at:', tokenFile);
 } catch (err) {
   logE('Failed to write session token:', err.message);
 }
+
+try {
+  if (fs.existsSync(settingsFile)) {
+    const data = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    if (data) {
+      if (typeof data.window_bg_color === 'string' && /^#([0-9A-Fa-f]{3}){1,2}$/.test(data.window_bg_color)) {
+        appWindowBgColor = data.window_bg_color;
+        mainDisplayBgColor = data.window_bg_color;
+        ltDisplayBgColor = data.window_bg_color;
+      }
+      if (typeof data.main_bg_color === 'string' && /^#([0-9A-Fa-f]{3}){1,2}$/.test(data.main_bg_color)) {
+        mainDisplayBgColor = data.main_bg_color;
+      }
+      if (typeof data.lt_bg_color === 'string' && /^#([0-9A-Fa-f]{3}){1,2}$/.test(data.lt_bg_color)) {
+        ltDisplayBgColor = data.lt_bg_color;
+      }
+      if (data.gpu_compatibility_mode === true) {
+        gpuCompatibilityMode = true;
+      }
+      if (data.force_gpu_compositing_layer === true) {
+        forceGpuCompositingLayer = true;
+      }
+    }
+  }
+} catch (err) {
+  logE('Failed to read app_settings.json:', err.message);
+}
+log('[COMPAT] gpuCompatibilityMode:', gpuCompatibilityMode, '| forceGpuCompositingLayer:', forceGpuCompositingLayer);
 
 // ═════════════════════════════════════════════════════════════════════════════
 // BLOK 1 — GPU CORE: Hardware Acceleration Maksimal (macOS)
@@ -40,9 +97,17 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');                          /
 app.commandLine.appendSwitch('enable-gpu-rasterization');                      // Rasterisasi via GPU (bukan CPU)
 app.commandLine.appendSwitch('enable-oop-rasterization');                      // Out-of-process rasterization (lebih stabil)
 app.commandLine.appendSwitch('enable-zero-copy');                              // Bypass CPU copy buffer ke GPU (DMA langsung)
-app.commandLine.appendSwitch('enable-accelerated-video-decode');               // Hardware video decode (macOS VideoToolbox)
-app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');         // Video frame langsung di VRAM (bukan RAM)
-app.commandLine.appendSwitch('enable-hardware-overlays', 'preferred');         // Hardware overlay compositing
+if (!gpuCompatibilityMode) {
+  // Hardware video decode via VideoToolbox (macOS)
+  // Dinonaktifkan di GPU Compat Mode karena Metal overlay path dapat menyebabkan warna artifact
+  app.commandLine.appendSwitch('enable-accelerated-video-decode');             // Hardware video decode (macOS VideoToolbox)
+  app.commandLine.appendSwitch('enable-gpu-memory-buffer-video-frames');       // Video frame langsung di VRAM
+  app.commandLine.appendSwitch('enable-hardware-overlays', 'preferred');       // Hardware overlay compositing
+} else {
+  // GPU Compat Mode macOS: matikan accelerated decode
+  app.commandLine.appendSwitch('disable-accelerated-video-decode');
+  log('[COMPAT] GPU Compatibility Mode AKTIF (macOS) — hardware video decode DINONAKTIFKAN');
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // BLOK 2 — macOS METAL BACKEND: Pilih GPU terkuat via Metal (Apple API)
@@ -79,16 +144,28 @@ app.commandLine.appendSwitch('disable-features', [
   'CrashReporting',                                 // Nonaktifkan crash reporting ke Google
   'BackForwardCache',                               // Nonaktifkan back-forward cache (hemat RAM signifikan)
   'PrefetchPrivacyChanges',                         // Nonaktifkan prefetch tracking
+  // ─── Tambahan V.1.35.4: matikan service yang tidak digunakan app ibadah ───
+  'GlobalMediaControls',                            // Media overlay controls — tidak digunakan di ShowLyrics
+  'HardwareMediaKeyHandling',                       // Media key keyboard (play/pause) — tidak perlu di projector
+  'DnsOverHttps',                                   // DoH tidak diperlukan untuk app yang berjalan lokal
+  'WebOTP',                                         // Web OTP API — tidak digunakan
+  'TextFragmentAnchor',                             // URL fragment scroll — tidak digunakan
+  'SystemNotifications',                            // OS notification — ShowLyrics punya notif sendiri
 ].join(','));
 
-app.commandLine.appendSwitch('enable-features', [
+// ─── enable-features: kondisional berdasarkan GPU Compat Mode ───
+// macOS: MetalForWebGL dinonaktifkan di compat mode
+const _macEnableFeatures = [
   'OverlayFullscreenVideo',              // Overlay video di fullscreen tanpa re-composite
   'CanvasOopRasterization',             // Canvas rasterisasi di proses terpisah (lebih stabil)
-  'MetalForWebGL',                      // macOS Metal backend untuk WebGL (performa lebih baik dari OpenGL)
   // Catatan: D3D11VideoDecoder, D3D12VideoDecoder, MediaFoundationVideoCapture,
   // DirectCompositionVideoOverlays, DirectCompositionHardwareOverlays — SEMUA DIHAPUS
   // Alasan: Windows-only APIs, tidak relevan dan bisa menyebabkan error di macOS
-].join(','));
+];
+if (!gpuCompatibilityMode) {
+  _macEnableFeatures.push('MetalForWebGL'); // macOS Metal backend untuk WebGL
+}
+app.commandLine.appendSwitch('enable-features', _macEnableFeatures.join(','));
 
 // ═════════════════════════════════════════════════════════════════════════════
 // BLOK 5 — SERVICES TIDAK TERPAKAI: Matikan Semua Service yang Tidak Diperlukan
@@ -112,14 +189,25 @@ app.commandLine.appendSwitch('log-level', '3');                                /
 // BLOK 6 — MEMORY & V8: Tuning untuk Video Playback + Low-to-High End Devices
 // Memory sengaja diberi ruang besar karena background.html load & play video
 // ═════════════════════════════════════════════════════════════════════════════
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=1536');
+// ─── Adaptive V8 Heap Memory berdasarkan RAM sistem ───
+// Low-end (< 4GB RAM): 768MB — cukup untuk video render tanpa kill sistem
+// Mid-range (4-8GB RAM): 1024MB — seimbang antara performa dan stabilitas
+// High-end (>= 8GB RAM): 1536MB — maksimal untuk multi-projector + camera
+const _totalRAMgb = os.totalmem() / (1024 ** 3);
+const _v8HeapMB = _totalRAMgb >= 8 ? 1536 : (_totalRAMgb >= 4 ? 1024 : 768);
+app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${_v8HeapMB}`);
+log(`[MEMORY] RAM: ${_totalRAMgb.toFixed(1)}GB → V8 heap: ${_v8HeapMB}MB`);
 // Catatan: --optimize-for-size, --flush-bytecode, --gc-interval=500 DIHAPUS.
 // --optimize-for-size → membuat V8 generate kode lebih lambat demi ukuran kecil (buruk untuk video player)
 // --flush-bytecode   → menyebabkan re-kompilasi JIT saat fungsi dipanggil lagi (micro-jank)
 // --gc-interval=500  → GC terlalu sering = GC pause saat render frame = frame drop / patah-patah
 
-app.commandLine.appendSwitch('disk-cache-size', '268435456');                  // Cache disk 256MB — penting untuk video asset caching
+// ─── Adaptive Disk Cache berdasarkan RAM sistem ───
+const _cacheMB = _totalRAMgb >= 8 ? 256 : (_totalRAMgb >= 4 ? 128 : 64);
+app.commandLine.appendSwitch('disk-cache-size', String(_cacheMB * 1024 * 1024)); // Cache disk adaptif
+log(`[MEMORY] Disk cache: ${_cacheMB}MB`);
 app.commandLine.appendSwitch('num-raster-threads', '4');                       // 4 thread rasterisasi parallel — video frame lebih smooth
+app.commandLine.appendSwitch('renderer-process-limit', '4');                   // Batasi max renderer process — hemat RAM
 // disable-frame-rate-limit — DIHAPUS: KRITIS! Flag ini membuang vsync alignment.
 // Video 60fps butuh frame dikirim tepat tiap 16.67ms aligned ke refresh rate display.
 // Tanpa limiter → Chromium kirim frame tak teratur → GPU overload → stutter/patah-patah.
@@ -137,30 +225,107 @@ app.commandLine.appendSwitch('allow-http-camera-access');
 let mainWindow;
 let splashWindow;
 let pyProc = null;
+let pyProcExited = false;
+let pyProcExitDetail = '';
+let isQuitting = false;
+let healthCheckTimer = null;
+
+function ensureExecutable(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.chmodSync(filePath, 0o755);
+    }
+  } catch (err) {
+    appendBackendLog(`chmod warning for ${filePath}: ${err.message}`);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FUNGSI: JALANKAN PYTHON BACKEND
 // ─────────────────────────────────────────────────────────────────────────────
 const createPyProc = () => {
-  // macOS: binary tanpa ekstensi .exe
-  let script = path.join(process.resourcesPath, 'bin', 'ShowLyrics');
-  if (!app.isPackaged) {
-    script = path.join(__dirname, '../bin/ShowLyrics');
-  }
-  log('Starting Python Backend from:', script);
+  pyProcExited = false;
+  pyProcExitDetail = '';
+  const binDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'bin')
+    : path.join(__dirname, '../backend');
 
-  pyProc = spawn(script, [], {
-    env: { ...process.env, SHOWLYRICS_SECRET: secretToken }
+  let spawnArgs;
+
+  if (app.isPackaged) {
+    // Production: jalankan binary compiled (macOS: tanpa ekstensi)
+    const script = path.join(binDir, 'ShowLyrics');
+    if (!fs.existsSync(script)) {
+      const msg = `Python backend binary not found at: ${script}`;
+      appendBackendLog(msg);
+      pyProcExited = true;
+      pyProcExitDetail = msg;
+      dialog.showErrorBox('ShowLyrics Startup Error', msg);
+      return;
+    }
+    ensureExecutable(script);
+    for (const helper of ['playback-engine', 'camera-service', 'ffmpeg']) {
+      ensureExecutable(path.join(binDir, helper));
+      ensureExecutable(path.join(binDir, 'internal', helper));
+    }
+    log('Starting Python Backend (production) from:', script);
+    appendBackendLog(`Starting Python Backend (production) from: ${script}`);
+    spawnArgs = { cmd: script, args: [] };
+  } else {
+    // Development: jalankan python main.py langsung — tidak perlu binary
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const mainScript = path.join(__dirname, '../backend', 'main.py');
+    log('Starting Python Backend (dev) from:', pythonCmd, mainScript);
+    spawnArgs = { cmd: pythonCmd, args: [mainScript] };
+  }
+
+  pyProc = spawn(spawnArgs.cmd, spawnArgs.args, {
+    cwd: binDir,
+    detached: process.platform !== 'win32',
+    env: {
+      ...process.env,
+      SHOWLYRICS_SECRET: secretToken,
+      SHOWLYRICS_DEV: app.isPackaged ? 'false' : 'true'
+    }
   });
 
-  pyProc.stdout.on('data', (data) => log(`Python: ${data}`));
-  pyProc.stderr.on('data', (data) => logE(`Python Error: ${data}`));
+  pyProc.stdout.on('data', (data) => {
+    const text = String(data).trimEnd();
+    log(`Python: ${text}`);
+    if (text) appendBackendLog(`STDOUT: ${text}`);
+  });
+  pyProc.stderr.on('data', (data) => {
+    const text = String(data).trimEnd();
+    logE(`Python Error: ${text}`);
+    if (text) appendBackendLog(`STDERR: ${text}`);
+  });
+
+  pyProc.on('error', (err) => {
+    pyProcExited = true;
+    pyProcExitDetail = err.message;
+    logE('Failed to start Python backend:', err.message);
+    appendBackendLog(`SPAWN ERROR: ${err.message}`);
+  });
+
+  pyProc.on('close', (code, signal) => {
+    pyProcExited = true;
+    pyProcExitDetail = `code=${code}, signal=${signal}`;
+    if (code !== null && code !== 0) {
+      logE(`Python backend exited with code ${code}`);
+    }
+    appendBackendLog(`Python backend closed (${pyProcExitDetail})`);
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FUNGSI: MATIKAN PYTHON BACKEND
 // ─────────────────────────────────────────────────────────────────────────────
 const exitPyProc = () => {
+  if (healthCheckTimer) {
+    clearInterval(healthCheckTimer);
+    healthCheckTimer = null;
+  }
+
   try {
     if (fs.existsSync(tokenFile)) {
       fs.unlinkSync(tokenFile);
@@ -169,16 +334,38 @@ const exitPyProc = () => {
   } catch (err) {}
 
   if (pyProc) {
-    log('Membunuh Python Backend...');
-    try {
-      // macOS: gunakan SIGKILL agar semua child process (Go engine) juga mati
-      process.kill(pyProc.pid, 'SIGKILL');
-    } catch (e) {
-      log('Kill warning:', e.message);
-      try { pyProc.kill(); } catch (_) {}
-    }
+    const proc = pyProc;
+    const pid = proc.pid;
     pyProc = null;
-    log('Python Backend BENAR-BENAR MATI.');
+    log('Membunuh Python Backend...');
+    appendBackendLog(`Terminating Python backend process group (pid=${pid})`);
+
+    const signalGroup = (sig) => {
+      if (!pid) return;
+      if (process.platform !== 'win32') {
+        try {
+          process.kill(-pid, sig);
+          return;
+        } catch (_) {}
+      }
+      try {
+        process.kill(pid, sig);
+      } catch (_) {}
+    };
+
+    signalGroup('SIGTERM');
+    const forceKillTimer = setTimeout(() => {
+      signalGroup('SIGKILL');
+    }, 1500);
+    if (typeof forceKillTimer.unref === 'function') {
+      forceKillTimer.unref();
+    }
+    log('Python Backend termination signal sent.');
+  }
+
+  if (backendLogStream) {
+    try { backendLogStream.end(); } catch (_) {}
+    backendLogStream = null;
   }
 };
 
@@ -215,24 +402,62 @@ function createSplashWindow() {
 // FUNGSI: PING BACKEND (tunggu sampai server Python nyala)
 // ─────────────────────────────────────────────────────────────────────────────
 function checkBackendAndLoad() {
+  if (healthCheckTimer) {
+    clearInterval(healthCheckTimer);
+    healthCheckTimer = null;
+  }
   log('Mencari sinyal dari 127.0.0.1:18888...');
+  const startTime = Date.now();
+  const MAX_WAIT_MS = 45000;
 
-  const pingInterval = setInterval(() => {
+  healthCheckTimer = setInterval(() => {
+    if (isQuitting) {
+      clearInterval(healthCheckTimer);
+      healthCheckTimer = null;
+      return;
+    }
+
+    if (pyProcExited) {
+      clearInterval(healthCheckTimer);
+      healthCheckTimer = null;
+      const errMsg = `ShowLyrics backend exited unexpectedly (${pyProcExitDetail}).\nSee log: ${backendLogPath}`;
+      appendBackendLog(`Startup aborted: ${errMsg}`);
+      dialog.showErrorBox('ShowLyrics Backend Error', errMsg);
+      isQuitting = true;
+      exitPyProc();
+      app.exit(1);
+      return;
+    }
+
+    if (Date.now() - startTime > MAX_WAIT_MS) {
+      clearInterval(healthCheckTimer);
+      healthCheckTimer = null;
+      const errMsg = `ShowLyrics backend timed out after ${MAX_WAIT_MS / 1000}s waiting for /api/health.\nSee log: ${backendLogPath}`;
+      appendBackendLog(`Startup timeout: ${errMsg}`);
+      dialog.showErrorBox('ShowLyrics Startup Timeout', errMsg);
+      isQuitting = true;
+      exitPyProc();
+      app.exit(1);
+      return;
+    }
+
     const options = {
       hostname: '127.0.0.1',
       port: 18888,
-      path: '/',
+      path: '/api/health',   // ← BUKAN '/' — hindari Jinja2 render saat ping
       method: 'GET',
       headers: { 'X-ShowLyrics-Secret': secretToken }
     };
 
     const req = http.request(options, (res) => {
       if (res.statusCode >= 200 && res.statusCode < 400) {
-        clearInterval(pingInterval);
-        log('Server Ditemukan! Membuka Controller...');
+        clearInterval(healthCheckTimer);
+        healthCheckTimer = null;
+        log('Server Ditemukan! (health check OK) Membuka Controller...');
         createMainWindow();
+      } else {
+        log(`Ping /api/health returned ${res.statusCode}, retrying...`);
       }
-      // Drain response agar socket tidak hang
       res.resume();
     });
 
@@ -240,7 +465,7 @@ function checkBackendAndLoad() {
       // Server belum nyala — tunggu ping berikutnya
     });
 
-    req.setTimeout(400, () => req.destroy());
+    req.setTimeout(800, () => req.destroy());
     req.end();
   }, 500);
 }
@@ -308,6 +533,27 @@ app.whenReady().then(() => {
     return details.deviceType === 'camera' || details.deviceType === 'microphone';
   });
 
+  // Konfigurasi macOS Menu Bar (di dalam whenReady agar Cmd+C/V/X/A/Z dan Cmd+Q berfungsi)
+  const macAppMenu = Menu.buildFromTemplate([
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about', label: `About ${app.name}` },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide', label: `Hide ${app.name}` },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit', label: `Quit ${app.name}`, accelerator: 'Cmd+Q' }
+      ]
+    },
+    { role: 'editMenu' },
+    { role: 'windowMenu' }
+  ]);
+  Menu.setApplicationMenu(macAppMenu);
+
   // Anti-sleep: tahan display & sistem agar tidak idle/sleep selama ibadah
   powerSaveBlocker.start('prevent-display-sleep');
   powerSaveBlocker.start('prevent-app-suspension');
@@ -317,7 +563,13 @@ app.whenReady().then(() => {
 });
 
 // Matikan Python saat aplikasi ditutup
+app.on('before-quit', () => {
+  isQuitting = true;
+  exitPyProc();
+});
+
 app.on('will-quit', () => {
+  isQuitting = true;
   exitPyProc();
 });
 
@@ -388,8 +640,10 @@ function createMainWindow() {
     }, 100);
   });
 
-  // Konfirmasi sebelum tutup aplikasi
+  // Konfirmasi sebelum tutup aplikasi — Close (X) menutup seluruh app & semua child process
   mainWindow.on('close', (e) => {
+    if (isQuitting) return;
+
     const choice = dialog.showMessageBoxSync(mainWindow, {
       type: 'warning',
       buttons: ['Close App', 'Cancel'],
@@ -402,17 +656,19 @@ function createMainWindow() {
 
     if (choice === 1) {
       e.preventDefault();
-    } else {
-      // Tutup semua projector window
-      Object.keys(projectorWindows).forEach(key => {
-        if (projectorWindows[key] && !projectorWindows[key].isDestroyed()) {
-          projectorWindows[key].close();
-          projectorWindows[key] = null;
-        }
-      });
-      exitPyProc();
-      app.exit();
+      return;
     }
+
+    isQuitting = true;
+    // Tutup semua projector window
+    Object.keys(projectorWindows).forEach(key => {
+      if (projectorWindows[key] && !projectorWindows[key].isDestroyed()) {
+        projectorWindows[key].close();
+        projectorWindows[key] = null;
+      }
+    });
+    exitPyProc();
+    setTimeout(() => app.exit(0), 250);
   });
 }
 
@@ -431,18 +687,44 @@ ipcMain.handle('get-displays', () => {
 // IPC: TEST DISPLAYS
 // ─────────────────────────────────────────────────────────────────────────────
 ipcMain.on('test-displays', () => {
+  const primaryDisplay = screen.getPrimaryDisplay();
   const displays = screen.getAllDisplays();
+
+  const getAspectRatioStr = (w, h) => {
+    const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+    const d = gcd(w, h);
+    const rw = w / d;
+    const rh = h / d;
+    if ((rw === 16 && rh === 9) || (rw === 16 && rh === 10) || (rw === 4 && rh === 3) || (rw === 21 && rh === 9) || (rw === 32 && rh === 9)) {
+      return `${rw}:${rh}`;
+    }
+    const dec = w / h;
+    if (Math.abs(dec - 16 / 9) < 0.03) return '16:9';
+    if (Math.abs(dec - 16 / 10) < 0.03) return '16:10';
+    if (Math.abs(dec - 4 / 3) < 0.03) return '4:3';
+    if (Math.abs(dec - 21 / 9) < 0.03) return '21:9';
+    return `${rw}:${rh}`;
+  };
+
   displays.forEach((disp, index) => {
+    const isPrimary = disp.id === primaryDisplay.id;
+    const aspectRatio = getAspectRatioStr(disp.bounds.width, disp.bounds.height);
+    const scalePercent = Math.round((disp.scaleFactor || 1) * 100);
+
     const win = new BrowserWindow({
       x: disp.bounds.x,
       y: disp.bounds.y,
       width: disp.bounds.width,
       height: disp.bounds.height,
-      fullscreen: true,
+      fullscreen: false,
+      enableLargerThanScreen: true,
       frame: false,
       transparent: false,
       alwaysOnTop: true,
       autoHideMenuBar: true,
+      hasShadow: false,
+      resizable: false,
+      movable: false,
       backgroundColor: '#000000',
       webPreferences: {
         nodeIntegration: false,
@@ -451,37 +733,371 @@ ipcMain.on('test-displays', () => {
         devTools: false
       }
     });
+    win.setAlwaysOnTop(true, 'pop-up-menu');
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setBounds(disp.bounds);
 
     const htmlContent = `
       <!DOCTYPE html>
       <html>
         <head>
           <meta charset="UTF-8">
+          <title>Display Check - ${index + 1}</title>
           <style>
-            body {
-              background: #000;
-              color: #FFF;
+            * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+              user-select: none;
+            }
+            html, body {
+              width: 100vw;
+              height: 100vh;
+              overflow: hidden;
+              background: #080a0f;
+              color: #ffffff;
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            }
+            /* 100% Extreme Outer Edge Hatch / Zebra Pattern */
+            .outer-zebra-border {
+              position: fixed;
+              top: 0;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              pointer-events: none;
+              z-index: 100;
+              border: 8px solid transparent;
+              border-image: repeating-linear-gradient(45deg, #ffffff 0, #ffffff 12px, #000000 12px, #000000 24px) 8;
+            }
+            .inner-red-line {
+              position: fixed;
+              top: 8px;
+              left: 8px;
+              right: 8px;
+              bottom: 8px;
+              pointer-events: none;
+              z-index: 99;
+              border: 2px solid #ff0055;
+            }
+            /* Edge Markers */
+            .edge-tag {
+              position: fixed;
+              z-index: 101;
+              font-size: 11px;
+              font-weight: 800;
+              letter-spacing: 1px;
+              color: #000000;
+              background: #ffcc00;
+              padding: 2px 10px;
+              border-radius: 2px;
+            }
+            .edge-top { top: 10px; left: 50%; transform: translateX(-50%); }
+            .edge-bottom { bottom: 10px; left: 50%; transform: translateX(-50%); }
+            .edge-left { top: 50%; left: 10px; transform: translateY(-50%) rotate(-90deg); transform-origin: left center; }
+            .edge-right { top: 50%; right: 10px; transform: translateY(-50%) rotate(90deg); transform-origin: right center; }
+
+            /* Corner Crop L-Marks */
+            .corner-crop {
+              position: fixed;
+              width: 50px;
+              height: 50px;
+              z-index: 98;
+              pointer-events: none;
+            }
+            .corner-tl { top: 12px; left: 12px; border-top: 4px solid #00f0ff; border-left: 4px solid #00f0ff; }
+            .corner-tr { top: 12px; right: 12px; border-top: 4px solid #00f0ff; border-right: 4px solid #00f0ff; }
+            .corner-bl { bottom: 12px; left: 12px; border-bottom: 4px solid #00f0ff; border-left: 4px solid #00f0ff; }
+            .corner-br { bottom: 12px; right: 12px; border-bottom: 4px solid #00f0ff; border-right: 4px solid #00f0ff; }
+
+            /* Broadcast Safe Areas */
+            .safe-action {
+              position: fixed;
+              top: 5vh;
+              left: 5vw;
+              width: 90vw;
+              height: 90vh;
+              border: 1px dashed rgba(0, 240, 255, 0.45);
+              pointer-events: none;
+              z-index: 50;
+            }
+            .safe-action-label {
+              position: absolute;
+              top: 4px;
+              left: 6px;
+              font-size: 10px;
+              font-weight: 700;
+              letter-spacing: 1px;
+              color: rgba(0, 240, 255, 0.7);
+            }
+            .safe-title {
+              position: fixed;
+              top: 10vh;
+              left: 10vw;
+              width: 80vw;
+              height: 80vh;
+              border: 1px dashed rgba(255, 204, 0, 0.45);
+              pointer-events: none;
+              z-index: 51;
+            }
+            .safe-title-label {
+              position: absolute;
+              top: 4px;
+              left: 6px;
+              font-size: 10px;
+              font-weight: 700;
+              letter-spacing: 1px;
+              color: rgba(255, 204, 0, 0.7);
+            }
+
+            /* Crosshairs & Center Circle (Aspect Ratio Distortion Check) */
+            .crosshair-h {
+              position: fixed;
+              top: 50%;
+              left: 0;
+              width: 100vw;
+              height: 1px;
+              background: rgba(255, 255, 255, 0.15);
+              pointer-events: none;
+              z-index: 20;
+            }
+            .crosshair-v {
+              position: fixed;
+              top: 0;
+              left: 50%;
+              width: 1px;
+              height: 100vh;
+              background: rgba(255, 255, 255, 0.15);
+              pointer-events: none;
+              z-index: 20;
+            }
+            .center-circle {
+              position: fixed;
+              top: 50%;
+              left: 50%;
+              width: min(65vh, 65vw);
+              height: min(65vh, 65vw);
+              transform: translate(-50%, -50%);
+              border: 2px solid rgba(255, 255, 255, 0.2);
+              border-radius: 50%;
+              pointer-events: none;
+              z-index: 21;
+            }
+
+            /* Calibration Bars */
+            .bars-container {
+              position: fixed;
+              bottom: 24px;
+              left: 50%;
+              transform: translateX(-50%);
+              width: min(84vw, 900px);
               display: flex;
               flex-direction: column;
-              justify-content: center;
-              align-items: center;
-              height: 100vh;
-              margin: 0;
-              font-family: sans-serif;
-              text-align: center;
-              font-size: 16px;
+              gap: 4px;
+              z-index: 60;
             }
-            img { width: 150px; margin-bottom: 30px; }
-            h1 { font-size: 8vw; margin: 0; font-weight: 900; }
-            h2 { font-size: 3vw; color: #aaa; margin-top: 20px; font-weight: 300; }
-            h3 { font-size: 2vw; color: #888; margin-top: 80px; letter-spacing: 5px; }
+            .color-bars {
+              display: flex;
+              height: 18px;
+              border-radius: 4px;
+              overflow: hidden;
+              border: 1px solid rgba(255, 255, 255, 0.25);
+            }
+            .color-bar { flex: 1; height: 100%; }
+            .grayscale-bars {
+              display: flex;
+              height: 14px;
+              border-radius: 4px;
+              overflow: hidden;
+              border: 1px solid rgba(255, 255, 255, 0.25);
+            }
+            .gray-bar { flex: 1; height: 100%; }
+
+            /* Center Hub Card */
+            .hud-center {
+              position: fixed;
+              top: 50%;
+              left: 50%;
+              transform: translate(-50%, -50%);
+              background: rgba(12, 16, 24, 0.92);
+              backdrop-filter: blur(16px);
+              border: 1px solid rgba(255, 255, 255, 0.2);
+              box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 24px rgba(0, 240, 255, 0.15);
+              border-radius: 16px;
+              padding: 28px 40px;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              text-align: center;
+              z-index: 70;
+              min-width: min(90vw, 480px);
+            }
+            .hud-logo {
+              width: 52px;
+              height: 52px;
+              margin-bottom: 12px;
+              object-fit: contain;
+            }
+            .hud-sub {
+              font-size: 11px;
+              letter-spacing: 3px;
+              text-transform: uppercase;
+              color: #00f0ff;
+              font-weight: 700;
+              margin-bottom: 6px;
+            }
+            .hud-title-row {
+              display: flex;
+              align-items: center;
+              gap: 12px;
+              margin-bottom: 18px;
+            }
+            .hud-title {
+              font-size: 38px;
+              font-weight: 900;
+              letter-spacing: 1px;
+              color: #ffffff;
+            }
+            .role-badge {
+              font-size: 11px;
+              font-weight: 800;
+              letter-spacing: 1px;
+              padding: 4px 10px;
+              border-radius: 20px;
+              text-transform: uppercase;
+            }
+            .role-primary {
+              background: rgba(255, 204, 0, 0.2);
+              color: #ffcc00;
+              border: 1px solid #ffcc00;
+            }
+            .role-secondary {
+              background: rgba(0, 240, 255, 0.2);
+              color: #00f0ff;
+              border: 1px solid #00f0ff;
+            }
+            .specs-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 10px;
+              width: 100%;
+              margin-bottom: 18px;
+            }
+            .spec-box {
+              background: rgba(255, 255, 255, 0.05);
+              border: 1px solid rgba(255, 255, 255, 0.1);
+              border-radius: 8px;
+              padding: 8px 12px;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+            }
+            .spec-label {
+              font-size: 10px;
+              letter-spacing: 1.5px;
+              color: #8892b0;
+              text-transform: uppercase;
+              font-weight: 600;
+              margin-bottom: 4px;
+            }
+            .spec-val {
+              font-size: 16px;
+              font-weight: 800;
+              color: #ffffff;
+            }
+            .hud-hint {
+              font-size: 11px;
+              color: #64748b;
+              letter-spacing: 0.5px;
+            }
           </style>
         </head>
         <body>
-          <img src="http://localhost:18888/static/logo.png" alt="Logo" onerror="this.style.display='none'">
-          <h1>DISPLAY ${index + 1}</h1>
-          <h2>RESOLUTION: ${disp.bounds.width} x ${disp.bounds.height}</h2>
-          <h3>DISPLAY TEST</h3>
+          <!-- 100% Boundary Zebra & Inner Red Perimeter Line -->
+          <div class="outer-zebra-border"></div>
+          <div class="inner-red-line"></div>
+
+          <!-- Edge Position Indicators -->
+          <div class="edge-tag edge-top">▲ TOP BOUNDARY (Y: ${disp.bounds.y})</div>
+          <div class="edge-tag edge-bottom">▼ BOTTOM BOUNDARY (Y: ${disp.bounds.y + disp.bounds.height})</div>
+          <div class="edge-tag edge-left">▲ LEFT BOUNDARY (X: ${disp.bounds.x})</div>
+          <div class="edge-tag edge-right">▲ RIGHT BOUNDARY (X: ${disp.bounds.x + disp.bounds.width})</div>
+
+          <!-- 4 Corner L-Marks -->
+          <div class="corner-crop corner-tl"></div>
+          <div class="corner-crop corner-tr"></div>
+          <div class="corner-crop corner-bl"></div>
+          <div class="corner-crop corner-br"></div>
+
+          <!-- Safe Areas -->
+          <div class="safe-action">
+            <span class="safe-action-label">ACTION SAFE (90%)</span>
+          </div>
+          <div class="safe-title">
+            <span class="safe-title-label">TITLE SAFE (80%)</span>
+          </div>
+
+          <!-- Center Crosshair & Alignment Geometry Circle -->
+          <div class="crosshair-h"></div>
+          <div class="crosshair-v"></div>
+          <div class="center-circle"></div>
+
+          <!-- Center HUD Card -->
+          <div class="hud-center">
+            <img class="hud-logo" src="http://localhost:18888/static/logo.png" alt="ShowLyrics" onerror="this.style.display='none'">
+            <div class="hud-sub">ShowLyrics Display Check</div>
+            <div class="hud-title-row">
+              <h1 class="hud-title">DISPLAY ${index + 1}</h1>
+              <span class="role-badge ${isPrimary ? 'role-primary' : 'role-secondary'}">
+                ${isPrimary ? '★ PRIMARY' : 'SECONDARY'}
+              </span>
+            </div>
+            <div class="specs-grid">
+              <div class="spec-box">
+                <span class="spec-label">Native Resolution</span>
+                <span class="spec-val">${disp.bounds.width} × ${disp.bounds.height}</span>
+              </div>
+              <div class="spec-box">
+                <span class="spec-label">Aspect Ratio</span>
+                <span class="spec-val">${aspectRatio}</span>
+              </div>
+              <div class="spec-box">
+                <span class="spec-label">DPI Scale</span>
+                <span class="spec-val">${scalePercent}%</span>
+              </div>
+              <div class="spec-box">
+                <span class="spec-label">Bounds Offset</span>
+                <span class="spec-val">X:${disp.bounds.x} Y:${disp.bounds.y}</span>
+              </div>
+            </div>
+            <div class="hud-hint">Verifying edge overscan & alignment • Closes automatically</div>
+          </div>
+
+          <!-- Broadcast Calibration Bars -->
+          <div class="bars-container">
+            <div class="color-bars">
+              <div class="color-bar" style="background:#ffffff"></div>
+              <div class="color-bar" style="background:#ffff00"></div>
+              <div class="color-bar" style="background:#00ffff"></div>
+              <div class="color-bar" style="background:#00ff00"></div>
+              <div class="color-bar" style="background:#ff00ff"></div>
+              <div class="color-bar" style="background:#ff0000"></div>
+              <div class="color-bar" style="background:#0000ff"></div>
+              <div class="color-bar" style="background:#000000"></div>
+            </div>
+            <div class="grayscale-bars">
+              <div class="gray-bar" style="background:#000000"></div>
+              <div class="gray-bar" style="background:#1c1c1c"></div>
+              <div class="gray-bar" style="background:#383838"></div>
+              <div class="gray-bar" style="background:#555555"></div>
+              <div class="gray-bar" style="background:#717171"></div>
+              <div class="gray-bar" style="background:#8d8d8d"></div>
+              <div class="gray-bar" style="background:#aaaaaa"></div>
+              <div class="gray-bar" style="background:#c6c6c6"></div>
+              <div class="gray-bar" style="background:#e2e2e2"></div>
+              <div class="gray-bar" style="background:#ffffff"></div>
+            </div>
+          </div>
         </body>
       </html>
     `;
@@ -502,7 +1118,7 @@ ipcMain.on('test-displays', () => {
         win.close();
         try { fs.unlinkSync(tempFilePath); } catch (err) {}
       }
-    }, 2000);
+    }, 3000);
   });
 });
 
@@ -612,6 +1228,10 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
     // fullscreen:true memicu OS display mode switching → interrupt video / stuck.
     // Ganti dengan frameless window yang menutupi SELURUH area display secara manual.
     // Ini lebih stabil dan video tetap jalan tanpa interupsi apapun.
+    let bgHex = '#000000';
+    if (type === 'main') bgHex = mainDisplayBgColor;
+    if (type === 'lt') bgHex = ltDisplayBgColor;
+
     projectorWindows[type] = new BrowserWindow({
       x,
       y,
@@ -619,6 +1239,7 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
       height,
       title: winTitle,
       fullscreen: false,          // OS fullscreen dimatikan — pakai manual full-size window
+      enableLargerThanScreen: true,
       frame: false,               // Tanpa frame/titlebar
       transparent: false,         // WAJIB FALSE: Nutupin Desktop Wallpaper
       alwaysOnTop: true,
@@ -629,7 +1250,7 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
       hasShadow: false,
       resizable: false,           // Projector tidak perlu di-resize
       movable: false,             // Projector tidak perlu dipindah
-      backgroundColor: '#000000', // Hitam sejak awal — tidak ada flash putih
+      backgroundColor: bgHex,     // Hitam/custom sejak awal — tidak ada flash putih
       webPreferences: {
         partition: 'persist:sl-projector', // KRITIS: Dedicated renderer process — isolated dari controller
         nodeIntegration: false,
@@ -653,6 +1274,7 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
 
     // 'pop-up-menu' lebih stabil dari 'screen-saver' untuk render engine
     win.setAlwaysOnTop(true, 'pop-up-menu');
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
     // Kunci zoom level = 1.0 — cegah kalkulasi layout zoom yang tidak perlu
     win.webContents.setZoomFactor(1.0);
@@ -716,14 +1338,14 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
               if (v._slGuarded) return;
               v._slGuarded = true;
               v.addEventListener('pause', function() {
-                if (!v._intentionalPause) {
+                if (!v._intentionalPause && v.dataset.intentionalPause !== 'true') {
                   setTimeout(function() { v.play().catch(function(){}); }, 80);
                 }
               });
               // Tambahan: jaga agar video tidak ter-pause via visibility change
               doc.addEventListener('visibilitychange', function() {
                 if (doc.hidden) return; // jangan lakukan apa-apa saat hidden
-                if (!v.paused || v._intentionalPause) return;
+                if (!v.paused || v._intentionalPause || v.dataset.intentionalPause === 'true') return;
                 v.play().catch(function(){});
               });
             });
@@ -796,42 +1418,23 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// APP: MENU BAR (macOS — wajib ada agar Cmd+Q berfungsi dan OS tidak complain)
-// ─────────────────────────────────────────────────────────────────────────────
-const { Menu } = require('electron');
-const macAppMenu = Menu.buildFromTemplate([
-  {
-    label: app.name,
-    submenu: [
-      { role: 'about', label: `About ${app.name}` },
-      { type: 'separator' },
-      { role: 'services' },
-      { type: 'separator' },
-      { role: 'hide', label: `Hide ${app.name}` },
-      { role: 'hideOthers' },
-      { role: 'unhide' },
-      { type: 'separator' },
-      { role: 'quit', label: `Quit ${app.name}`, accelerator: 'Cmd+Q' }
-    ]
-  }
-]);
-Menu.setApplicationMenu(macAppMenu);
-
-// ─────────────────────────────────────────────────────────────────────────────
 // APP: WINDOW-ALL-CLOSED
-// Di macOS, app tetap aktif di Dock setelah semua window ditutup (konvensi macOS)
+// Tutup seluruh aplikasi dan pastikan semua child process mati bersih
 // ─────────────────────────────────────────────────────────────────────────────
 app.on('window-all-closed', () => {
-  // macOS: app tetap berjalan di background (behavior standar macOS)
-  // User bisa re-open via Dock. Quit hanya via Cmd+Q atau menu Quit.
-  // Jika ingin quit saat semua window ditutup, hapus kondisi ini.
-  if (process.platform !== 'darwin') app.quit();
+  isQuitting = true;
+  exitPyProc();
+  app.quit();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// APP: ACTIVATE (macOS Dock click — re-buka window jika sudah ditutup)
+// APP: ACTIVATE (macOS Dock click — cegah duplicate splash screen)
 // ─────────────────────────────────────────────────────────────────────────────
 app.on('activate', () => {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.show();
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) {
     createSplashWindow();
   } else {
@@ -861,7 +1464,11 @@ ipcMain.on('set-output-resolution', (_event, { type, mode, width, height }) => {
 ipcMain.handle('request-camera-permission', async () => {
   try {
     log('Camera permission requested from renderer');
-    return true; // Auto-granted via setPermissionRequestHandler
+    if (process.platform === 'darwin' && typeof systemPreferences.askForMediaAccess === 'function') {
+      const granted = await systemPreferences.askForMediaAccess('camera');
+      return granted;
+    }
+    return true;
   } catch (err) {
     logE('Camera permission request failed:', err);
     return false;
@@ -874,6 +1481,118 @@ ipcMain.handle('request-camera-permission', async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 ipcMain.on('relaunch-app', () => {
   log('Relaunch requested — restarting app...');
-  app.relaunch();
-  app.exit(0);
+  isQuitting = true;
+  exitPyProc();
+  setTimeout(() => {
+    app.relaunch();
+    app.exit(0);
+  }, 250);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: RESTART APP — dipanggil setelah GPU Compatibility Mode diubah
+// GPU flags hanya berlaku saat cold-start, jadi restart diperlukan
+// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.handle('restart-app', () => {
+  log('[IPC] restart-app dipanggil — melakukan relaunch...');
+  isQuitting = true;
+  exitPyProc();
+  setTimeout(() => {
+    app.relaunch();
+    app.exit(0);
+  }, 250);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: APPLY COMPOSITING CSS — inject/hapus CSS Force GPU Compositing Layer
+// Tidak perlu restart — berlaku langsung ke semua window yang aktif
+// ─────────────────────────────────────────────────────────────────────────────
+ipcMain.handle('apply-compositing-css', (event, enable) => {
+  forceGpuCompositingLayer = !!enable;
+  const CSS_COMPOSITING = `
+    video {
+      transform: translateZ(0) !important;
+      isolation: isolate !important;
+      will-change: transform !important;
+      backface-visibility: hidden !important;
+      -webkit-backface-visibility: hidden !important;
+    }
+  `;
+  const CSS_RESET = `
+    video {
+      transform: none !important;
+      isolation: auto !important;
+      will-change: auto !important;
+      backface-visibility: visible !important;
+      -webkit-backface-visibility: visible !important;
+    }
+  `;
+
+  // Inject ke semua BrowserWindow yang aktif
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.insertCSS(enable ? CSS_COMPOSITING : CSS_RESET).catch(() => {});
+    // Inject ke iframe juga
+    win.webContents.executeJavaScript(`
+      (function() {
+        document.querySelectorAll('iframe').forEach(function(iframe) {
+          try {
+            var doc = iframe.contentDocument;
+            if (!doc) return;
+            var styleId = 'sl-compositing-fix';
+            var existing = doc.getElementById(styleId);
+            if (existing) existing.remove();
+            if (${Boolean(enable)}) {
+              var s = doc.createElement('style');
+              s.id = styleId;
+              s.textContent = ${JSON.stringify(CSS_COMPOSITING)};
+              doc.head.appendChild(s);
+            }
+          } catch(e) {}
+        });
+      })();
+    `).catch(() => {});
+    log('[IPC] apply-compositing-css', enable ? 'ON' : 'OFF', 'untuk window:', win.id);
+  });
+  return { status: 'ok', enabled: enable };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPC: OUTPUT BACKGROUND COLOR (Main Display & Lower Third)
+// ─────────────────────────────────────────────────────────────────────────────
+function applyOutputBgColor(target, colorHex) {
+  if (typeof colorHex !== 'string' || !/^#([0-9A-Fa-f]{3}){1,2}$/.test(colorHex)) return;
+
+  if (!target || target === 'main' || target === 'all') {
+    mainDisplayBgColor = colorHex;
+    appWindowBgColor = colorHex;
+    log(`[OUTPUT BG COLOR] Main Display background color set to ${colorHex}`);
+    if (projectorWindows.main && !projectorWindows.main.isDestroyed()) {
+      projectorWindows.main.setBackgroundColor(colorHex);
+    }
+  }
+
+  if (!target || target === 'lt' || target === 'all') {
+    ltDisplayBgColor = colorHex;
+    log(`[OUTPUT BG COLOR] Lower Third background color set to ${colorHex}`);
+    if (projectorWindows.lt && !projectorWindows.lt.isDestroyed()) {
+      projectorWindows.lt.setBackgroundColor(colorHex);
+    }
+  }
+}
+
+ipcMain.on('set-window-background-color', (_event, payload) => {
+  if (typeof payload === 'object' && payload !== null) {
+    applyOutputBgColor(payload.target, payload.colorHex || payload.color);
+  } else {
+    applyOutputBgColor('all', payload);
+  }
+});
+
+ipcMain.on('set-output-background-color', (_event, payload) => {
+  if (typeof payload === 'object' && payload !== null) {
+    applyOutputBgColor(payload.target, payload.colorHex || payload.color);
+  } else {
+    applyOutputBgColor('main', payload);
+  }
 });
