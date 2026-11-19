@@ -98,31 +98,20 @@ pyarmor_hiddenimports = []
 
 if os.path.isdir('pyarmor_runtime_000000'):
     pyarmor_hiddenimports.append('pyarmor_runtime_000000')
-    _root_init = os.path.join('pyarmor_runtime_000000', '__init__.py')
-    if os.path.isfile(_root_init):
-        pyarmor_datas.append((_root_init, 'pyarmor_runtime_000000'))
-
-    # Single-platform layout fallback (pyarmor_runtime_000000/pyarmor_runtime.so)
-    _flat_so = os.path.join('pyarmor_runtime_000000', 'pyarmor_runtime.so')
-    if os.path.isfile(_flat_so):
-        pyarmor_binaries.append((_flat_so, 'pyarmor_runtime_000000'))
-        pyarmor_hiddenimports.append('pyarmor_runtime_000000.pyarmor_runtime')
-
-    # Multi-platform layout: hanya arch TARGET_ARCH
-    _arch_subdirs = ['darwin_arm64', 'darwin_aarch64'] if TARGET_ARCH == 'arm64' else ['darwin_x86_64']
-    for _sub in _arch_subdirs:
-        _sub_dir = os.path.join('pyarmor_runtime_000000', _sub)
-        _sub_so = os.path.join(_sub_dir, 'pyarmor_runtime.so')
-        _sub_init = os.path.join(_sub_dir, '__init__.py')
-        if os.path.isfile(_sub_so):
-            pyarmor_binaries.append((_sub_so, _sub_dir))
-            pyarmor_hiddenimports += [
-                f'pyarmor_runtime_000000.{_sub}',
-                f'pyarmor_runtime_000000.{_sub}.pyarmor_runtime',
-            ]
-            if os.path.isfile(_sub_init):
-                pyarmor_datas.append((_sub_init, _sub_dir))
-            print(f"[SPEC] PyArmor {TARGET_ARCH} .so: {_sub_so} -> {_sub_dir}")
+    _skip_dirs = {'darwin_x86_64'} if TARGET_ARCH == 'arm64' else {'darwin_arm64', 'darwin_aarch64'}
+    for _root, _dirs, _files in os.walk('pyarmor_runtime_000000'):
+        _dirs[:] = [d for d in _dirs if d not in _skip_dirs]
+        for _fn in _files:
+            _full = os.path.join(_root, _fn)
+            if _fn.endswith('.so'):
+                pyarmor_binaries.append((_full, _root))
+                _mod = _root.replace(os.sep, '.')
+                if _mod not in pyarmor_hiddenimports:
+                    pyarmor_hiddenimports.append(_mod)
+                pyarmor_hiddenimports.append(f"{_mod}.{os.path.splitext(_fn)[0]}")
+                print(f"[SPEC] PyArmor {TARGET_ARCH} .so: {_full} -> {_root}")
+            elif _fn.endswith('.py'):
+                pyarmor_datas.append((_full, _root))
 
 # ─── ANALYSIS ────────────────────────────────────────────────────────────────
 a = Analysis(

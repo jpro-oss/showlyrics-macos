@@ -69,8 +69,12 @@ jobs:
           pip install "pyarmor>=9.0.0,<10.0.0"
           rm -rf backend/dist backend/build backend/pyarmor_runtime_000000 /tmp/pyarmor_out
           python3 -m pyarmor.cli gen -O /tmp/pyarmor_out --platform darwin.x86_64,darwin.arm64 backend/*.py
-          touch /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_arm64/__init__.py
-          touch /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_x86_64/__init__.py
+          echo "=== PyArmor generated layout ==="
+          ls -laR /tmp/pyarmor_out/pyarmor_runtime_000000/
+          cat /tmp/pyarmor_out/pyarmor_runtime_000000/__init__.py
+          for d in /tmp/pyarmor_out/pyarmor_runtime_000000/*/; do
+            [ -d "$d" ] && touch "${d}__init__.py"
+          done
           if [ -d /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_arm64 ] && [ ! -d /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_aarch64 ]; then
             cp -R /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_arm64 /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_aarch64
             touch /tmp/pyarmor_out/pyarmor_runtime_000000/darwin_aarch64/__init__.py
@@ -300,12 +304,21 @@ jobs:
           echo "PyInstaller: $(python3 -m PyInstaller --version)"
           file ffmpeg playback-engine camera-service
 
-          # Isolate PyArmor runtime .so STRICTLY per TARGET_ARCH (cegah IncompatibleBinaryArchError)
+          # Isolate or thin PyArmor runtime .so STRICTLY per TARGET_ARCH (cegah IncompatibleBinaryArchError)
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             rm -rf pyarmor_runtime_000000/darwin_x86_64
           else
             rm -rf pyarmor_runtime_000000/darwin_arm64 pyarmor_runtime_000000/darwin_aarch64
           fi
+          find pyarmor_runtime_000000 -name "pyarmor_runtime.so" | while read -r sofile; do
+            echo "Found PyArmor .so: $sofile -> $(file "$sofile")"
+            if lipo -info "$sofile" 2>/dev/null | grep -q "Architectures in the fat file"; then
+              echo "Thinning universal $sofile to ${{ matrix.arch }}..."
+              lipo -thin "${{ matrix.arch }}" "$sofile" -output "${sofile}.thin"
+              mv "${sofile}.thin" "$sofile"
+            fi
+            codesign --force --sign - "$sofile" || true
+          done
           ls -laR pyarmor_runtime_000000/
 
           echo ""
