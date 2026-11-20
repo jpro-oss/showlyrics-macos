@@ -167,6 +167,43 @@ network_guard.inject_license(license_check)
 # ==========================================
 go_proc = None
 camera_proc = None
+_go_log_fp = None
+_camera_log_fp = None
+
+
+def _open_service_log(filename: str):
+    """Buka file log di ~/Library/Logs/ShowLyrics/ untuk sub-service Go (rotate > 5MB)."""
+    try:
+        log_dir = os.path.expanduser("~/Library/Logs/ShowLyrics")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, filename)
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 5 * 1024 * 1024:
+            try:
+                os.replace(log_path, log_path + ".old")
+            except Exception:
+                pass
+        return open(log_path, "a", encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _close_log_fp(fp):
+    if fp:
+        try:
+            fp.close()
+        except Exception:
+            pass
+    return None
+
+
+def get_subservices_status() -> dict:
+    return {
+        "playback_engine": bool(go_proc is not None and go_proc.poll() is None),
+        "camera_service": bool(camera_proc is not None and camera_proc.poll() is None),
+    }
+
+
+routes_service.set_subservices_probe(get_subservices_status)
 
 
 def _stop_child_proc(proc, label: str):
@@ -187,19 +224,22 @@ def _stop_child_proc(proc, label: str):
 
 
 def start_go_engine():
-    global go_proc
+    global go_proc, _go_log_fp
     try:
         if go_proc and go_proc.poll() is None:
             return
         go_exe = get_binary_path("playback-engine")
         if go_exe and os.path.exists(go_exe):
             print(f"[SYSTEM] Spawning Go Playback Engine from {go_exe}...")
+            _go_log_fp = _close_log_fp(_go_log_fp)
+            _go_log_fp = _open_service_log("playback-engine.log")
+            out_target = _go_log_fp if _go_log_fp else subprocess.DEVNULL
             go_proc = subprocess.Popen(
                 [go_exe],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=out_target,
+                stderr=out_target,
             )
-            time.sleep(0.2)
+            time.sleep(0.1)
         else:
             print("[SYSTEM] ERROR: playback-engine binary not found!")
     except Exception as e:
@@ -207,24 +247,28 @@ def start_go_engine():
 
 
 def stop_go_engine():
-    global go_proc
+    global go_proc, _go_log_fp
     go_proc = _stop_child_proc(go_proc, "Go Playback Engine")
+    _go_log_fp = _close_log_fp(_go_log_fp)
 
 
 def start_camera_service():
-    global camera_proc
+    global camera_proc, _camera_log_fp
     try:
         if camera_proc and camera_proc.poll() is None:
             return
         cam_exe = get_binary_path("camera-service")
         if cam_exe and os.path.exists(cam_exe):
             print(f"[SYSTEM] Spawning Go Camera Service from {cam_exe}...")
+            _camera_log_fp = _close_log_fp(_camera_log_fp)
+            _camera_log_fp = _open_service_log("camera-service.log")
+            out_target = _camera_log_fp if _camera_log_fp else subprocess.DEVNULL
             camera_proc = subprocess.Popen(
                 [cam_exe],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=out_target,
+                stderr=out_target,
             )
-            time.sleep(0.15)
+            time.sleep(0.1)
         else:
             print("[SYSTEM] WARNING: camera-service binary not found!")
     except Exception as e:
@@ -232,8 +276,9 @@ def start_camera_service():
 
 
 def stop_camera_service():
-    global camera_proc
+    global camera_proc, _camera_log_fp
     camera_proc = _stop_child_proc(camera_proc, "Go Camera Service")
+    _camera_log_fp = _close_log_fp(_camera_log_fp)
 
 
 atexit.register(stop_camera_service)

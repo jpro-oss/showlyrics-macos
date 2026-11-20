@@ -24,11 +24,11 @@ import base64
 from datetime import datetime, timezone
 from storage_backend import get_store
 
-APP_VERSION     = "1.3.5-4"
-SERVER_HASH_URL = "https://showlyrics.github.io/file/v135-4.json"
+APP_VERSION     = "1.35.4.1"
+SERVER_HASH_URL = "https://showlyrics.github.io/file/mac/v135-4-1.json"
 
 _BUILTIN_HASHES = {
-    "version":               "1.3.5-4",
+    "version":               "1.35.4.1",
     "static_fingerprint":    "c7a094a6407d19377290dae86d13c82a219be5ace9d5ef279313c4b996dca20d",
     "templates_fingerprint": "244a675c16a3395f1a3bd9cc14baa202fc09d11ab005b2195da501b634ac1932",
     "folder_fingerprint":    "f63b7f274104b1d990bf36e91f38fb2284c64dd722edafab14c396cb9ade7755",

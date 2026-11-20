@@ -1,10 +1,18 @@
 const { app, BrowserWindow, screen, ipcMain, dialog, powerSaveBlocker, shell, session, Menu, systemPreferences } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const os = require('os');
 const http = require('http');
 const fs = require('fs');
 const crypto = require('crypto');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SINGLE INSTANCE LOCK (cegah konflik port 18888/18899/18901 & timpa .session_token)
+// ─────────────────────────────────────────────────────────────────────────────
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PRODUCTION LOG GUARD & PERSISTENT BACKEND LOG
@@ -53,12 +61,14 @@ let ltDisplayBgColor = '#000000';
 let gpuCompatibilityMode = false;      // GPU Compatibility Mode: matikan Metal overlay path
 let forceGpuCompositingLayer = false;  // Force GPU Compositing Layer: CSS injection
 
-try {
-  if (!fs.existsSync(appFolder)) fs.mkdirSync(appFolder, { recursive: true });
-  fs.writeFileSync(tokenFile, secretToken, { encoding: 'utf8', mode: 0o600 });
-  log('Secure session token stored at:', tokenFile);
-} catch (err) {
-  logE('Failed to write session token:', err.message);
+if (gotSingleInstanceLock) {
+  try {
+    if (!fs.existsSync(appFolder)) fs.mkdirSync(appFolder, { recursive: true });
+    fs.writeFileSync(tokenFile, secretToken, { encoding: 'utf8', mode: 0o600 });
+    log('Secure session token stored at:', tokenFile);
+  } catch (err) {
+    logE('Failed to write session token:', err.message);
+  }
 }
 
 try {
@@ -121,7 +131,9 @@ app.commandLine.appendSwitch('use-angle', 'metal');                            /
 // BLOK 3 — ANTI-FREEZE: Cegah Render Berhenti saat Minimize / Mission Control
 // Krusial untuk projector display yang harus tetap render walau di-backgroundkan
 // ═════════════════════════════════════════════════════════════════════════════
-app.commandLine.appendSwitch('disable-software-rasterizer');                   // WAJIB: Cegah fallback ke software (CPU) render
+if (!gpuCompatibilityMode) {
+  app.commandLine.appendSwitch('disable-software-rasterizer');                 // Cegah fallback ke software render saat mode normal
+}
 app.commandLine.appendSwitch('disable-renderer-backgrounding');                // Cegah renderer di-throttle saat window minimize
 app.commandLine.appendSwitch('disable-background-timer-throttling');           // Cegah timer JS di-throttle saat background
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');        // Cegah freeze saat window tertutup aplikasi lain
@@ -207,7 +219,8 @@ const _cacheMB = _totalRAMgb >= 8 ? 256 : (_totalRAMgb >= 4 ? 128 : 64);
 app.commandLine.appendSwitch('disk-cache-size', String(_cacheMB * 1024 * 1024)); // Cache disk adaptif
 log(`[MEMORY] Disk cache: ${_cacheMB}MB`);
 app.commandLine.appendSwitch('num-raster-threads', '4');                       // 4 thread rasterisasi parallel — video frame lebih smooth
-app.commandLine.appendSwitch('renderer-process-limit', '4');                   // Batasi max renderer process — hemat RAM
+const _rendererLimit = _totalRAMgb >= 8 ? '8' : '4';
+app.commandLine.appendSwitch('renderer-process-limit', _rendererLimit);        // Jaga isolasi persist:sl-projector di Mac >= 8GB RAM
 // disable-frame-rate-limit — DIHAPUS: KRITIS! Flag ini membuang vsync alignment.
 // Video 60fps butuh frame dikirim tepat tiap 16.67ms aligned ke refresh rate display.
 // Tanpa limiter → Chromium kirim frame tak teratur → GPU overload → stutter/patah-patah.
@@ -227,8 +240,28 @@ let splashWindow;
 let pyProc = null;
 let pyProcExited = false;
 let pyProcExitDetail = '';
+let backendReadyOnce = false;
 let isQuitting = false;
+let isShuttingDown = false;
+let isRecoveringBackend = false;
 let healthCheckTimer = null;
+let runtimeRestartTimestamps = [];
+const MAX_RUNTIME_RESTARTS = 3;
+const RESTART_WINDOW_MS = 120000;
+
+function updateSplashStatus(label, detail) {
+  if (!splashWindow || splashWindow.isDestroyed()) return;
+  const safeLabel = JSON.stringify(String(label || 'Initializing'));
+  const safeDetail = JSON.stringify(String(detail || ''));
+  splashWindow.webContents.executeJavaScript(`
+    (function() {
+      var l = document.getElementById('splash-status-label');
+      var d = document.getElementById('splash-status-detail');
+      if (l) l.textContent = ${safeLabel};
+      if (d) d.textContent = ${safeDetail};
+    })();
+  `).catch(() => {});
+}
 
 function ensureExecutable(filePath) {
   try {
@@ -237,6 +270,74 @@ function ensureExecutable(filePath) {
     }
   } catch (err) {
     appendBackendLog(`chmod warning for ${filePath}: ${err.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRE-FLIGHT ORPHAN CLEANUP (macOS Only)
+// Bersihkan proses orphan ShowLyrics/playback-engine/camera-service yang
+// mungkin masih memegang port 18888/18899/18901 dari crash sebelumnya.
+// Hanya menyentuh executable ShowLyrics/playback-engine/camera-service.
+// ─────────────────────────────────────────────────────────────────────────────
+function cleanupStaleMacSubApps() {
+  if (process.platform !== 'darwin') return;
+  const lsofBin = fs.existsSync('/usr/sbin/lsof') ? '/usr/sbin/lsof' : 'lsof';
+  const psBin = fs.existsSync('/bin/ps') ? '/bin/ps' : 'ps';
+  const allowedNames = ['ShowLyrics', 'playback-engine', 'camera-service'];
+  const ports = [18888, 18899, 18901];
+  const stalePids = new Set();
+
+  for (const port of ports) {
+    try {
+      const out = execFileSync(lsofBin, ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
+        encoding: 'utf8',
+        timeout: 2000,
+        stdio: ['ignore', 'pipe', 'ignore']
+      });
+      for (const raw of out.split(/\r?\n/)) {
+        const pid = parseInt(raw.trim(), 10);
+        if (!pid || pid === process.pid) continue;
+        try {
+          const comm = execFileSync(psBin, ['-p', String(pid), '-o', 'comm='], {
+            encoding: 'utf8',
+            timeout: 1500,
+            stdio: ['ignore', 'pipe', 'ignore']
+          }).trim();
+          const baseName = path.basename(comm);
+          if (allowedNames.some((n) => baseName === n || baseName.startsWith(n))) {
+            stalePids.add(pid);
+            appendBackendLog(`Pre-flight: found stale ${baseName} (pid=${pid}) on port ${port}`);
+          } else {
+            appendBackendLog(`Pre-flight: port ${port} owned by non-ShowLyrics process "${baseName}" (pid=${pid}) — skipping`);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {
+      // lsof exits 1 when no process is listening on port (normal)
+    }
+  }
+
+  for (const pid of stalePids) {
+    try { process.kill(pid, 'SIGTERM'); } catch (_) {}
+  }
+  if (stalePids.size > 0) {
+    const deadline = Date.now() + 600;
+    while (Date.now() < deadline) {
+      let anyAlive = false;
+      for (const pid of stalePids) {
+        try {
+          process.kill(pid, 0);
+          anyAlive = true;
+        } catch (_) {}
+      }
+      if (!anyAlive) break;
+    }
+    for (const pid of stalePids) {
+      try {
+        process.kill(pid, 0);
+        process.kill(pid, 'SIGKILL');
+      } catch (_) {}
+    }
   }
 }
 
@@ -267,6 +368,7 @@ const createPyProc = () => {
     for (const helper of ['playback-engine', 'camera-service', 'ffmpeg']) {
       ensureExecutable(path.join(binDir, helper));
       ensureExecutable(path.join(binDir, 'internal', helper));
+      ensureExecutable(path.join(binDir, '_internal', helper));
     }
     log('Starting Python Backend (production) from:', script);
     appendBackendLog(`Starting Python Backend (production) from: ${script}`);
@@ -279,7 +381,7 @@ const createPyProc = () => {
     spawnArgs = { cmd: pythonCmd, args: [mainScript] };
   }
 
-  pyProc = spawn(spawnArgs.cmd, spawnArgs.args, {
+  const spawnedProc = spawn(spawnArgs.cmd, spawnArgs.args, {
     cwd: binDir,
     detached: process.platform !== 'win32',
     env: {
@@ -288,39 +390,82 @@ const createPyProc = () => {
       SHOWLYRICS_DEV: app.isPackaged ? 'false' : 'true'
     }
   });
+  pyProc = spawnedProc;
 
-  pyProc.stdout.on('data', (data) => {
+  spawnedProc.stdout.on('data', (data) => {
     const text = String(data).trimEnd();
     log(`Python: ${text}`);
     if (text) appendBackendLog(`STDOUT: ${text}`);
   });
-  pyProc.stderr.on('data', (data) => {
+  spawnedProc.stderr.on('data', (data) => {
     const text = String(data).trimEnd();
     logE(`Python Error: ${text}`);
     if (text) appendBackendLog(`STDERR: ${text}`);
   });
 
-  pyProc.on('error', (err) => {
-    pyProcExited = true;
-    pyProcExitDetail = err.message;
+  spawnedProc.on('error', (err) => {
+    if (pyProc === spawnedProc) {
+      pyProcExited = true;
+      pyProcExitDetail = err.message;
+    }
     logE('Failed to start Python backend:', err.message);
     appendBackendLog(`SPAWN ERROR: ${err.message}`);
   });
 
-  pyProc.on('close', (code, signal) => {
+  spawnedProc.on('close', (code, signal) => {
+    if (pyProc !== spawnedProc) return;
     pyProcExited = true;
     pyProcExitDetail = `code=${code}, signal=${signal}`;
     if (code !== null && code !== 0) {
       logE(`Python backend exited with code ${code}`);
     }
     appendBackendLog(`Python backend closed (${pyProcExitDetail})`);
+
+    if (!isQuitting && backendReadyOnce && !isRecoveringBackend) {
+      handleRuntimeBackendCrash();
+    }
   });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FUNGSI: MATIKAN PYTHON BACKEND
+// RUNTIME WATCHDOG: Auto-restart backend jika crash saat aplikasi sedang live
 // ─────────────────────────────────────────────────────────────────────────────
-const exitPyProc = () => {
+function handleRuntimeBackendCrash() {
+  const now = Date.now();
+  runtimeRestartTimestamps = runtimeRestartTimestamps.filter((ts) => now - ts < RESTART_WINDOW_MS);
+
+  if (runtimeRestartTimestamps.length >= MAX_RUNTIME_RESTARTS) {
+    const msg = `ShowLyrics backend crashed ${MAX_RUNTIME_RESTARTS} times within 2 minutes (${pyProcExitDetail}).\nSee log: ${backendLogPath}`;
+    appendBackendLog(`Watchdog halted: ${msg}`);
+    dialog.showErrorBox('ShowLyrics Backend Stopped', msg);
+    return;
+  }
+
+  runtimeRestartTimestamps.push(now);
+  isRecoveringBackend = true;
+  appendBackendLog(`Watchdog: restarting ShowLyrics backend (attempt ${runtimeRestartTimestamps.length}/${MAX_RUNTIME_RESTARTS})...`);
+
+  cleanupStaleMacSubApps();
+  createPyProc();
+  checkBackendAndLoad(() => {
+    isRecoveringBackend = false;
+    appendBackendLog('Watchdog: backend recovered — reloading active windows.');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadURL('http://127.0.0.1:18888');
+    }
+    Object.keys(projectorWindows).forEach((key) => {
+      const win = projectorWindows[key];
+      if (win && !win.isDestroyed()) {
+        win.webContents.reload();
+      }
+    });
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNGSI: MATIKAN PYTHON BACKEND (graceful SIGTERM -> wait -> SIGKILL PGID)
+// ─────────────────────────────────────────────────────────────────────────────
+const exitPyProc = (forceImmediate = false) => {
   if (healthCheckTimer) {
     clearInterval(healthCheckTimer);
     healthCheckTimer = null;
@@ -338,7 +483,7 @@ const exitPyProc = () => {
     const pid = proc.pid;
     pyProc = null;
     log('Membunuh Python Backend...');
-    appendBackendLog(`Terminating Python backend process group (pid=${pid})`);
+    appendBackendLog(`Terminating Python backend process group (pid=${pid}, force=${forceImmediate})`);
 
     const signalGroup = (sig) => {
       if (!pid) return;
@@ -353,12 +498,14 @@ const exitPyProc = () => {
       } catch (_) {}
     };
 
-    signalGroup('SIGTERM');
-    const forceKillTimer = setTimeout(() => {
-      signalGroup('SIGKILL');
-    }, 1500);
-    if (typeof forceKillTimer.unref === 'function') {
-      forceKillTimer.unref();
+    signalGroup(forceImmediate ? 'SIGKILL' : 'SIGTERM');
+    if (!forceImmediate) {
+      const forceKillTimer = setTimeout(() => {
+        signalGroup('SIGKILL');
+      }, 1200);
+      if (typeof forceKillTimer.unref === 'function') {
+        forceKillTimer.unref();
+      }
     }
     log('Python Backend termination signal sent.');
   }
@@ -368,6 +515,65 @@ const exitPyProc = () => {
     backendLogStream = null;
   }
 };
+
+function gracefulShutdownAndExit(exitCode = 0, relaunch = false) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  isQuitting = true;
+
+  if (healthCheckTimer) {
+    clearInterval(healthCheckTimer);
+    healthCheckTimer = null;
+  }
+
+  Object.keys(projectorWindows).forEach((key) => {
+    if (projectorWindows[key] && !projectorWindows[key].isDestroyed()) {
+      projectorWindows[key].destroy();
+      projectorWindows[key] = null;
+    }
+  });
+
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.destroy();
+    splashWindow = null;
+  }
+
+  const targetPid = pyProc ? pyProc.pid : null;
+  exitPyProc(false);
+
+  const finish = () => {
+    if (targetPid && !pyProcExited) {
+      if (process.platform !== 'win32') {
+        try { process.kill(-targetPid, 'SIGKILL'); } catch (_) {}
+      }
+      try { process.kill(targetPid, 'SIGKILL'); } catch (_) {}
+    }
+    if (relaunch) {
+      app.relaunch();
+    }
+    app.exit(exitCode);
+  };
+
+  if (!targetPid || pyProcExited) {
+    finish();
+    return;
+  }
+
+  const startedWait = Date.now();
+  const waitTimer = setInterval(() => {
+    let stillAlive = false;
+    try {
+      process.kill(targetPid, 0);
+      stillAlive = true;
+    } catch (_) {
+      stillAlive = false;
+    }
+    if (!stillAlive || pyProcExited || Date.now() - startedWait >= 1200) {
+      clearInterval(waitTimer);
+      finish();
+    }
+  }, 50);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FUNGSI: SPLASH SCREEN
@@ -394,14 +600,15 @@ function createSplashWindow() {
 
   splashWindow.once('ready-to-show', () => {
     splashWindow.show();
+    updateSplashStatus('Starting Engine', 'Waiting for ShowLyrics backend (127.0.0.1:18888)...');
     checkBackendAndLoad();
   });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FUNGSI: PING BACKEND (tunggu sampai server Python nyala)
+// FUNGSI: PING BACKEND (tunggu sampai server Python + auth token cocok)
 // ─────────────────────────────────────────────────────────────────────────────
-function checkBackendAndLoad() {
+function checkBackendAndLoad(onReady) {
   if (healthCheckTimer) {
     clearInterval(healthCheckTimer);
     healthCheckTimer = null;
@@ -409,6 +616,7 @@ function checkBackendAndLoad() {
   log('Mencari sinyal dari 127.0.0.1:18888...');
   const startTime = Date.now();
   const MAX_WAIT_MS = 45000;
+  let attempts = 0;
 
   healthCheckTimer = setInterval(() => {
     if (isQuitting) {
@@ -423,42 +631,67 @@ function checkBackendAndLoad() {
       const errMsg = `ShowLyrics backend exited unexpectedly (${pyProcExitDetail}).\nSee log: ${backendLogPath}`;
       appendBackendLog(`Startup aborted: ${errMsg}`);
       dialog.showErrorBox('ShowLyrics Backend Error', errMsg);
-      isQuitting = true;
-      exitPyProc();
-      app.exit(1);
+      gracefulShutdownAndExit(1, false);
       return;
     }
 
-    if (Date.now() - startTime > MAX_WAIT_MS) {
+    const elapsed = Date.now() - startTime;
+    if (elapsed > MAX_WAIT_MS) {
       clearInterval(healthCheckTimer);
       healthCheckTimer = null;
       const errMsg = `ShowLyrics backend timed out after ${MAX_WAIT_MS / 1000}s waiting for /api/health.\nSee log: ${backendLogPath}`;
       appendBackendLog(`Startup timeout: ${errMsg}`);
       dialog.showErrorBox('ShowLyrics Startup Timeout', errMsg);
-      isQuitting = true;
-      exitPyProc();
-      app.exit(1);
+      gracefulShutdownAndExit(1, false);
       return;
+    }
+
+    attempts += 1;
+    if (attempts === 6) {
+      updateSplashStatus('Loading Modules', 'Initializing Python & Go sub-services...');
+    } else if (attempts === 18) {
+      updateSplashStatus('Almost Ready', 'Verifying port 18888 & session token...');
     }
 
     const options = {
       hostname: '127.0.0.1',
       port: 18888,
-      path: '/api/health',   // ← BUKAN '/' — hindari Jinja2 render saat ping
+      path: '/api/health',
       method: 'GET',
       headers: { 'X-ShowLyrics-Secret': secretToken }
     };
 
     const req = http.request(options, (res) => {
-      if (res.statusCode >= 200 && res.statusCode < 400) {
-        clearInterval(healthCheckTimer);
-        healthCheckTimer = null;
-        log('Server Ditemukan! (health check OK) Membuka Controller...');
-        createMainWindow();
-      } else {
-        log(`Ping /api/health returned ${res.statusCode}, retrying...`);
-      }
-      res.resume();
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 400) {
+          let parsed = null;
+          try { parsed = JSON.parse(body); } catch (_) {}
+
+          const isOkStatus = !parsed || parsed.status === 'ok';
+          const isAuthMatch = !parsed || parsed.auth_ok !== false;
+          const isPidMatch = !parsed || !parsed.pid || !pyProc || !pyProc.pid || !isDev || parsed.pid === pyProc.pid;
+
+          if (isOkStatus && isAuthMatch && isPidMatch) {
+            clearInterval(healthCheckTimer);
+            healthCheckTimer = null;
+            backendReadyOnce = true;
+            log('Server Ditemukan! (health check & auth OK) Membuka Controller...', parsed);
+            appendBackendLog(`Health check OK: ${body.trim()}`);
+            updateSplashStatus('Launching Workspace', 'Opening ShowLyrics Controller...');
+            if (typeof onReady === 'function') {
+              onReady(parsed);
+            } else {
+              createMainWindow();
+            }
+          } else {
+            appendBackendLog(`Health check mismatch (waiting for own backend): ${body.trim()}`);
+          }
+        } else {
+          log(`Ping /api/health returned ${res.statusCode}, retrying...`);
+        }
+      });
     });
 
     req.on('error', () => {
@@ -467,13 +700,25 @@ function checkBackendAndLoad() {
 
     req.setTimeout(800, () => req.destroy());
     req.end();
-  }, 500);
+  }, 300);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STARTUP ELECTRON
 // ─────────────────────────────────────────────────────────────────────────────
-app.whenReady().then(() => {
+if (gotSingleInstanceLock) {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } else if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.show();
+      splashWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
 
   // Intercept semua request ke backend → inject secret token header
   const filter = { urls: ['http://localhost/*', 'http://127.0.0.1/*'] };
@@ -558,17 +803,21 @@ app.whenReady().then(() => {
   powerSaveBlocker.start('prevent-display-sleep');
   powerSaveBlocker.start('prevent-app-suspension');
 
+  cleanupStaleMacSubApps();
   createPyProc();
   createSplashWindow();
-});
+  });
+}
 
 // Matikan Python saat aplikasi ditutup
 app.on('before-quit', () => {
+  if (!gotSingleInstanceLock) return;
   isQuitting = true;
   exitPyProc();
 });
 
 app.on('will-quit', () => {
+  if (!gotSingleInstanceLock) return;
   isQuitting = true;
   exitPyProc();
 });
@@ -621,9 +870,51 @@ function createMainWindow() {
     return details.deviceType === 'camera' || details.deviceType === 'microphone';
   });
 
-  // Di macOS, setMenu(null) akan menghapus seluruh menu bar termasuk menu Quit.
-  // Menu sudah diset via Menu.setApplicationMenu() di bagian bawah file ini.
-  mainWindow.loadURL('http://localhost:18888');
+  // Gunakan 127.0.0.1 langsung (hindari delay IPv6 ::1 lookup pada 'localhost' di macOS)
+  let mainLoadRetries = 0;
+  const MAIN_URL = 'http://127.0.0.1:18888';
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || isQuitting) return;
+    if (errorCode === -3) return; // ERR_ABORTED (navigasi normal)
+    appendBackendLog(`mainWindow did-fail-load (${errorCode}): ${errorDescription} [${validatedURL}]`);
+    if (mainLoadRetries < 5) {
+      mainLoadRetries += 1;
+      updateSplashStatus('Reconnecting', `Retrying workspace load (${mainLoadRetries}/5)...`);
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && !isQuitting) {
+          mainWindow.loadURL(MAIN_URL);
+        }
+      }, 1000);
+    } else {
+      dialog.showErrorBox(
+        'ShowLyrics Workspace Load Error',
+        `Failed to load ${MAIN_URL} (${errorDescription}).\nSee log: ${backendLogPath}`
+      );
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+      mainWindow.show();
+    }
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    appendBackendLog(`mainWindow render-process-gone: reason=${details.reason}, exitCode=${details.exitCode}`);
+    if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && !isQuitting) {
+          mainWindow.loadURL(MAIN_URL);
+        }
+      }, 500);
+    }
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainLoadRetries = 0;
+    if (forceGpuCompositingLayer) {
+      applyCompositingToWindow(mainWindow, true);
+    }
+  });
+
+  mainWindow.loadURL(MAIN_URL);
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -640,7 +931,7 @@ function createMainWindow() {
     }, 100);
   });
 
-  // Konfirmasi sebelum tutup aplikasi — Close (X) menutup seluruh app & semua child process
+  // Konfirmasi sebelum tutup aplikasi — Close (X) menutup seluruh app & semua child process dengan bersih
   mainWindow.on('close', (e) => {
     if (isQuitting) return;
 
@@ -659,16 +950,8 @@ function createMainWindow() {
       return;
     }
 
-    isQuitting = true;
-    // Tutup semua projector window
-    Object.keys(projectorWindows).forEach(key => {
-      if (projectorWindows[key] && !projectorWindows[key].isDestroyed()) {
-        projectorWindows[key].close();
-        projectorWindows[key] = null;
-      }
-    });
-    exitPyProc();
-    setTimeout(() => app.exit(0), 250);
+    e.preventDefault();
+    gracefulShutdownAndExit(0, false);
   });
 }
 
@@ -1392,6 +1675,9 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
       `).catch(() => {});
 
       applySavedResolutionForType(type);
+      if (forceGpuCompositingLayer) {
+        applyCompositingToWindow(win, true);
+      }
     });
 
     // CATATAN: did-frame-finish-load subframe injection DIHAPUS.
@@ -1422,9 +1708,9 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
 // Tutup seluruh aplikasi dan pastikan semua child process mati bersih
 // ─────────────────────────────────────────────────────────────────────────────
 app.on('window-all-closed', () => {
-  isQuitting = true;
-  exitPyProc();
-  app.quit();
+  if (!isShuttingDown) {
+    gracefulShutdownAndExit(0, false);
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1481,12 +1767,7 @@ ipcMain.handle('request-camera-permission', async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 ipcMain.on('relaunch-app', () => {
   log('Relaunch requested — restarting app...');
-  isQuitting = true;
-  exitPyProc();
-  setTimeout(() => {
-    app.relaunch();
-    app.exit(0);
-  }, 250);
+  gracefulShutdownAndExit(0, true);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1495,66 +1776,63 @@ ipcMain.on('relaunch-app', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 ipcMain.handle('restart-app', () => {
   log('[IPC] restart-app dipanggil — melakukan relaunch...');
-  isQuitting = true;
-  exitPyProc();
-  setTimeout(() => {
-    app.relaunch();
-    app.exit(0);
-  }, 250);
+  gracefulShutdownAndExit(0, true);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IPC: APPLY COMPOSITING CSS — inject/hapus CSS Force GPU Compositing Layer
 // Tidak perlu restart — berlaku langsung ke semua window yang aktif
 // ─────────────────────────────────────────────────────────────────────────────
-ipcMain.handle('apply-compositing-css', (event, enable) => {
-  forceGpuCompositingLayer = !!enable;
-  const CSS_COMPOSITING = `
-    video {
-      transform: translateZ(0) !important;
-      isolation: isolate !important;
-      will-change: transform !important;
-      backface-visibility: hidden !important;
-      -webkit-backface-visibility: hidden !important;
-    }
-  `;
-  const CSS_RESET = `
-    video {
-      transform: none !important;
-      isolation: auto !important;
-      will-change: auto !important;
-      backface-visibility: visible !important;
-      -webkit-backface-visibility: visible !important;
-    }
-  `;
+const CSS_COMPOSITING = `
+  video {
+    transform: translateZ(0) !important;
+    isolation: isolate !important;
+    will-change: transform !important;
+    backface-visibility: hidden !important;
+    -webkit-backface-visibility: hidden !important;
+  }
+`;
+const CSS_RESET = `
+  video {
+    transform: none !important;
+    isolation: auto !important;
+    will-change: auto !important;
+    backface-visibility: visible !important;
+    -webkit-backface-visibility: visible !important;
+  }
+`;
 
-  // Inject ke semua BrowserWindow yang aktif
-  BrowserWindow.getAllWindows().forEach(win => {
-    if (!win || win.isDestroyed()) return;
-    win.webContents.insertCSS(enable ? CSS_COMPOSITING : CSS_RESET).catch(() => {});
-    // Inject ke iframe juga
-    win.webContents.executeJavaScript(`
-      (function() {
-        document.querySelectorAll('iframe').forEach(function(iframe) {
-          try {
-            var doc = iframe.contentDocument;
-            if (!doc) return;
-            var styleId = 'sl-compositing-fix';
-            var existing = doc.getElementById(styleId);
-            if (existing) existing.remove();
-            if (${Boolean(enable)}) {
-              var s = doc.createElement('style');
-              s.id = styleId;
-              s.textContent = ${JSON.stringify(CSS_COMPOSITING)};
-              doc.head.appendChild(s);
-            }
-          } catch(e) {}
-        });
-      })();
-    `).catch(() => {});
-    log('[IPC] apply-compositing-css', enable ? 'ON' : 'OFF', 'untuk window:', win.id);
+function applyCompositingToWindow(win, enable) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.insertCSS(enable ? CSS_COMPOSITING : CSS_RESET).catch(() => {});
+  win.webContents.executeJavaScript(`
+    (function() {
+      document.querySelectorAll('iframe').forEach(function(iframe) {
+        try {
+          var doc = iframe.contentDocument;
+          if (!doc) return;
+          var styleId = 'sl-compositing-fix';
+          var existing = doc.getElementById(styleId);
+          if (existing) existing.remove();
+          if (${Boolean(enable)}) {
+            var s = doc.createElement('style');
+            s.id = styleId;
+            s.textContent = ${JSON.stringify(CSS_COMPOSITING)};
+            doc.head.appendChild(s);
+          }
+        } catch(e) {}
+      });
+    })();
+  `).catch(() => {});
+}
+
+ipcMain.handle('apply-compositing-css', (_event, enable) => {
+  forceGpuCompositingLayer = !!enable;
+  BrowserWindow.getAllWindows().forEach((win) => {
+    applyCompositingToWindow(win, forceGpuCompositingLayer);
+    log('[IPC] apply-compositing-css', forceGpuCompositingLayer ? 'ON' : 'OFF', 'untuk window:', win.id);
   });
-  return { status: 'ok', enabled: enable };
+  return { status: 'ok', enabled: forceGpuCompositingLayer };
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

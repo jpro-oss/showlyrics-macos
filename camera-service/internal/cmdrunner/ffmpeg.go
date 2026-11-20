@@ -65,6 +65,7 @@ func FindFFmpeg() string {
 	candidates := []string{
 		filepath.Join(exeDir, name),
 		filepath.Join(exeDir, "internal", name),
+		filepath.Join(exeDir, "_internal", name),
 		filepath.Join(exeDir, "..", name),
 		filepath.Join(".", name),
 		filepath.Join(".", "backend", name),

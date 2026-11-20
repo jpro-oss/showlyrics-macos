@@ -31,6 +31,7 @@ function Build-GoMacService {
     $env:CGO_ENABLED = "0"
     $outAmd64 = Join-Path $BinDir "$BinaryName-amd64"
     go build -ldflags="-s -w" -o $outAmd64 ./cmd/
+    if ($LASTEXITCODE -ne 0) { throw "go build $BinaryName-amd64 failed ($LASTEXITCODE)" }
     Write-Host "OK - $BinaryName-amd64 selesai" -ForegroundColor Green
 
     Write-Host "[2/2] Building $BinaryName macOS Apple Silicon (arm64)..." -ForegroundColor Yellow
@@ -39,6 +40,7 @@ function Build-GoMacService {
     $env:CGO_ENABLED = "0"
     $outArm64 = Join-Path $BinDir "$BinaryName-arm64"
     go build -ldflags="-s -w" -o $outArm64 ./cmd/
+    if ($LASTEXITCODE -ne 0) { throw "go build $BinaryName-arm64 failed ($LASTEXITCODE)" }
     Write-Host "OK - $BinaryName-arm64 selesai" -ForegroundColor Green
 
     $outDefault = Join-Path $BinDir $BinaryName

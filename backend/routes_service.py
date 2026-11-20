@@ -12,28 +12,68 @@ import zipfile
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import (
-    load_json, save_json,
+    load_json, save_json, DEV, get_user_data_path,
     SONGS_FILE, SERVICE_FILE, SCHEDULES_FILE, DISPLAY_PRESETS_FILE,
 )
 
 router = APIRouter()
 
+_subservices_probe = None
+
+
+def set_subservices_probe(fn):
+    global _subservices_probe
+    _subservices_probe = fn
+
 
 # ------------------------------------------------------------------
 # HEALTH CHECK — digunakan oleh Electron checkBackendAndLoad
-# Endpoint ringan: tidak render Jinja2, tidak akses DB, tidak ada auth.
-# Selalu return 200 {"status": "ok"} saat server siap.
+# Endpoint ringan: tidak render Jinja2, tidak akses DB.
+# Memverifikasi PID proses & X-ShowLyrics-Secret agar Electron yakin
+# sedang terhubung ke backend milik instance-nya sendiri (anti-403).
 # ------------------------------------------------------------------
 
 @router.get("/api/health")
-async def health_check():
+async def health_check(request: Request):
     """Lightweight health check endpoint untuk Electron ping."""
-    return {"status": "ok"}
+    expected_token = os.environ.get("SHOWLYRICS_SECRET")
+    if not expected_token:
+        token_file = get_user_data_path(".session_token")
+        if os.path.exists(token_file):
+            try:
+                with open(token_file, "r", encoding="utf-8") as f:
+                    expected_token = f.read().strip()
+            except Exception:
+                pass
+
+    received_token = request.headers.get("X-ShowLyrics-Secret")
+    auth_ok = True if DEV else bool(expected_token and received_token == expected_token)
+
+    try:
+        import file_integrity
+        app_version = getattr(file_integrity, "APP_VERSION", "1.35.4.1")
+    except Exception:
+        app_version = "1.35.4.1"
+
+    services = {}
+    if callable(_subservices_probe):
+        try:
+            services = _subservices_probe() or {}
+        except Exception:
+            services = {}
+
+    return {
+        "status": "ok",
+        "pid": os.getpid(),
+        "version": app_version,
+        "auth_ok": auth_ok,
+        "services": services,
+    }
 
 
 # ------------------------------------------------------------------

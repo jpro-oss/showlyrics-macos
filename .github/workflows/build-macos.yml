@@ -353,6 +353,70 @@ jobs:
           echo "Total: $(du -sh bin/ | cut -f1)"
 
       # ─────────────────────────────────────────────────────────────
+      # 9b. SMOKE TEST PORTABLE /bin/ShowLyrics (verifikasi boot + /api/health + clean exit)
+      # ─────────────────────────────────────────────────────────────
+      - name: Smoke Test /bin/ShowLyrics (${{ matrix.arch }})
+        run: |
+          echo "=== Starting /bin/ShowLyrics smoke test ==="
+          TEST_SECRET="ci-smoke-token-${{ matrix.arch }}"
+          (
+            cd bin
+            SHOWLYRICS_SECRET="$TEST_SECRET" SHOWLYRICS_DEV="false" ./ShowLyrics >/tmp/smoke_backend.log 2>&1 &
+            echo $! > /tmp/smoke_backend.pid
+          )
+          PID=$(cat /tmp/smoke_backend.pid)
+          echo "Spawned bin/ShowLyrics PID=$PID"
+
+          OK=0
+          for i in $(seq 1 40); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo "ERROR: bin/ShowLyrics exited prematurely!"
+              cat /tmp/smoke_backend.log
+              exit 1
+            fi
+            RESP=$(curl -sS -m 2 -H "X-ShowLyrics-Secret: $TEST_SECRET" http://127.0.0.1:18888/api/health 2>/dev/null || true)
+            if echo "$RESP" | grep -q '"status":"ok"'; then
+              echo "Health response: $RESP"
+              echo "$RESP" | grep -q '"version":"1.35.4.1"' || { echo "ERROR: version mismatch in /api/health!"; exit 1; }
+              echo "$RESP" | grep -q '"auth_ok":true' || { echo "ERROR: auth_ok not true in /api/health!"; exit 1; }
+              OK=1
+              break
+            fi
+            sleep 0.5
+          done
+
+          if [ "$OK" -ne 1 ]; then
+            echo "ERROR: /api/health did not respond within 20s!"
+            cat /tmp/smoke_backend.log
+            kill -TERM "$PID" 2>/dev/null || true
+            exit 1
+          fi
+
+          # Verify index page returns 200 with valid X-ShowLyrics-Secret and 403 without it
+          CODE_AUTH=$(curl -s -o /dev/null -w "%{http_code}" -H "X-ShowLyrics-Secret: $TEST_SECRET" http://127.0.0.1:18888/)
+          CODE_NOAUTH=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18888/)
+          echo "GET / with secret -> HTTP $CODE_AUTH | without secret -> HTTP $CODE_NOAUTH"
+          if [ "$CODE_AUTH" != "200" ] || [ "$CODE_NOAUTH" != "403" ]; then
+            echo "ERROR: Unexpected auth HTTP codes ($CODE_AUTH / $CODE_NOAUTH)"
+            cat /tmp/smoke_backend.log
+            kill -TERM "$PID" 2>/dev/null || true
+            exit 1
+          fi
+
+          # Graceful SIGTERM shutdown check
+          kill -TERM "$PID" 2>/dev/null || true
+          for i in $(seq 1 15); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          if kill -0 "$PID" 2>/dev/null; then
+            kill -KILL "$PID" 2>/dev/null || true
+          fi
+          echo "OK: Smoke test passed cleanly for ${{ matrix.arch }}!"
+
+      # ─────────────────────────────────────────────────────────────
       # 10. INSTALL NODE DEPENDENCIES
       # ─────────────────────────────────────────────────────────────
       - name: Install Node Dependencies

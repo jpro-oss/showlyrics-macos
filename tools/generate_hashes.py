@@ -35,7 +35,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 # ── KONFIGURASI — UPDATE SETIAP RILIS ─────────────────────────────────────────
-APP_VERSION = "1.3.5-4"  # ← UPDATE SETIAP RILIS BARU
+APP_VERSION = "1.35.4.1"  # ← UPDATE SETIAP RILIS BARU
 
 # ── PATH SETUP ────────────────────────────────────────────────────────────────
 BASE     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -86,11 +86,12 @@ manifest_sig = hashlib.sha256(sig_parts.encode()).hexdigest()
 print(f"[INFO] Fingerprint berhasil dihitung.")
 
 # ── OUTPUT 1: JSON untuk GitHub Pages CDN ─────────────────────────────────────
-# File ini diupload ke: https://showlyrics.github.io/file/v135-4.json (dan versi.json)
-out_dir  = os.path.join(BASE, "dist", "hashes")
-os.makedirs(out_dir, exist_ok=True)
-out_json_v    = os.path.join(out_dir, "v135-4.json")
-out_json_legacy = os.path.join(out_dir, "versi.json")
+# File ini diupload ke: https://showlyrics.github.io/file/mac/v135-4-1.json
+out_dir     = os.path.join(BASE, "dist", "hashes")
+out_dir_mac = os.path.join(out_dir, "mac")
+os.makedirs(out_dir_mac, exist_ok=True)
+out_json_v   = os.path.join(out_dir, "v135-4-1.json")
+out_json_mac = os.path.join(out_dir_mac, "v135-4-1.json")
 
 manifest = {
     "version":               APP_VERSION,
@@ -101,10 +102,10 @@ manifest = {
     "manifest_sig":          manifest_sig
 }
 
-for out_path in (out_json_v, out_json_legacy):
+for out_path in (out_json_v, out_json_mac):
     with open(out_path, 'w', encoding='utf-8', newline='\n') as f:
         json.dump(manifest, f, indent=2)
-print(f"[1/2] JSON output : {out_json_v} (+ versi.json)")
+print(f"[1/2] JSON output : {out_json_v} (+ mac/v135-4-1.json)")
 
 # ── OUTPUT 2: Inject ke backend/file_integrity.py ─────────────────────────────
 # Cari dan replace blok _BUILTIN_HASHES = { ... }
@@ -147,7 +148,7 @@ print(f"  Manifest Sig : {manifest_sig[:32]}...")
 print()
 print("-> LANGKAH SELANJUTNYA:")
 print(f"  1. Upload {out_json_v} ke GitHub Pages")
-print(f"     URL target: https://showlyrics.github.io/file/v135-4.json")
+print(f"     URL target: https://showlyrics.github.io/file/mac/v135-4-1.json")
 print(f"  2. Pastikan SERVER_HASH_URL di file_integrity.py sudah benar")
 print(f"  3. Jalankan PyArmor / Nuitka untuk compile file_integrity.py")
 print(f"     (file_integrity.py sudah di-patch dengan _BUILTIN_HASHES terbaru)")
