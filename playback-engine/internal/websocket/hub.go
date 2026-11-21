@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -375,12 +376,15 @@ func forwardCacheStatusToPython(payload interface{}) {
 		return
 	}
 
-	url := "http://localhost:18888/api/background/cache_status"
+	url := "http://127.0.0.1:18888/api/background/cache_status"
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	if err != nil {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if secret := os.Getenv("SHOWLYRICS_SECRET"); secret != "" {
+		req.Header.Set("X-ShowLyrics-Secret", secret)
+	}
 
 	// Set header secret token if needed. Since python serves internally,
 	// let's do a fast post. Python will receive and broadcast.

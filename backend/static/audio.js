@@ -57,7 +57,19 @@ function connectWebSocket() {
     ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
     ws.onmessage = function (e) {
-        const data = JSON.parse(e.data);
+        let data;
+        try {
+            data = JSON.parse(e.data);
+        } catch (_) {
+            return;
+        }
+        if (data.action === "beta_revoked") {
+            ws._betaRevoked = true;
+            try { player.pause(); } catch (_) {}
+            try { ws.close(4001, "beta_revoked"); } catch (_) {}
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
 
         // 1. Terima Perintah Putar Lagu
         if (data.action === "update_audio" || data.type === "update_audio") {
@@ -123,13 +135,18 @@ function connectWebSocket() {
         }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+        if ((ev && ev.code === 4001) || (ws && ws._betaRevoked)) {
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
         console.warn("WebSocket closed, reconnecting...");
         setTimeout(connectWebSocket, 2000);
     };
 
     ws.onerror = (err) => {
         console.error("WebSocket error:", err);
+        try { ws.close(); } catch (_) {}
     };
 }
 

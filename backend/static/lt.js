@@ -126,10 +126,15 @@ function connectWebSocket() {
 
     // 2. SENSOR MATI: Kalau server mati / kabel putus, otomatis jalanin ini
     ws.onclose = function (e) {
-        console.warn("❌ WebSocket Terputus! Mencoba nyambung lagi dalam 2 detik...");
         isWebSocketConnected = false;  // 👈 Connection status = false
         _WEShield.onDisconnect();
 
+        if (e && e.code === 4001) {
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
+
+        console.warn("❌ WebSocket Terputus! Mencoba nyambung lagi dalam 2 detik...");
         reconnectTimer = setTimeout(connectWebSocket, 2000);
     };
 

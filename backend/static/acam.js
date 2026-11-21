@@ -16,14 +16,34 @@ function connectWS() {
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
     ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        let data;
+        try {
+            data = JSON.parse(event.data);
+        } catch (_) {
+            return;
+        }
+        if (data.action === 'beta_revoked') {
+            ws._betaRevoked = true;
+            stopStream();
+            try { ws.close(4001, 'beta_revoked'); } catch (_) {}
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
         if (data.type === 'update_camera_state') {
             updateState(data.state[channel]);
         }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+        if ((ev && ev.code === 4001) || ws._betaRevoked) {
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
         setTimeout(connectWS, 2000);
+    };
+
+    ws.onerror = () => {
+        try { ws.close(); } catch (_) {}
     };
 }
 

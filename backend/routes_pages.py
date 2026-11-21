@@ -5,9 +5,10 @@
 # ============================================================
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, FileResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from config import get_resource_path
+import access_check
 
 router = APIRouter()
 
@@ -60,11 +61,17 @@ async def get_index(request: Request):
 
 @router.get("/control", response_class=HTMLResponse)
 async def get_control(request: Request):
+    if not access_check.is_access_valid():
+        reason = access_check.get_access_reason()
+        return RedirectResponse(url=f"/?require_beta_access=true&reason={reason}", status_code=307)
     return templates.TemplateResponse(request, "control.html")
 
 
 @router.get("/diagnostic", response_class=HTMLResponse)
 async def get_diagnostic(request: Request):
+    if not access_check.is_access_valid():
+        reason = access_check.get_access_reason()
+        return RedirectResponse(url=f"/?require_beta_access=true&reason={reason}", status_code=307)
     return templates.TemplateResponse(request, "diagnostic.html")
 
 

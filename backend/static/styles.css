@@ -1,3 +1,8 @@
+:root,
+html {
+  color-scheme: dark;
+}
+
 :root {
   --bg: #121217;
   --panel: rgba(24, 24, 27, 0.65);
@@ -38,7 +43,8 @@
 }
 
 body {
-  font-family: "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
   background: var(--bg);
   color: var(--text);
   margin: 0;
@@ -834,14 +840,13 @@ textarea {
   right: 0;
   top: 32px;
   background: #18181d;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 6px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
-  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+  z-index: 2500;
   min-width: 155px;
   padding: 4px 0;
   box-sizing: border-box;
-  contain: content;
 }
 
 .grid-dropdown-item {
@@ -992,6 +997,9 @@ textarea {
   min-height: 34px;
   box-sizing: border-box;
   gap: 10px;
+  position: relative;
+  z-index: 50;
+  overflow: visible;
 }
 
 .current-song-info {
@@ -1214,6 +1222,37 @@ select {
   color: white;
   border-radius: 4px;
   box-sizing: border-box;
+}
+
+/* macOS Native Chromium <select> & <option> Dark Mode Hardening */
+select {
+  color-scheme: dark;
+  background-color: #18181d;
+  color: #f4f4f5;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px 12px;
+  padding-right: 26px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+select:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+select option,
+select optgroup {
+  background-color: #18181d;
+  color: #f4f4f5;
 }
 
 input[type="range"] {
@@ -6567,21 +6606,19 @@ input:checked+.slider:before {
   color: #ef4444;
 }
 
-/* DROPDOWN MENU melayang */
+/* DROPDOWN MENU melayang (fixed portal — anti-clipping di macOS modal scroll) */
 .slide-tag-dropdown {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 10px;
-  z-index: 999;
+  position: fixed;
+  z-index: 100500;
   background: #111216;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   padding: 5px;
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-width: 155px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.75), 0 8px 16px -6px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.85), 0 8px 16px -6px rgba(0, 0, 0, 0.6);
 }
 
 .dropdown-item {
@@ -6767,21 +6804,19 @@ input:checked+.slider:before {
   color: #ef4444;
 }
 
-/* DROPDOWN MENU melayang */
+/* DROPDOWN MENU melayang (fixed portal — anti-clipping di macOS modal scroll) */
 .slide-tag-dropdown {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 10px;
-  z-index: 999;
+  position: fixed;
+  z-index: 100500;
   background: #111216;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   padding: 5px;
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-width: 155px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.75), 0 8px 16px -6px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.85), 0 8px 16px -6px rgba(0, 0, 0, 0.6);
 }
 
 .dropdown-item {

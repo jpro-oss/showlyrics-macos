@@ -256,11 +256,16 @@ function connectWebSocket() {
 
     // 2. SENSOR MATI: Kalau server mati / kabel putus, otomatis jalanin ini
     ws.onclose = function (e) {
-        console.warn("❌ WebSocket Terputus! Mencoba nyambung lagi dalam 2 detik...");
         isWebSocketConnected = false;  // 👈 Connection status = false
 
         _WEShield.onDisconnect();
 
+        if (e && e.code === 4001) {
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
+
+        console.warn("❌ WebSocket Terputus! Mencoba nyambung lagi dalam 2 detik...");
         reconnectTimer = setTimeout(connectWebSocket, 2000);
     };
 
@@ -272,7 +277,12 @@ function connectWebSocket() {
 
     // 4. ENGINE UTAMA LIRIK (Pindahan dari kode lama)
     ws.onmessage = function (event) {
-        const data = JSON.parse(event.data);
+        let data;
+        try {
+            data = JSON.parse(event.data);
+        } catch (_) {
+            return;
+        }
         if (_WEShield.handleMessage(data)) return;
 
 

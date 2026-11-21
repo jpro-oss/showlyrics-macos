@@ -140,6 +140,22 @@ class ConnectionManager:
         elif command == "loop":
             is_loop = value if isinstance(value, bool) else (value == "loop" or value == "true")
             self.video_timeline["behavior"] = "loop" if is_loop else "once_hold"
+        elif command == "load" and isinstance(value, dict):
+            self.video_timeline["media_id"] = value.get("media_id", "")
+            self.video_timeline["playing"] = True
+            self.video_timeline["started_at"] = time.time()
+            self.video_timeline["paused_position"] = 0.0
+            self.video_timeline["playback_rate"] = 1.0
+            try:
+                self.video_timeline["duration"] = float(value.get("duration") or 0.0)
+            except Exception:
+                self.video_timeline["duration"] = 0.0
+            self.video_timeline["behavior"] = value.get("behavior") or "loop"
+        elif command == "stop":
+            self.video_timeline["media_id"] = ""
+            self.video_timeline["playing"] = False
+            self.video_timeline["paused_position"] = 0.0
+            self.video_timeline["duration"] = 0.0
         elif command == "update_behavior":
             self.video_timeline["behavior"] = value or "loop"
 
@@ -147,7 +163,7 @@ class ConnectionManager:
         """Send a playback command to the Go Playback Engine and update local state."""
         import urllib.request
         import json
-        url = "http://localhost:18899/command"
+        url = "http://127.0.0.1:18899/command"
         data = {"action": action, **(payload or {})}
         req = urllib.request.Request(
             url,
@@ -168,8 +184,11 @@ class ConnectionManager:
                 self.video_timeline["behavior"] = state.get("behavior", "loop")
         except Exception as e:
             print(f"[GO BRIDGE] Error sending command {action} to Go: {e}")
-            val = (payload or {}).get("value")
-            self.update_video_timeline(action, val)
+            if action == "load":
+                self.update_video_timeline("load", payload or {})
+            else:
+                val = (payload or {}).get("value")
+                self.update_video_timeline(action, val)
 
     async def send_go_command_async(self, action: str, payload: dict = None):
         """Async wrapper untuk send_go_command — jalankan di executor agar tidak memblokir event loop."""
@@ -181,7 +200,7 @@ class ConnectionManager:
         import urllib.request
         import json
         import time
-        url = "http://localhost:18899/state"
+        url = "http://127.0.0.1:18899/state"
         for attempt in range(15):
             try:
                 with urllib.request.urlopen(url, timeout=1.0) as response:
@@ -502,13 +521,13 @@ class ConnectionManager:
             "active_plugins": self.active_plugins
         })
 
-    async def terminate_all_connections(self, code: int = 4003, reason: str = ""):
-        """Broadcast force_watermark to all active WebSocket clients and close them."""
+    async def terminate_all_connections(self, code: int = 4003, reason: str = "", action: str = "force_watermark"):
+        """Broadcast termination action (force_watermark atau beta_revoked) ke semua WS client lalu tutup."""
         sockets = list(self.active_connections)
         if not sockets:
             return
 
-        payload = self._sign({"action": "force_watermark", "reason": reason})
+        payload = self._sign({"action": action, "reason": reason})
 
         async def close_one(conn):
             try:
@@ -516,6 +535,7 @@ class ConnectionManager:
             except Exception:
                 pass
             try:
+                await asyncio.sleep(0.15)
                 await asyncio.wait_for(conn.close(code=code, reason=reason[:120]), timeout=1.5)
             except Exception:
                 pass

@@ -142,7 +142,11 @@ function connectWS() {
             }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+        if (ev && ev.code === 4001) {
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
         console.warn("WebSocket disconnected. Retrying in 2 seconds...");
         if (reconnectTimer) clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(connectWS, 2000);

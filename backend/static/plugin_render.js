@@ -314,6 +314,10 @@
 
         ws.onopen = function () {
             console.log('[PluginRender] WebSocket connected on target:', targetType);
+            if (window._WEShield) {
+                if (typeof window._WEShield.onConnect === 'function') window._WEShield.onConnect();
+                if (typeof window._WEShield.attachSocket === 'function') window._WEShield.attachSocket(ws);
+            }
         };
 
         ws.onmessage = function (event) {
@@ -335,7 +339,14 @@
             }
         };
 
-        ws.onclose = function () {
+        ws.onclose = function (ev) {
+            if (window._WEShield && typeof window._WEShield.onDisconnect === 'function') {
+                window._WEShield.onDisconnect();
+            }
+            if (ev && ev.code === 4001) {
+                if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+                return;
+            }
             console.warn('[PluginRender] WebSocket closed, retrying in 2s...');
             setTimeout(connectWS, 2000);
         };

@@ -27,6 +27,8 @@
     var _nonce = null;
     var _lastSeq = 0;          // Anti-replay: sequence terakhir yang diterima
     var _lastHandleMs = 0;     // Rate-limit: timestamp terakhir license msg diproses
+    var _activeSocket = null;  // Referensi WebSocket aktif dari attachSocket()
+    var _betaRevoked = false;  // Flag jika sesi dicabut karena Beta Access expired/revoked
     var _canvas = null;
     var _observer = null;
     var _pulseTimer = null;
@@ -209,6 +211,32 @@
         }, delay);
     }
 
+    function _handleBetaRevoked(msg) {
+        if (_betaRevoked) return;
+        _betaRevoked = true;
+        _cancelGrace();
+        try {
+            if (_activeSocket && _activeSocket.readyState === 1) {
+                _activeSocket.close(4001, 'beta_revoked');
+            }
+        } catch (e) { /* ignore */ }
+
+        var reason = (msg && msg.reason) ? String(msg.reason) : 'expired';
+        try {
+            global.dispatchEvent(new CustomEvent('showlyrics:beta_revoked', { detail: { reason: reason } }));
+        } catch (e) { /* ignore */ }
+
+        var p = (global.location && global.location.pathname) ? global.location.pathname : '';
+        if (p === '/control' || p === '/control/' || p === '/diagnostic' || p === '/diagnostic/') {
+            global.location.replace('/?require_beta_access=true&reason=' + encodeURIComponent(reason));
+        } else if (global.top === global.self) {
+            // Output top-level page → reload agar menampilkan halaman terkunci 403 dari backend
+            setTimeout(function () {
+                try { global.location.reload(); } catch (e) { /* ignore */ }
+            }, 150);
+        }
+    }
+
     // =========================================================================
     // NONCE + SEQUENCE VERIFICATION
     // =========================================================================
@@ -243,6 +271,11 @@
             return true;
         }
 
+        // Update _lastSeq untuk pesan normal bertanda tangan agar baseline tetap maju
+        if (msg._nonce === _nonce && typeof msg._seq === 'number' && msg._seq > _lastSeq) {
+            _lastSeq = msg._seq;
+        }
+
         return true;
     }
 
@@ -266,24 +299,74 @@
         if (cssEl) cssEl.remove();
     }
 
+    function _processShieldMessage(msg) {
+        if (!msg || typeof msg !== 'object') return true;
+
+        if (msg.action === 'beta_revoked') {
+            _handleBetaRevoked(msg);
+            return true;
+        }
+
+        var isLicenseMsg = (msg.action === 'license_status' || msg.action === 'force_watermark');
+
+        // Rate-limit untuk pesan license: max 1 per LICENSE_MSG_RATELIMIT_MS
+        if (isLicenseMsg) {
+            var now = Date.now();
+            if (now - _lastHandleMs < LICENSE_MSG_RATELIMIT_MS) {
+                return true;  // Terlalu cepat, abaikan (sudah ditangani shield)
+            }
+            _lastHandleMs = now;
+        }
+
+        if (!_verifyNonce(msg)) {
+            _cancelGrace();
+            _confirmed = false;
+            _activate();
+            return true;
+        }
+
+        if (msg.action === 'license_status') {
+            if (msg.valid === true) {
+                _confirmed = true;
+                _cancelGrace();
+                _deactivate();
+            } else {
+                _confirmed = false;
+                _cancelGrace();
+                _activate();
+            }
+            return true;
+        }
+
+        if (msg.action === 'force_watermark') {
+            _confirmed = false;
+            _cancelGrace();
+            _activate();
+            return true;
+        }
+
+        return false;
+    }
+
     var Shield = {
 
         onConnect: function () {
             _nonce = null;
             _lastSeq = 0;       // Reset sequence — server baru punya counter baru mulai dari 0
             _lastHandleMs = 0;  // Reset rate-limit agar license_status pertama langsung diproses
+            _betaRevoked = false;
             _deactivate();
             var isReconnect = _confirmed;
             _startGrace(isReconnect);
         },
 
-
         onDisconnect: function () {
             _nonce = null;
+            _activeSocket = null;
 
             _cancelGrace();
 
-            if (_confirmed) {
+            if (_confirmed || _betaRevoked) {
                 return;
             }
 
@@ -291,54 +374,55 @@
         },
 
         /**
-         * Dipanggil untuk setiap message WS.
-         * Verifikasi nonce + sequence, handle license_status dan force_watermark.
-         * Rate-limited untuk pesan license agar tidak bisa di-spam dari console.
+         * Kaitkan instance WebSocket aktif ke _WEShield.
+         * Dipanggil oleh display.js, lt.js, script.js, background.js, photo.js, scripture.js, dll.
+         */
+        attachSocket: function (sock) {
+            _activeSocket = sock || null;
+        },
+
+        /**
+         * Dispatcher utama pesan WebSocket.
+         * Mem-parse JSON secara aman, memverifikasi nonce+seq, menangani license_status,
+         * force_watermark, dan beta_revoked, lalu meneruskan pesan aplikasi ke callback onMessage.
          *
+         * @param {string|object} rawData - event.data mentah dari WS atau object JSON
+         * @param {function} onMessage - Callback penerima pesan aplikasi yang valid
+         */
+        dispatch: function (rawData, onMessage) {
+            var msg;
+            if (typeof rawData === 'string') {
+                try {
+                    msg = JSON.parse(rawData);
+                } catch (e) {
+                    return;
+                }
+            } else if (rawData && typeof rawData === 'object') {
+                msg = rawData;
+            } else {
+                return;
+            }
+
+            if (_processShieldMessage(msg)) {
+                return;
+            }
+
+            if (typeof onMessage === 'function') {
+                try {
+                    onMessage(msg);
+                } catch (err) {
+                    console.error('[WEShield] Handler error:', err);
+                }
+            }
+        },
+
+        /**
+         * Kompatibilitas mundur untuk foldback.js yang memanggil handleMessage(parsedObj).
          * @param {object} msg - Parsed JSON dari WS
-         * @returns {boolean} true jika message sudah di-handle
+         * @returns {boolean} true jika message sudah di-handle oleh shield
          */
         handleMessage: function (msg) {
-            var isLicenseMsg = (msg && (msg.action === 'license_status' || msg.action === 'force_watermark'));
-
-            // Rate-limit untuk pesan license: max 1 per LICENSE_MSG_RATELIMIT_MS
-            // Ini mencegah flood attack dari console (loop panggil handleMessage)
-            if (isLicenseMsg) {
-                var now = Date.now();
-                if (now - _lastHandleMs < LICENSE_MSG_RATELIMIT_MS) {
-                    return false;  // Terlalu cepat, abaikan
-                }
-                _lastHandleMs = now;
-            }
-
-            if (!_verifyNonce(msg)) {
-                _cancelGrace();
-                _confirmed = false;
-                _activate();
-                return true;
-            }
-
-            if (msg.action === 'license_status') {
-                if (msg.valid === true) {
-                    _confirmed = true;
-                    _cancelGrace();
-                    _deactivate();
-                } else {
-                    _confirmed = false;
-                    _cancelGrace();
-                    _activate();
-                }
-                return true;
-            }
-
-            if (msg.action === 'force_watermark') {
-                _confirmed = false;
-                _cancelGrace();
-                _activate();
-                return true;
-            }
-
-            return false;
+            return _processShieldMessage(msg);
         },
 
         isActive: function () { return _active; }

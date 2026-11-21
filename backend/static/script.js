@@ -95,11 +95,172 @@ const THEME_DEFAULTS = {
     "_fallback": { glow: 0, shadow_int: 0, stroke_size: 0, color_type: 'solid', glow_type: 'text' }
 };
 
-const ws = new WebSocket("ws://" + window.location.host + "/ws");
-window.ws = ws; // expose globally so plugin.js and other modules can send messages
+// =======================================================
+// 🔌 SILENT AUTO-RECONNECT WEBSOCKET MANAGER + SEND QUEUE
+// Menjaga kompatibilitas penuh `ws` & `window.ws` untuk script.js, bg.js, plugin.js, external.js
+// =======================================================
+const _WS_BACKOFF_STEPS = [1000, 2000, 5000];
+const _WS_MAX_QUEUE = 20;
+const _wsListeners = { open: [], message: [], close: [], error: [] };
+const _wsQueue = [];
+let _rawWs = null;
+let _wsReconnectTimer = null;
+let _wsReconnectAttempt = 0;
+let _wsBetaHalted = false;
+
+function _redirectForBetaRevoked(reason) {
+    if (_wsBetaHalted) return;
+    _wsBetaHalted = true;
+    if (_wsReconnectTimer) {
+        clearTimeout(_wsReconnectTimer);
+        _wsReconnectTimer = null;
+    }
+    const r = encodeURIComponent(String(reason || 'expired'));
+    window.location.replace(`/?require_beta_access=true&reason=${r}`);
+}
+
+function _enqueueWsMessage(payloadStr) {
+    // Hindari menumpuk heartbeat sync_time di antrian offline
+    if (typeof payloadStr === 'string' && payloadStr.includes('"sync_time"')) {
+        return;
+    }
+    if (_wsQueue.length >= _WS_MAX_QUEUE) {
+        _wsQueue.shift();
+    }
+    _wsQueue.push(payloadStr);
+}
+
+function _flushWsQueue() {
+    if (!_rawWs || _rawWs.readyState !== WebSocket.OPEN) return;
+    while (_wsQueue.length > 0 && _rawWs.readyState === WebSocket.OPEN) {
+        const nextMsg = _wsQueue.shift();
+        try {
+            _rawWs.send(nextMsg);
+        } catch (_) {
+            _wsQueue.unshift(nextMsg);
+            break;
+        }
+    }
+}
+
+function _initControllerWs() {
+    if (_wsBetaHalted) return;
+    if (_rawWs && (_rawWs.readyState === WebSocket.OPEN || _rawWs.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let sock;
+    try {
+        sock = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    } catch (_) {
+        _scheduleControllerWsReconnect();
+        return;
+    }
+    _rawWs = sock;
+
+    sock.addEventListener('open', (ev) => {
+        if (sock !== _rawWs) return;
+        _wsReconnectAttempt = 0;
+        if (_wsReconnectTimer) {
+            clearTimeout(_wsReconnectTimer);
+            _wsReconnectTimer = null;
+        }
+        _flushWsQueue();
+        _wsListeners.open.forEach((fn) => {
+            try { fn.call(ws, ev); } catch (_) { }
+        });
+    });
+
+    sock.addEventListener('message', (ev) => {
+        if (sock !== _rawWs) return;
+        _wsListeners.message.forEach((fn) => {
+            try { fn.call(ws, ev); } catch (_) { }
+        });
+    });
+
+    sock.addEventListener('close', (ev) => {
+        if (sock !== _rawWs) return;
+        _wsListeners.close.forEach((fn) => {
+            try { fn.call(ws, ev); } catch (_) { }
+        });
+        if (ev && ev.code === 4001) {
+            const rawReason = (ev.reason || '').replace(/^beta_/, '') || 'inactive';
+            _redirectForBetaRevoked(rawReason);
+            return;
+        }
+        _scheduleControllerWsReconnect();
+    });
+
+    sock.addEventListener('error', (ev) => {
+        if (sock !== _rawWs) return;
+        _wsListeners.error.forEach((fn) => {
+            try { fn.call(ws, ev); } catch (_) { }
+        });
+        try { sock.close(); } catch (_) { }
+    });
+}
+
+function _scheduleControllerWsReconnect() {
+    if (_wsBetaHalted || _wsReconnectTimer) return;
+    const delay = _WS_BACKOFF_STEPS[Math.min(_wsReconnectAttempt, _WS_BACKOFF_STEPS.length - 1)];
+    _wsReconnectAttempt += 1;
+    _wsReconnectTimer = setTimeout(() => {
+        _wsReconnectTimer = null;
+        _initControllerWs();
+    }, delay);
+}
+
+const ws = {
+    get readyState() {
+        return _rawWs ? _rawWs.readyState : WebSocket.CLOSED;
+    },
+    get url() {
+        return _rawWs ? _rawWs.url : '';
+    },
+    send(data) {
+        if (_wsBetaHalted) return false;
+        const payload = (typeof data === 'string') ? data : JSON.stringify(data);
+        if (_rawWs && _rawWs.readyState === WebSocket.OPEN) {
+            try {
+                _rawWs.send(payload);
+                return true;
+            } catch (_) {
+                _enqueueWsMessage(payload);
+                _scheduleControllerWsReconnect();
+                return false;
+            }
+        }
+        _enqueueWsMessage(payload);
+        if (!_rawWs || _rawWs.readyState === WebSocket.CLOSED) {
+            _scheduleControllerWsReconnect();
+        }
+        return false;
+    },
+    close(code, reason) {
+        if (_rawWs) {
+            try { _rawWs.close(code, reason); } catch (_) { }
+        }
+    },
+    addEventListener(type, fn) {
+        if (typeof fn !== 'function') return;
+        if (_wsListeners[type]) _wsListeners[type].push(fn);
+    },
+    removeEventListener(type, fn) {
+        if (!_wsListeners[type]) return;
+        const idx = _wsListeners[type].indexOf(fn);
+        if (idx !== -1) _wsListeners[type].splice(idx, 1);
+    },
+};
+
+function safeWsSend(objOrStr) {
+    return ws.send(objOrStr);
+}
+window.ws = ws; // expose globally so plugin.js, bg.js, and external.js can send safely
+window.safeWsSend = safeWsSend;
+
 ws.addEventListener('open', () => {
     if (typeof _WEShield !== 'undefined' && typeof _WEShield.attachSocket === 'function') {
-        _WEShield.attachSocket(ws);
+        _WEShield.attachSocket(_rawWs);
     }
     if (typeof applyScriptureSettings === "function") {
         applyScriptureSettings();
@@ -111,6 +272,8 @@ ws.addEventListener('open', () => {
         sendFBConfig();
     }
 });
+
+_initControllerWs();
 window.pendingThumbWatchers = window.pendingThumbWatchers || new Map();
 
 function markThumbAsReadyRealtime(category, itemId) {
@@ -355,6 +518,11 @@ function handleMasterWsMessage(data) {
     try {
         const action = data.action || data.type;
         const payload = data.payload || {};
+
+        if (action === "beta_revoked") {
+            _redirectForBetaRevoked(data.reason || "expired");
+            return;
+        }
 
         // 🎯 TANGKAP LAYER CONFIG (Dynamic Z-Index)
         if (action === "update_layers") {
@@ -1494,7 +1662,7 @@ async function deleteRundownPreset() {
     if (!isOk) return;
 
     try {
-        const res = await fetch(`/api/rundown_presets/${name}`, {
+        const res = await fetch(`/api/rundown_presets/${encodeURIComponent(name)}`, {
             method: "DELETE"
         });
         const data = await res.json();
@@ -1514,7 +1682,7 @@ async function setDefaultRundownPreset() {
 
     const name = select.value;
     try {
-        const res = await fetch(`/api/rundown_presets/default/${name}`, {
+        const res = await fetch(`/api/rundown_presets/default/${encodeURIComponent(name)}`, {
             method: "POST"
         });
         const data = await res.json();
@@ -4384,6 +4552,17 @@ function toggleGridDropdown(event) {
     }
 }
 
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+        const gridMenu = document.getElementById("grid-dropdown-menu");
+        if (gridMenu && gridMenu.style.display === "block") {
+            gridMenu.style.display = "none";
+        }
+        document.querySelectorAll('.slide-tag-dropdown').forEach(el => el.remove());
+        if (typeof closePresetContextMenu === "function") closePresetContextMenu();
+    }
+});
+
 async function selectGridMode(mode, event) {
     if (event) event.stopPropagation();
 
@@ -6064,7 +6243,7 @@ async function deleteLTPreset() {
     if (!isOk) return;
 
     showToast("Deleting...", "loading");
-    const res = await fetch(`/api/lt_presets/${name}`, { method: 'DELETE' });
+    const res = await fetch(`/api/lt_presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
     if (res.ok) {
         showToast("Preset deleted!", "success", 2000);
@@ -6084,7 +6263,7 @@ async function setLTDefault() {
     if (!name) return showToast("Select a preset to set as default!", "error", 3000);
 
     showToast("Setting default...", "loading");
-    const res = await fetch(`/api/lt_presets/default/${name}`, { method: 'POST' });
+    const res = await fetch(`/api/lt_presets/default/${encodeURIComponent(name)}`, { method: 'POST' });
 
     if (res.ok) {
         showToast(`"${name}" is now Default! ⭐`, "success", 2500);
@@ -6404,7 +6583,7 @@ async function deleteDisplayPreset() {
     if (!isOk) return;
 
     showToast("Deleting...", "loading");
-    const res = await fetch(`/api/display_presets/${name}`, { method: 'DELETE' });
+    const res = await fetch(`/api/display_presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
     if (res.ok) {
         showToast(`Preset deleted!`, "success", 2000);
@@ -6421,7 +6600,7 @@ async function setDefaultDisplayPreset() {
     if (!name) return showToast("Click a preset card to set as default!", "error", 3000);
 
     showToast("Setting default...", "loading");
-    const res = await fetch(`/api/display_presets/default/${name}`, { method: 'POST' });
+    const res = await fetch(`/api/display_presets/default/${encodeURIComponent(name)}`, { method: 'POST' });
 
     if (res.ok) {
         showToast(`"${name}" is now Default! ⭐`, "success", 2500);
@@ -6684,7 +6863,7 @@ async function deleteFBPreset() {
     if (!isOk) return;
 
     showToast("Deleting...", "loading");
-    const res = await fetch(`/api/fb_presets/${name}`, { method: 'DELETE' });
+    const res = await fetch(`/api/fb_presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
     if (res.ok) {
         showToast("Preset deleted!", "success", 2000);
@@ -6704,7 +6883,7 @@ async function setDefaultFBPreset() {
     if (!name) return showToast("Select a preset to set as default!", "error", 3000);
 
     showToast("Setting default...", "loading");
-    const res = await fetch(`/api/fb_presets/default/${name}`, { method: 'POST' });
+    const res = await fetch(`/api/fb_presets/default/${encodeURIComponent(name)}`, { method: 'POST' });
 
     if (res.ok) {
         showToast(`"${name}" is now Default! ⭐`, "success", 2500);
@@ -7020,7 +7199,7 @@ async function deleteAlertPreset() {
     if (!isOk) return;
 
     showToast("Deleting...", "loading");
-    const res = await fetch(`/api/alert_presets/${name}`, { method: 'DELETE' });
+    const res = await fetch(`/api/alert_presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
     if (res.ok) {
         showToast("Preset deleted!", "success", 2000);
@@ -7211,7 +7390,7 @@ function toggleElectronBtn(type) {
     let targetPath = "/display";
     if (type === 'lt') targetPath = "/lowerthird";
     if (type === 'fb') targetPath = "/foldback";
-    const fullUrl = "http://localhost:18888" + targetPath;
+    const fullUrl = window.location.origin + targetPath;
 
     const payload = {
         type: type,
@@ -7960,20 +8139,24 @@ function renderEditor(mode) {
 
 function toggleTagDropdown(idx, mode, badgeEl) {
     // Remove other dropdowns first
+    const wasOpen = badgeEl.dataset.dropdownOpen === 'true';
     document.querySelectorAll('.slide-tag-dropdown').forEach(el => el.remove());
+    document.querySelectorAll('[data-dropdown-open="true"]').forEach(el => {
+        el.dataset.dropdownOpen = 'false';
+    });
 
-    // Check if we are already showing it
-    if (badgeEl.dataset.dropdownOpen === 'true') {
-        badgeEl.dataset.dropdownOpen = 'false';
+    if (wasOpen) {
         return;
     }
 
-    // Mark as open
     badgeEl.dataset.dropdownOpen = 'true';
 
-    // Create the dropdown menu
+    // Create fixed-positioned portal dropdown on document.body (tidak pernah terpotong modal scroll)
     const dropdown = document.createElement('div');
     dropdown.className = 'slide-tag-dropdown';
+    dropdown.style.position = 'fixed';
+    dropdown.style.zIndex = '100500';
+    dropdown.style.visibility = 'hidden';
 
     const types = [
         { type: 'normal', name: 'NORMAL', label: 'Default (D)', color: '#555' },
@@ -7986,6 +8169,15 @@ function toggleTagDropdown(idx, mode, badgeEl) {
         { type: 'tag', name: 'TAG', label: 'Tag (T)', color: 'var(--color-tag)' }
     ];
 
+    const cleanupDropdown = () => {
+        dropdown.remove();
+        badgeEl.dataset.dropdownOpen = 'false';
+        document.removeEventListener('click', outsideClickListener);
+        document.removeEventListener('keydown', escListener);
+        window.removeEventListener('scroll', scrollCloseListener, true);
+        window.removeEventListener('resize', scrollCloseListener);
+    };
+
     types.forEach(opt => {
         const item = document.createElement('div');
         item.className = 'dropdown-item';
@@ -7995,6 +8187,7 @@ function toggleTagDropdown(idx, mode, badgeEl) {
         `;
         item.onclick = (e) => {
             e.stopPropagation();
+            cleanupDropdown();
             saveEditorState();
             editorSlides[idx].type = opt.type;
             renderEditor(mode);
@@ -8007,18 +8200,40 @@ function toggleTagDropdown(idx, mode, badgeEl) {
         dropdown.appendChild(item);
     });
 
-    badgeEl.parentElement.appendChild(dropdown);
+    document.body.appendChild(dropdown);
+
+    // Hitung koordinat viewport — flip ke atas jika melewati batas bawah layar
+    const rect = badgeEl.getBoundingClientRect();
+    const ddRect = dropdown.getBoundingClientRect();
+    let top = rect.bottom + 6;
+    if (top + ddRect.height > window.innerHeight - 10) {
+        top = Math.max(10, rect.top - ddRect.height - 6);
+    }
+    let left = rect.left;
+    if (left + ddRect.width > window.innerWidth - 10) {
+        left = Math.max(10, window.innerWidth - ddRect.width - 10);
+    }
+    dropdown.style.top = `${top}px`;
+    dropdown.style.left = `${left}px`;
+    dropdown.style.visibility = 'visible';
 
     const outsideClickListener = (e) => {
         if (!badgeEl.contains(e.target) && !dropdown.contains(e.target)) {
-            dropdown.remove();
-            badgeEl.dataset.dropdownOpen = 'false';
-            document.removeEventListener('click', outsideClickListener);
+            cleanupDropdown();
         }
+    };
+    const escListener = (e) => {
+        if (e.key === 'Escape') cleanupDropdown();
+    };
+    const scrollCloseListener = () => {
+        cleanupDropdown();
     };
 
     setTimeout(() => {
         document.addEventListener('click', outsideClickListener);
+        document.addEventListener('keydown', escListener);
+        window.addEventListener('scroll', scrollCloseListener, true);
+        window.addEventListener('resize', scrollCloseListener);
     }, 10);
 }
 
@@ -10351,7 +10566,7 @@ async function deleteModalPreset() {
     if (!isOk) return;
 
     showToast("Deleting...", "loading");
-    const res = await fetch(`/api/display_presets/${name}`, { method: 'DELETE' });
+    const res = await fetch(`/api/display_presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
     if (res.ok) {
         showToast(`Preset deleted!`, "success", 2000);
@@ -10366,7 +10581,8 @@ async function deleteModalPreset() {
 let globalEditTarget = null; // Memori nyimpen nama preset yg di-klik kanan
 
 function showPresetContextMenu(e, name) {
-    e.preventDefault(); // Matiin klik kanan bawaan browser
+    e.preventDefault(); // Matiin klik kanan bawaan browser / macOS Ctrl+Click
+    e.stopPropagation();
     globalEditTarget = name;
 
     const menu = document.getElementById("preset-context-menu");
@@ -10398,7 +10614,7 @@ async function deleteGlobalPresetContext() {
     if (!isOk) return;
 
     showToast("Deleting...", "loading");
-    const res = await fetch(`/api/display_presets/${name}`, { method: 'DELETE' });
+    const res = await fetch(`/api/display_presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
     if (res.ok) {
         showToast(`Preset deleted!`, "success", 2000);
@@ -11360,7 +11576,7 @@ async function deleteScrPreset(pfx) {
     if (!isOk) return; // Batal hapus
 
     showToast("Deleting...", "loading");
-    await fetch(`/api/scripture_presets/${name}`, { method: 'DELETE' });
+    await fetch(`/api/scripture_presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
     showToast("Deleted!", "success", 1000);
 
     await fetchScripturePresets();
@@ -11372,7 +11588,7 @@ async function setDefaultScrPreset(pfx) {
     if (!selectEl || !selectEl.value) return showToast("Select a preset from the dropdown first!", "warning", 1500);
 
     showToast("Setting default...", "loading");
-    await fetch(`/api/scripture_presets/default/${pfx}/${selectEl.value}`, { method: 'POST' });
+    await fetch(`/api/scripture_presets/default/${encodeURIComponent(pfx)}/${encodeURIComponent(selectEl.value)}`, { method: 'POST' });
     showToast(`Successfully set as Default!`, "success", 1000);
 
     fetchScripturePresets();

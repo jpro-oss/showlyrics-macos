@@ -720,13 +720,15 @@ if (gotSingleInstanceLock) {
 
   app.whenReady().then(() => {
 
-  // Intercept semua request ke backend → inject secret token header
-  const filter = { urls: ['http://localhost/*', 'http://127.0.0.1/*'] };
+  // Intercept semua request HTTP & WebSocket ke backend → inject secret token header
+  const filter = { urls: ['http://localhost/*', 'http://127.0.0.1/*', 'ws://localhost/*', 'ws://127.0.0.1/*'] };
 
   session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
     if (
       details.url.startsWith('http://localhost:18888') ||
-      details.url.startsWith('http://127.0.0.1:18888')
+      details.url.startsWith('http://127.0.0.1:18888') ||
+      details.url.startsWith('ws://localhost:18888') ||
+      details.url.startsWith('ws://127.0.0.1:18888')
     ) {
       details.requestHeaders['X-ShowLyrics-Secret'] = secretToken;
     }
@@ -756,13 +758,15 @@ if (gotSingleInstanceLock) {
   //   ✓ Full thread priority untuk rendering video & CSS
   //   ✓ Cache tetap persist antar sesi (asset video ter-cache)
   //   ✓ Auth header tetap diinject via onBeforeSendHeaders projector session
-  const projectorFilter = { urls: ['http://localhost/*', 'http://127.0.0.1/*'] };
+  const projectorFilter = { urls: ['http://localhost/*', 'http://127.0.0.1/*', 'ws://localhost/*', 'ws://127.0.0.1/*'] };
   const projectorSess = session.fromPartition('persist:sl-projector', { cache: true });
 
   projectorSess.webRequest.onBeforeSendHeaders(projectorFilter, (details, callback) => {
     if (
       details.url.startsWith('http://localhost:18888') ||
-      details.url.startsWith('http://127.0.0.1:18888')
+      details.url.startsWith('http://127.0.0.1:18888') ||
+      details.url.startsWith('ws://localhost:18888') ||
+      details.url.startsWith('ws://127.0.0.1:18888')
     ) {
       details.requestHeaders['X-ShowLyrics-Secret'] = secretToken;
     }
@@ -1327,7 +1331,7 @@ ipcMain.on('test-displays', () => {
 
           <!-- Center HUD Card -->
           <div class="hud-center">
-            <img class="hud-logo" src="http://localhost:18888/static/logo.png" alt="ShowLyrics" onerror="this.style.display='none'">
+            <img class="hud-logo" src="http://127.0.0.1:18888/static/logo.png" alt="ShowLyrics" onerror="this.style.display='none'">
             <div class="hud-sub">ShowLyrics Display Check</div>
             <div class="hud-title-row">
               <h1 class="hud-title">DISPLAY ${index + 1}</h1>

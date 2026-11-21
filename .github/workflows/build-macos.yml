@@ -403,6 +403,27 @@ jobs:
             exit 1
           fi
 
+          # Verify Closed Beta Access Gate (no beta code on CI runner -> inactive, /control redirects 307, /api/songs 403)
+          ACCESS_STATUS=$(curl -sS -m 3 -H "X-ShowLyrics-Secret: $TEST_SECRET" http://127.0.0.1:18888/api/access/status || true)
+          echo "GET /api/access/status -> $ACCESS_STATUS"
+          if ! echo "$ACCESS_STATUS" | grep -q '"status":"inactive"'; then
+            echo "ERROR: Expected Beta Access status inactive on fresh CI runner!"
+            cat /tmp/smoke_backend.log
+            kill -TERM "$PID" 2>/dev/null || true
+            exit 1
+          fi
+
+          CODE_CTRL=$(curl -s -o /dev/null -w "%{http_code}" -H "X-ShowLyrics-Secret: $TEST_SECRET" http://127.0.0.1:18888/control)
+          CODE_API=$(curl -s -o /dev/null -w "%{http_code}" -H "X-ShowLyrics-Secret: $TEST_SECRET" http://127.0.0.1:18888/api/songs)
+          CODE_DISP=$(curl -s -o /dev/null -w "%{http_code}" -H "X-ShowLyrics-Secret: $TEST_SECRET" http://127.0.0.1:18888/display)
+          echo "Beta Gate Check -> /control: $CODE_CTRL | /api/songs: $CODE_API | /display: $CODE_DISP"
+          if [ "$CODE_CTRL" != "307" ] || [ "$CODE_API" != "403" ] || [ "$CODE_DISP" != "403" ]; then
+            echo "ERROR: Beta Access Gate mismatch (expected 307 / 403 / 403)!"
+            cat /tmp/smoke_backend.log
+            kill -TERM "$PID" 2>/dev/null || true
+            exit 1
+          fi
+
           # Graceful SIGTERM shutdown check
           kill -TERM "$PID" 2>/dev/null || true
           for i in $(seq 1 15); do

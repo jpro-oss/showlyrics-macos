@@ -51,7 +51,18 @@ function connectWebSocket() {
     ws = new WebSocket(protocol + "//" + window.location.host + "/ws");
 
     ws.onmessage = function (e) {
-        const data = JSON.parse(e.data);
+        let data;
+        try {
+            data = JSON.parse(e.data);
+        } catch (_) {
+            return;
+        }
+        if (data.action === "beta_revoked") {
+            ws._betaRevoked = true;
+            try { ws.close(4001, "beta_revoked"); } catch (_) {}
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
         if (data.action === "update_presentation" || data.type === "update_presentation") {
             const newUrl = data.payload.url || "";
 
@@ -81,9 +92,16 @@ function connectWebSocket() {
             }
         }
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+        if ((ev && ev.code === 4001) || (ws && ws._betaRevoked)) {
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
         console.warn("[PPT] WebSocket closed, keeping last valid image");
         setTimeout(connectWebSocket, 2000);
+    };
+    ws.onerror = () => {
+        try { ws.close(); } catch (_) {}
     };
 }
 connectWebSocket();

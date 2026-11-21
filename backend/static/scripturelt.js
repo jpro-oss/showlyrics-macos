@@ -91,7 +91,16 @@ function connectWebSocket() {
             setTimeout(autoFitVerse, 60);
         }
     }
-    ws.onclose = () => setTimeout(connectWebSocket, 1000);
+    ws.onclose = (ev) => {
+        if (ev && ev.code === 4001) {
+            if (window.top === window.self) setTimeout(() => window.location.reload(), 150);
+            return;
+        }
+        setTimeout(connectWebSocket, 1000);
+    };
+    ws.onerror = () => {
+        try { ws.close(); } catch (_) {}
+    };
 }
 connectWebSocket();
 

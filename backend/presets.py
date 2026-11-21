@@ -21,13 +21,15 @@ async def get_lt_presets():
 @router.post("/api/lt_presets")
 async def save_lt_preset(payload: Dict[str, Any]):
     # Payload format: { "name": "NamaPreset", "config": {...}, "is_default": boolean }
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return {"status": "error", "message": "Preset name cannot be empty"}
     data = load_json(LT_PRESETS_FILE)
     
     # Init structure kalau file baru
     if "presets" not in data: data["presets"] = {}
     if "default" not in data: data["default"] = ""
 
-    name = payload.get("name")
     config = payload.get("config")
     
     # Save preset
@@ -69,10 +71,13 @@ async def get_display_presets():
 
 @router.post("/api/display_presets")
 async def save_display_preset(payload: Dict[str, Any]):
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return {"status": "error", "message": "Preset name cannot be empty"}
     data = load_json(DISPLAY_PRESETS_FILE)
     if "presets" not in data: data["presets"] = {}
-    data["presets"][payload.get("name")] = payload.get("config")
-    if payload.get("is_default"): data["default"] = payload.get("name")
+    data["presets"][name] = payload.get("config")
+    if payload.get("is_default"): data["default"] = name
     save_json(DISPLAY_PRESETS_FILE, data)
     return {"status": "success"}
 
@@ -103,13 +108,16 @@ async def get_fb_presets():
 
 @router.post("/api/fb_presets")
 async def save_fb_preset(payload: Dict[str, Any]):
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return {"status": "error", "message": "Preset name cannot be empty"}
     data = load_json(FB_PRESETS_FILE)
     if "presets" not in data: data["presets"] = {}
     
-    data["presets"][payload.get("name")] = payload.get("config")
+    data["presets"][name] = payload.get("config")
     
     if payload.get("is_default"):
-        data["default"] = payload.get("name")
+        data["default"] = name
         
     save_json(FB_PRESETS_FILE, data)
     return {"status": "success"}
@@ -141,11 +149,14 @@ async def get_alert_presets():
 
 @router.post("/api/alert_presets")
 async def save_alert_preset(payload: Dict[str, Any]):
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return {"status": "error", "message": "Preset name cannot be empty"}
     data = load_json(ALERT_PRESETS_FILE)
     if "presets" not in data: data["presets"] = {}
     
     # Payload: { name: "Nursery", config: { text: "...", targets: [], position: "top", color: "..." } }
-    data["presets"][payload.get("name")] = payload.get("config")
+    data["presets"][name] = payload.get("config")
     
     save_json(ALERT_PRESETS_FILE, data)
     return {"status": "success"}
@@ -167,11 +178,13 @@ async def get_rundown_presets():
 
 @router.post("/api/rundown_presets")
 async def save_rundown_preset(payload: Dict[str, Any]):
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return {"status": "error", "message": "Preset name cannot be empty"}
     data = load_json(RUNDOWN_PRESETS_FILE)
     if "presets" not in data: data["presets"] = {}
     if "default" not in data: data["default"] = ""
     
-    name = payload.get("name")
     config = payload.get("config")
     
     data["presets"][name] = config

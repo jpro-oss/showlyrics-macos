@@ -791,6 +791,199 @@
             font-family: monospace;
             font-size: 0.9em;
         }
+
+        /* =========================================
+           MACOS CLOSED BETA ACCESS MODAL & BADGE
+           ========================================= */
+        .beta-status-badge {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: #fbbf24;
+            background: rgba(245, 158, 11, 0.12);
+            padding: 6px 14px;
+            border-radius: 20px;
+            border: 1px solid rgba(245, 158, 11, 0.32);
+            letter-spacing: 0.04em;
+            cursor: default;
+            user-select: none;
+        }
+
+        .beta-status-badge.active {
+            display: inline-flex;
+        }
+
+        .beta-status-badge .beta-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #f59e0b;
+            box-shadow: 0 0 8px #f59e0b;
+        }
+
+        .beta-modal-overlay {
+            z-index: 100500;
+            background: rgba(4, 4, 8, 0.94);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+
+        .beta-modal-card {
+            max-width: 580px;
+            width: 92%;
+            height: auto;
+            max-height: 90vh;
+            border-color: rgba(59, 130, 246, 0.35);
+            box-shadow: 0 0 60px rgba(59, 130, 246, 0.18), 0 24px 70px rgba(0, 0, 0, 0.9);
+        }
+
+        .beta-modal-card.state-expired {
+            border-color: rgba(245, 158, 11, 0.5);
+            box-shadow: 0 0 60px rgba(245, 158, 11, 0.18), 0 24px 70px rgba(0, 0, 0, 0.9);
+        }
+
+        .beta-modal-card.state-revoked {
+            border-color: rgba(239, 68, 68, 0.5);
+            box-shadow: 0 0 60px rgba(239, 68, 68, 0.18), 0 24px 70px rgba(0, 0, 0, 0.9);
+        }
+
+        .beta-header h2 {
+            font-size: 1.12rem;
+            color: #fff;
+            letter-spacing: -0.01em;
+        }
+
+        .beta-body {
+            padding: 26px 30px 30px;
+        }
+
+        .beta-state-banner {
+            padding: 13px 16px;
+            border-radius: 10px;
+            margin-bottom: 18px;
+            font-size: 0.9rem;
+            line-height: 1.55;
+            border-left: 3px solid var(--accent-blue);
+            background: rgba(59, 130, 246, 0.1);
+            color: #e4e4e7;
+        }
+
+        .beta-state-banner.banner-expired {
+            border-left-color: #f59e0b;
+            background: rgba(245, 158, 11, 0.12);
+            color: #fef3c7;
+        }
+
+        .beta-state-banner.banner-revoked {
+            border-left-color: #ef4444;
+            background: rgba(239, 68, 68, 0.12);
+            color: #fee2e2;
+        }
+
+        .beta-state-panel {
+            display: none;
+        }
+
+        .beta-state-panel.visible {
+            display: block;
+        }
+
+        .beta-input-container {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .beta-input-container label {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #e4e4e7;
+            text-align: center;
+        }
+
+        .beta-otp-row {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .beta-otp-box {
+            width: 58px;
+            height: 64px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.55);
+            border: 1.5px solid rgba(255, 255, 255, 0.18);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1.65rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            outline: none;
+            caret-color: var(--accent-blue);
+            transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
+        }
+
+        .beta-otp-box:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.28);
+            transform: translateY(-1px);
+        }
+
+        .beta-otp-box.filled {
+            border-color: rgba(59, 130, 246, 0.6);
+            background: rgba(59, 130, 246, 0.08);
+        }
+
+        .beta-submit-btn {
+            width: 100%;
+            height: 46px;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+        }
+
+        .beta-submit-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.35);
+        }
+
+        .beta-submit-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .beta-feedback {
+            font-size: 0.85rem;
+            font-weight: 600;
+            min-height: 20px;
+            text-align: center;
+        }
+
+        .beta-feedback.error {
+            color: #f87171;
+        }
+
+        .beta-feedback.success {
+            color: #34d399;
+        }
+
+        .beta-feedback.info {
+            color: #60a5fa;
+        }
     </style>
     <style>
         .update-toast {
@@ -888,11 +1081,16 @@
                     <img src="/static/logo.png" class="brand-logo" alt="Logo">
                     <div class="brand-text">
                         <h1 class="brand-name">ShowLyrics</h1>
-                        <span class="brand-ver">Engine Build V.1.35.4.1</span>
+                        <span class="brand-ver">Engine Build V.1.35.4.1 (BETA VERSION)</span>
                     </div>
                 </div>
 
                 <div class="header-badges">
+                    <div id="beta-status-badge" class="beta-status-badge" title="macOS Closed Beta Active">
+                        <span class="beta-dot"></span>
+                        <span id="beta-status-text">BETA ACTIVE</span>
+                    </div>
+
                     <div class="lang-tabs">
                         <button class="lang-tab active" onclick="switchLang('id')" id="tab-id">ID</button>
                         <button class="lang-tab" onclick="switchLang('en')" id="tab-en">EN</button>
@@ -917,7 +1115,7 @@
             <div class="launch-grid">
                 <div style="position: relative; width: 100%;">
                     <div class="glow-effect"></div>
-                    <a href="/control" class="launch-card mode-reguler">
+                    <a href="/control" id="btn-launch-control" onclick="handleLaunchControl(event)" class="launch-card mode-reguler">
                         <div class="card-icon">🖥️</div>
                         <div class="card-text">
                             <h2 class="card-title lang-id">SHOWLYRICS CONTROLLER</h2>
@@ -1684,6 +1882,125 @@
             </div>
         </div>
     </div>
+    <!-- =========================================
+         MACOS CLOSED BETA ACCESS MODAL (BLOCKING)
+         ========================================= -->
+    <div id="mac-beta-modal" class="manual-modal-overlay beta-modal-overlay" role="dialog" aria-modal="true"
+        aria-labelledby="beta-modal-title-id">
+        <div id="beta-modal-card" class="manual-modal-content beta-modal-card">
+            <div class="manual-header beta-header">
+                <div class="manual-header-left">
+                    <h2 id="beta-modal-title-id" class="lang-id"> ShowLyrics macOS — Closed Beta Access</h2>
+                    <h2 class="lang-en"> ShowLyrics macOS — Closed Beta Access</h2>
+                </div>
+                <div class="header-badges">
+                    <div class="lang-tabs">
+                        <button class="lang-tab active" onclick="switchLang('id')" id="tab-id-beta">ID</button>
+                        <button class="lang-tab" onclick="switchLang('en')" id="tab-en-beta">EN</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="manual-body beta-body">
+                <!-- STATE 1: BELUM AKTIVASI -->
+                <div id="beta-panel-inactive" class="beta-state-panel visible">
+                    <div class="lang-id">
+                        <div class="beta-state-banner">
+                            <b>Selamat datang di ShowLyrics untuk macOS (Closed Beta)!</b> Aplikasi ini masih dalam
+                            tahap pengujian tertutup dan memerlukan Kode Akses Beta aktif untuk digunakan.
+                        </div>
+                        <p>Masukkan <b>Kode Akses Beta (5 Karakter)</b> yang diberikan oleh tim ShowLyrics (contoh:
+                            <code class="manual-code">MAC01</code>).</p>
+                        <ul>
+                            <li>Setiap kode terikat pada <b>1 perangkat macOS</b>.</li>
+                            <li>Aktivasi pertama wajib terhubung internet; setelah aktif, aplikasi dapat digunakan
+                                secara offline selama masa berlaku kode.</li>
+                        </ul>
+                    </div>
+                    <div class="lang-en">
+                        <div class="beta-state-banner">
+                            <b>Welcome to ShowLyrics for macOS (Closed Beta)!</b> This build is in closed beta testing
+                            and requires an active Beta Access Code to unlock the application.
+                        </div>
+                        <p>Enter the <b>5-character Beta Access Code</b> provided by the ShowLyrics team (example:
+                            <code class="manual-code">MAC01</code>).</p>
+                        <ul>
+                            <li>Each code is bound to <b>1 macOS device</b>.</li>
+                            <li>Internet is required for initial activation; once active, you can run offline while the
+                                code remains valid.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- STATE 2: KADALUARSA / CLOCK TAMPERED -->
+                <div id="beta-panel-expired" class="beta-state-panel">
+                    <div class="lang-id">
+                        <div class="beta-state-banner banner-expired">
+                            <b>Masa Berlaku Kode Akses Beta Berakhir!</b> Kode akses Anda sudah melewati batas waktu
+                            atau verifikasi jam sistem gagal. Pastikan tanggal &amp; waktu macOS otomatis lalu masukkan
+                            kode akses baru.
+                        </div>
+                        <p>Hubungi tim ShowLyrics jika Anda memerlukan perpanjangan atau Kode Akses Beta terbaru.</p>
+                    </div>
+                    <div class="lang-en">
+                        <div class="beta-state-banner banner-expired">
+                            <b>Beta Access Code Expired!</b> Your access code has passed its validity date or system
+                            clock verification failed. Ensure macOS automatic date &amp; time is enabled and enter a new
+                            code.
+                        </div>
+                        <p>Contact the ShowLyrics team if you need an extension or a new Beta Access Code.</p>
+                    </div>
+                </div>
+
+                <!-- STATE 3: DINONAKTIFKAN / HWID MISMATCH -->
+                <div id="beta-panel-revoked" class="beta-state-panel">
+                    <div class="lang-id">
+                        <div class="beta-state-banner banner-revoked">
+                            <b>Akses Beta Dinonaktifkan atau Digunakan di Perangkat Lain!</b> Kode akses sebelumnya
+                            sudah tidak aktif di perangkat Mac ini.
+                        </div>
+                        <p>Masukkan Kode Akses Beta yang masih aktif atau hubungi tim ShowLyrics untuk bantuan reset
+                            perangkat.</p>
+                    </div>
+                    <div class="lang-en">
+                        <div class="beta-state-banner banner-revoked">
+                            <b>Beta Access Revoked or Bound to Another Device!</b> Your previous access code is no
+                            longer active on this Mac.
+                        </div>
+                        <p>Please enter a valid Beta Access Code or contact the ShowLyrics team for device reset
+                            assistance.</p>
+                    </div>
+                </div>
+
+                <!-- 5-BOX OTP INPUT (X-X-X-X-X) -->
+                <div class="beta-input-container">
+                    <label for="beta-otp-0" class="lang-id">Masukkan Kode Akses Beta (5 Karakter):</label>
+                    <label for="beta-otp-0" class="lang-en">Enter Beta Access Code (5 Characters):</label>
+
+                    <div class="beta-otp-row" id="beta-otp-row">
+                        <input type="text" id="beta-otp-0" class="beta-otp-box" maxlength="1" autocomplete="off"
+                            spellcheck="false" inputmode="text" aria-label="Character 1">
+                        <input type="text" id="beta-otp-1" class="beta-otp-box" maxlength="1" autocomplete="off"
+                            spellcheck="false" inputmode="text" aria-label="Character 2">
+                        <input type="text" id="beta-otp-2" class="beta-otp-box" maxlength="1" autocomplete="off"
+                            spellcheck="false" inputmode="text" aria-label="Character 3">
+                        <input type="text" id="beta-otp-3" class="beta-otp-box" maxlength="1" autocomplete="off"
+                            spellcheck="false" inputmode="text" aria-label="Character 4">
+                        <input type="text" id="beta-otp-4" class="beta-otp-box" maxlength="1" autocomplete="off"
+                            spellcheck="false" inputmode="text" aria-label="Character 5">
+                    </div>
+
+                    <button id="btn-submit-beta" class="beta-submit-btn" onclick="submitBetaAccessCode()">
+                        <span class="lang-id">Aktivasi Akses Beta</span>
+                        <span class="lang-en">Activate Beta Access</span>
+                    </button>
+
+                    <div id="beta-feedback-msg" class="beta-feedback"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="update-container"></div>
 
     <script>
@@ -1692,16 +2009,271 @@
         // ==========================================
         function switchLang(lang) {
             // Kita bermain dengan root body class, ZERO inline css per-element!
+            const ids = ['tab-id', 'tab-id-beta'];
+            const ens = ['tab-en', 'tab-en-beta'];
             if (lang === 'en') {
                 document.body.classList.add('is-english');
-                document.getElementById('tab-id').classList.remove('active');
-                document.getElementById('tab-en').classList.add('active');
+                ids.forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('active'); });
+                ens.forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('active'); });
             } else {
                 document.body.classList.remove('is-english');
-                document.getElementById('tab-en').classList.remove('active');
-                document.getElementById('tab-id').classList.add('active');
+                ens.forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('active'); });
+                ids.forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('active'); });
             }
         }
+
+        // ==========================================
+        // --- MACOS CLOSED BETA ACCESS GATE (OTP 5-CHAR)
+        // ==========================================
+        let betaAccessUnlocked = false;
+
+        function _getBetaOtpBoxes() {
+            return Array.from(document.querySelectorAll('#beta-otp-row .beta-otp-box'));
+        }
+
+        function _getBetaCodeValue() {
+            return _getBetaOtpBoxes().map(b => (b.value || '').trim().toUpperCase()).join('');
+        }
+
+        function _clearBetaOtpBoxes() {
+            _getBetaOtpBoxes().forEach(b => {
+                b.value = '';
+                b.classList.remove('filled');
+            });
+        }
+
+        function _setBetaBadge(active, expiryDate) {
+            const badge = document.getElementById('beta-status-badge');
+            const text = document.getElementById('beta-status-text');
+            if (!badge || !text) return;
+            if (active) {
+                text.textContent = expiryDate ? `BETA ACTIVE • Exp: ${expiryDate}` : 'BETA ACTIVE';
+                badge.classList.add('active');
+            } else {
+                badge.classList.remove('active');
+            }
+        }
+
+        function openBetaModal(reason) {
+            const modal = document.getElementById('mac-beta-modal');
+            const card = document.getElementById('beta-modal-card');
+            const panelInactive = document.getElementById('beta-panel-inactive');
+            const panelExpired = document.getElementById('beta-panel-expired');
+            const panelRevoked = document.getElementById('beta-panel-revoked');
+            const feedback = document.getElementById('beta-feedback-msg');
+
+            if (card) {
+                card.classList.remove('state-expired', 'state-revoked');
+            }
+            [panelInactive, panelExpired, panelRevoked].forEach(p => { if (p) p.classList.remove('visible'); });
+
+            const r = String(reason || 'inactive').toLowerCase();
+            if (r === 'expired' || r === 'clock_tampered') {
+                if (panelExpired) panelExpired.classList.add('visible');
+                if (card) card.classList.add('state-expired');
+            } else if (r === 'revoked' || r === 'hwid_mismatch') {
+                if (panelRevoked) panelRevoked.classList.add('visible');
+                if (card) card.classList.add('state-revoked');
+            } else {
+                if (panelInactive) panelInactive.classList.add('visible');
+            }
+
+            if (modal) {
+                modal.classList.add('active');
+                document.body.classList.add('no-scroll');
+            }
+            if (feedback) {
+                feedback.className = 'beta-feedback';
+                feedback.textContent = '';
+            }
+            _clearBetaOtpBoxes();
+            const firstBox = document.getElementById('beta-otp-0');
+            if (firstBox) setTimeout(() => firstBox.focus(), 100);
+        }
+
+        function closeBetaModal() {
+            const modal = document.getElementById('mac-beta-modal');
+            if (modal) {
+                modal.classList.remove('active');
+                document.body.classList.remove('no-scroll');
+            }
+        }
+
+        function _initBetaOtpInputs() {
+            const boxes = _getBetaOtpBoxes();
+            boxes.forEach((box, idx) => {
+                box.addEventListener('input', (e) => {
+                    const cleaned = (e.target.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    if (!cleaned) {
+                        e.target.value = '';
+                        e.target.classList.remove('filled');
+                        return;
+                    }
+                    // Handle multi-char input (autofill / fast paste)
+                    if (cleaned.length > 1) {
+                        for (let i = 0; i < cleaned.length && (idx + i) < boxes.length; i++) {
+                            boxes[idx + i].value = cleaned[i];
+                            boxes[idx + i].classList.add('filled');
+                        }
+                        const nextIdx = Math.min(idx + cleaned.length, boxes.length - 1);
+                        boxes[nextIdx].focus();
+                        return;
+                    }
+                    e.target.value = cleaned[0];
+                    e.target.classList.add('filled');
+                    if (idx < boxes.length - 1) {
+                        boxes[idx + 1].focus();
+                    }
+                });
+
+                box.addEventListener('keydown', (e) => {
+                    if (e.key === 'Backspace') {
+                        if (box.value) {
+                            box.value = '';
+                            box.classList.remove('filled');
+                            e.preventDefault();
+                        } else if (idx > 0) {
+                            boxes[idx - 1].focus();
+                            boxes[idx - 1].value = '';
+                            boxes[idx - 1].classList.remove('filled');
+                            e.preventDefault();
+                        }
+                    } else if (e.key === 'ArrowLeft' && idx > 0) {
+                        e.preventDefault();
+                        boxes[idx - 1].focus();
+                    } else if (e.key === 'ArrowRight' && idx < boxes.length - 1) {
+                        e.preventDefault();
+                        boxes[idx + 1].focus();
+                    } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        submitBetaAccessCode();
+                    }
+                });
+
+                box.addEventListener('paste', (e) => {
+                    e.preventDefault();
+                    const text = ((e.clipboardData || window.clipboardData).getData('text') || '')
+                        .toUpperCase()
+                        .replace(/[^A-Z0-9]/g, '')
+                        .slice(0, boxes.length);
+                    if (!text) return;
+                    boxes.forEach((b, i) => {
+                        const ch = text[i] || '';
+                        b.value = ch;
+                        b.classList.toggle('filled', Boolean(ch));
+                    });
+                    const targetIdx = Math.min(text.length, boxes.length - 1);
+                    boxes[targetIdx].focus();
+                });
+            });
+        }
+
+        async function checkBetaAccessOnLoad() {
+            const params = new URLSearchParams(window.location.search);
+            const urlReason = params.get('reason') || '';
+            try {
+                const res = await fetch('/api/access/status', { cache: 'no-store' });
+                const data = await res.json();
+                if (data && data.status === 'active') {
+                    betaAccessUnlocked = true;
+                    _setBetaBadge(true, data.expiryDate || '');
+                    closeBetaModal();
+                    if (params.has('require_beta_access')) {
+                        window.history.replaceState({}, document.title, '/');
+                    }
+                } else {
+                    betaAccessUnlocked = false;
+                    _setBetaBadge(false, '');
+                    openBetaModal(urlReason || (data && data.reason) || 'inactive');
+                }
+            } catch (err) {
+                betaAccessUnlocked = false;
+                _setBetaBadge(false, '');
+                openBetaModal(urlReason || 'inactive');
+            }
+        }
+
+        async function handleLaunchControl(event) {
+            if (event) event.preventDefault();
+            const btn = document.getElementById('btn-launch-control');
+            if (btn) btn.style.opacity = '0.7';
+            try {
+                const res = await fetch('/api/access/status', { cache: 'no-store' });
+                const data = await res.json();
+                if (btn) btn.style.opacity = '1';
+                if (data && data.status === 'active') {
+                    betaAccessUnlocked = true;
+                    _setBetaBadge(true, data.expiryDate || '');
+                    window.location.href = '/control';
+                } else {
+                    betaAccessUnlocked = false;
+                    _setBetaBadge(false, '');
+                    openBetaModal((data && data.reason) || 'inactive');
+                }
+            } catch (err) {
+                if (btn) btn.style.opacity = '1';
+                openBetaModal('inactive');
+            }
+        }
+
+        async function submitBetaAccessCode() {
+            const btn = document.getElementById('btn-submit-beta');
+            const feedback = document.getElementById('beta-feedback-msg');
+            if (!feedback) return;
+
+            const isEn = document.body.classList.contains('is-english');
+            const rawKey = _getBetaCodeValue();
+
+            if (rawKey.length !== 5 || !/^[A-Z0-9]{5}$/.test(rawKey)) {
+                feedback.className = 'beta-feedback error';
+                feedback.textContent = isEn
+                    ? 'Beta Access Code must be exactly 5 alphanumeric characters.'
+                    : 'Kode Akses Beta harus tepat 5 karakter huruf/angka (contoh: MAC01).';
+                return;
+            }
+
+            if (btn) btn.disabled = true;
+            feedback.className = 'beta-feedback info';
+            feedback.textContent = isEn ? 'Verifying access code...' : 'Memverifikasi kode akses...';
+
+            try {
+                const res = await fetch('/api/access/activate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ access_key: rawKey })
+                });
+
+                const data = await res.json();
+                if (btn) btn.disabled = false;
+
+                if (data && data.status === 'success') {
+                    betaAccessUnlocked = true;
+                    feedback.className = 'beta-feedback success';
+                    feedback.textContent = data.message || (isEn ? 'Beta Access Activated!' : 'Akses Beta Berhasil Diaktivasi!');
+                    _setBetaBadge(true, data.expiryDate || '');
+                    if (window.location.search.includes('require_beta_access')) {
+                        window.history.replaceState({}, document.title, '/');
+                    }
+                    setTimeout(() => {
+                        closeBetaModal();
+                    }, 700);
+                } else {
+                    feedback.className = 'beta-feedback error';
+                    feedback.textContent = (data && data.message) || (isEn ? 'Invalid access code.' : 'Kode Akses tidak valid.');
+                }
+            } catch (err) {
+                if (btn) btn.disabled = false;
+                feedback.className = 'beta-feedback error';
+                feedback.textContent = isEn
+                    ? 'Network error. Please check your internet connection.'
+                    : 'Gagal menghubungi server. Periksa koneksi internet Anda.';
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            _initBetaOtpInputs();
+            checkBetaAccessOnLoad();
+        });
 
         // ==========================================
         // --- MANUAL MODAL LOGIC (ZERO INLINE CSS)

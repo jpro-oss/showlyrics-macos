@@ -24,6 +24,7 @@ from config import (
 )
 
 # --- IMPORT SUB-MODULES (existing) ---
+import access_check
 import license_check
 import sender
 import scripture
@@ -45,7 +46,7 @@ import network_guard
 
 # --- IMPORT CONNECTION MANAGER & MIDDLEWARES ---
 from connection_manager import ConnectionManager
-from middleware import secure_electron_pages, log_requests, system_logs
+from middleware import beta_access_gate, secure_electron_pages, log_requests, system_logs
 
 # ==========================================
 # 🚀 LIFESPAN — Startup & Shutdown Events
@@ -70,6 +71,9 @@ async def lifespan(app: FastAPI):
     start_go_engine()
     print("[SYSTEM] Starting Go Camera Service...")
     start_camera_service()
+    print("[SYSTEM] Checking macOS Closed Beta Access...")
+    await asyncio.to_thread(access_check.startup_access_check)
+    asyncio.create_task(access_check.start_periodic_access_monitor())
     print("[SYSTEM] Starting background license validation...")
     asyncio.create_task(license_check.async_license_check())
     loop.run_in_executor(None, manager.sync_state_from_go)
@@ -79,6 +83,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_network_check())
     yield
     # ──────────────────────── SHUTDOWN ────────────────────────
+    try:
+        access_check.stop_periodic_access_monitor()
+    except Exception:
+        pass
     stop_camera_service()
     stop_go_engine()
     try:
@@ -108,6 +116,7 @@ templates.env.globals["VERSION"] = f"132-{int(time.time())}"
 routes_pages.init_templates(templates)
 
 # Register sub-routers (existing modules)
+app.include_router(access_check.router)
 app.include_router(license_check.router, prefix="/api/license")
 app.include_router(sender.router, prefix="/api/senders")
 app.include_router(scripture.presets_router, prefix="/api/scripture_presets")
@@ -131,7 +140,16 @@ app.mount("/static", StaticFiles(directory=get_resource_path("static")), name="s
 
 # ==========================================
 # 🛡️ SECURITY & REQUEST LOGGER MIDDLEWARE
+# Urutan eksekusi Starlette adalah LIFO (yang terdaftar terakhir jalan duluan):
+#   1. log_requests_middleware (outermost)
+#   2. secure_electron_pages_middleware (cek X-ShowLyrics-Secret)
+#   3. beta_access_gate_middleware (cek Closed Beta Access)
 # ==========================================
+
+@app.middleware("http")
+async def beta_access_gate_middleware(request: Request, call_next):
+    return await beta_access_gate(request, call_next)
+
 
 @app.middleware("http")
 async def secure_electron_pages_middleware(request: Request, call_next):
@@ -149,6 +167,7 @@ async def log_requests_middleware(request: Request, call_next):
 manager = ConnectionManager()
 
 # Inject manager ke semua modul yang membutuhkannya
+access_check.inject_manager(manager)
 license_check.manager = manager
 bg_tasks.manager      = manager
 routes_settings.init_manager(manager, system_logs)
@@ -343,10 +362,38 @@ async def go_cache_status(request: Request):
 # ==========================================
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    if not access_check.is_access_valid():
+        reason = access_check.get_access_reason()
+        try:
+            await websocket.accept()
+            await websocket.send_json(manager._sign({
+                "action": "beta_revoked",
+                "reason": reason,
+                "message": "Closed Beta Access required or expired.",
+            }))
+            await asyncio.sleep(0.05)
+            await websocket.close(code=4001, reason=f"beta_{reason}"[:120])
+        except Exception:
+            pass
+        return
+
     await manager.connect(websocket)
     try:
         while True:
             data   = await websocket.receive_json()
+            if not access_check.is_access_valid():
+                reason = access_check.get_access_reason()
+                try:
+                    await websocket.send_json(manager._sign({
+                        "action": "beta_revoked",
+                        "reason": reason,
+                        "message": "Closed Beta Access expired or revoked.",
+                    }))
+                    await asyncio.sleep(0.05)
+                    await websocket.close(code=4001, reason=f"beta_{reason}"[:120])
+                except Exception:
+                    pass
+                break
             action = data.get("action")
 
             if action == "update_display":
@@ -501,7 +548,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     manager.bg_state = payload
                     if payload.get("source") != "remote_sender":
                         manager.ftb_active = False
-                    if manager.should_emit_background_update(payload):
+                    force_bg = bool(payload.get("forceReplay") or payload.get("force"))
+                    if force_bg or manager.should_emit_background_update(payload):
+                        if force_bg:
+                            manager._last_bg_state_sig = manager._payload_signature(payload)
                         await manager.broadcast({"type": "update_background", "payload": payload})
 
             elif action == "bg_control":
@@ -691,7 +741,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 if not incoming_audio.get("url"):
                     manager._last_media_state_sig["audio"] = ""
                     await manager.broadcast({"type": "update_audio", "payload": manager.audio_state})
-                elif manager.should_emit_media_update("audio", manager.audio_state):
+                elif incoming_audio.get("forceReplay") or incoming_audio.get("force") or manager.should_emit_media_update("audio", manager.audio_state):
+                    manager._last_media_state_sig["audio"] = manager._payload_signature(manager.audio_state)
                     await manager.broadcast({"type": "update_audio", "payload": manager.audio_state})
 
             elif action == "update_photo":
@@ -700,12 +751,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 if not incoming_photo.get("url"):
                     manager._last_media_state_sig["photo"] = ""
                     await manager.broadcast({"type": "update_photo", "payload": manager.photo_state})
-                elif manager.should_emit_media_update("photo", manager.photo_state):
+                elif incoming_photo.get("forceReplay") or incoming_photo.get("force") or manager.should_emit_media_update("photo", manager.photo_state):
+                    manager._last_media_state_sig["photo"] = manager._payload_signature(manager.photo_state)
                     await manager.broadcast({"type": "update_photo", "payload": manager.photo_state})
 
             elif action == "update_presentation":
-                manager.presentation_state = data.get("payload", {})
-                if manager.should_emit_media_update("presentation", manager.presentation_state):
+                incoming_pres = data.get("payload", {}) or {}
+                manager.presentation_state = incoming_pres
+                if not incoming_pres.get("url"):
+                    manager._last_media_state_sig["presentation"] = ""
+                    await manager.broadcast({"type": "update_presentation", "payload": manager.presentation_state})
+                elif incoming_pres.get("forceReplay") or incoming_pres.get("force") or manager.should_emit_media_update("presentation", manager.presentation_state):
+                    manager._last_media_state_sig["presentation"] = manager._payload_signature(manager.presentation_state)
                     await manager.broadcast({"type": "update_presentation", "payload": manager.presentation_state})
 
             elif action == "update_scripture":
