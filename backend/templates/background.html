@@ -18,10 +18,10 @@
             width: 100vw;
             height: 100vh;
 
-            /* PERF: #000 (bukan transparent) agar compositor tidak perlu alpha-blend
-               setiap frame. Iframe opaque = satu GPU layer stabil, tidak perlu composite
-               dengan layer di bawahnya. Hasilnya: black saat tidak ada video (benar untuk projector) */
-            background-color: transparent;
+            /* Alpha transparent agar OBS/vMix & layer compositing tidak tertutup putih */
+            background: transparent !important;
+            background-color: rgba(0, 0, 0, 0) !important;
+            color-scheme: normal;
             overflow: hidden;
 
             /* Force full-viewport GPU hardware compositing and 3D rendering context.

@@ -1400,6 +1400,12 @@ input[type="range"] {
   z-index: 2;
 }
 
+/* Cegah Chromium memaksa background putih pada iframe output akibat mismatch color-scheme */
+iframe {
+  color-scheme: normal;
+  background: transparent;
+}
+
 #preview-frame {
   position: absolute;
   top: 0;
@@ -1409,7 +1415,8 @@ input[type="range"] {
   border: 0;
   transform-origin: top left;
   pointer-events: none;
-  background-color: #000;
+  background-color: transparent;
+  color-scheme: normal;
 }
 
 .scr-mini-iframe-mount {

@@ -66,12 +66,20 @@
 
         html,
         body {
-            background-color: transparent;
+            background: transparent !important;
+            background-color: rgba(0, 0, 0, 0) !important;
+            color-scheme: normal;
             margin: 0;
             height: 100vh;
             overflow: hidden;
             user-select: none;
             /* perspective removed – caused compound 3D context for entire page */
+        }
+
+        iframe {
+            background: transparent !important;
+            background-color: rgba(0, 0, 0, 0) !important;
+            color-scheme: normal;
         }
 
         .scale-wrapper {

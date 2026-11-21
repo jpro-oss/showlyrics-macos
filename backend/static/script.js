@@ -5777,6 +5777,9 @@ function createControlIframe(src, id, className) {
     if (id) iframe.id = id;
     if (className) iframe.className = className;
     iframe.setAttribute('scrolling', 'no');
+    iframe.setAttribute('allowtransparency', 'true');
+    iframe.style.background = 'transparent';
+    iframe.style.colorScheme = 'normal';
     const sep = src.includes('?') ? '&' : '?';
     iframe.src = `${src}${sep}_t=${Date.now()}`;
     return iframe;
@@ -7529,8 +7532,11 @@ function loadModalOutputPreview(modalId, path, label, side = 'left') {
     const iframe = document.createElement('iframe');
     iframe.className = 'modal-output-frame';
     iframe.setAttribute('scrolling', 'no');
+    iframe.setAttribute('allowtransparency', 'true');
     iframe.setAttribute('title', label);
     iframe.src = `${path}?preview=${Date.now()}`;
+    iframe.style.background = 'transparent';
+    iframe.style.colorScheme = 'normal';
     iframe.style.width = '1920px';
     iframe.style.height = '1080px';
     iframe.style.transformOrigin = 'top left';

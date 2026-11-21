@@ -1572,12 +1572,14 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
       win.webContents.setFrameRate(60);
     }
 
-    // Inject CSS hitam secepat mungkin saat navigasi mulai (sebelum konten load)
-    // Mencegah flash putih/kosong selama halaman belum selesai render
+    // Jaga dokumen output tetap alpha-transparent — warna latar solid dikontrol oleh
+    // BrowserWindow({ backgroundColor: bgHex }) agar tidak flash putih dan tetap mendukung
+    // custom Output Background Color tanpa menimpa transparansi halaman output.
     win.webContents.on('did-start-navigation', () => {
       win.webContents.insertCSS(`
         html, body {
-          background: #000 !important;
+          background: transparent !important;
+          background-color: rgba(0, 0, 0, 0) !important;
           margin: 0 !important;
           padding: 0 !important;
         }
@@ -1585,10 +1587,11 @@ ipcMain.on('toggle-projection', (event, { type, action, url, displayId }) => {
     });
 
     win.webContents.on('did-finish-load', () => {
-      // CSS 1: Layout & visual dasar
+      // CSS 1: Layout & visual dasar (pertahankan alpha transparency pada dokumen)
       win.webContents.insertCSS(`
         html, body {
-          background: #000 !important;
+          background: transparent !important;
+          background-color: rgba(0, 0, 0, 0) !important;
           cursor: none !important;
           overflow: hidden !important;
           user-select: none !important;
